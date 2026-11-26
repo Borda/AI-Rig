@@ -556,6 +556,35 @@ def _scope_selection_metadata() -> dict[str, object]:
     }
 
 
+@pytest.mark.parametrize("status", ["Unresolved", " NEEDS-CLARIFICATION "])
+def test_selected_open_status_spellings_block_closure(
+    metadata: dict[str, Any], table: dict[str, Any], items: list[dict[str, Any]], tmp_path: Path, status: str
+) -> None:
+    """An admitted open spelling cannot be counted or delivered as closed, even with a matching Markdown row."""
+    items[0].update(resolution_status=status.strip().casefold(), resolved_how="Unresolved: The fix is pending.")
+    _recount(table)
+    items[0]["resolution_status"] = status
+    metadata["resolution_scope"] = {"presentation_version": 2, "selected_indexes": [1]}
+    metadata["unresolved_summary"] = {
+        "selected_items_total": 1,
+        "selected_items_resolved": 1,
+        "selected_items_unresolved": 0,
+        "local_actionable_items_unresolved": 0,
+        "process_gate_items_unresolved": 0,
+        "environment_blocked_items": 0,
+        "external_owner_items": 0,
+        "user_deferred_items": 0,
+        "all_local_actionable_items_closed": True,
+        "unresolved_reason_groups": [],
+    }
+    _write_action_items(metadata, tmp_path)
+    VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
+    with pytest.raises(SystemExit, match="code-remediate-unresolved-selected-count-mismatch"):
+        VALIDATOR._validate_code_remediate_unresolved_summary(metadata, tmp_path)
+    with pytest.raises(SystemExit, match="code-remediate-pass-with-required-unresolved-work"):
+        VALIDATOR._validate_code_remediate_pass_closure({"status": "pass"}, metadata)
+
+
 class TestScopeSelection:
     """The scope-selection table must print compact source references with detail defined below it."""
 

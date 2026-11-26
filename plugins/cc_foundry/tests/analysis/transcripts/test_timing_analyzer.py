@@ -49,7 +49,7 @@ def _synthetic_logs(tmp_path: Path) -> tuple[Path, Path]:
             _timing("2030-01-01T00:00:01Z", "Bash", 200, "s1", "command=ls"),
             _timing("2030-01-01T00:00:02Z", "Read", 100, "s1", "file_path=x"),
             _timing("2030-01-01T00:00:30Z", "Skill", 20_000, "s1", "skill=foundry:audit"),
-            _timing("2030-01-01T00:00:35Z", "AskUserQuestion", 60_000, "s1"),
+            _timing("2030-01-01T00:02:00Z", "AskUserQuestion", 60_000, "s1"),
             _timing("2030-01-01T00:01:00Z", "Agent", 15_000, "s1", "type=foundry:curator desc=Audit batch"),
             # session s2: only one row
             _timing("2030-01-01T00:02:00Z", "Bash", 5_000_000_000, "s2", "command=runaway"),
@@ -153,22 +153,22 @@ class TestBucketing:
 
 
 class TestSessionStats:
-    """Derived wall and reasoning time of one session."""
+    """Derived wall, compute, and unattributed time of one session."""
 
-    def test_wall_and_reasoning(self) -> None:
-        """Wall time spans first to last timestamp; reasoning is the wall time not spent in any bucket."""
+    def test_wall_compute_and_unattributed(self) -> None:
+        """Compute covers active buckets, with unused wall time reported as unattributed."""
         s = ta.SessionStats(session_id="x", first_ts=0.0, last_ts=100.0)
         s.local_ms = 10_000
         s.agent_ms = 20_000
         s.skill_ms = 5_000
         s.idle_ms = 1_000
-        assert (s.wall_ms, s.reasoning_ms) == (100_000, 100_000 - 36_000)
+        assert (s.wall_ms, s.compute_ms, s.unattributed_ms) == (100_000, 35_000, 64_000)
 
-    def test_reasoning_clamped_nonnegative(self) -> None:
-        """Bucketed time above the wall span (overlapping calls) yields zero reasoning time, never a negative one."""
+    def test_unattributed_is_nonnegative(self) -> None:
+        """Even inconsistent constructed totals cannot yield negative unattributed time."""
         s = ta.SessionStats(session_id="x", first_ts=0.0, last_ts=1.0)
         s.local_ms = 999_999
-        assert s.reasoning_ms == 0
+        assert s.unattributed_ms == 0
 
 
 class TestBackgroundAgentTiming:
@@ -232,6 +232,49 @@ class TestBackgroundAgentTiming:
 class TestAggregateSessions:
     """Folding timing rows into per-session bucket totals."""
 
+    def test_wall_split_does_not_count_overlapping_calls_twice(self, tmp_path: Path) -> None:
+        """Nested and parallel calls share wall time across and within buckets."""
+        timings = _write_jsonl(
+            tmp_path / "timings.jsonl",
+            [
+                _timing("2030-01-01T00:00:10Z", "Bash", 10_000, "s"),
+                _timing("2030-01-01T00:00:06Z", "Read", 4000, "s"),
+                _timing("2030-01-01T00:00:08Z", "AskUserQuestion", 2000, "s"),
+                _timing("2030-01-01T00:00:12Z", "Skill", 5000, "s"),
+            ],
+        )
+        sessions, _, _ = ta.aggregate_sessions(timings, tmp_path / "missing", cutoff=0)
+        stats = sessions["s"]
+        assert (stats.wall_ms, stats.local_ms, stats.idle_ms, stats.skill_ms) == (12000, 8000, 2000, 2000)
+
+    def test_inactive_gap_is_reported_as_unattributed(self, tmp_path: Path) -> None:
+        """A resumed session has observed compute only where tool intervals support it."""
+        timings = _write_jsonl(
+            tmp_path / "timings.jsonl",
+            [
+                _timing("2030-01-01T00:00:10Z", "Read", 10_000, "s"),
+                _timing("2030-01-03T00:00:10Z", "Read", 10_000, "s"),
+            ],
+        )
+        sessions, skills, warnings = ta.aggregate_sessions(timings, tmp_path / "missing", cutoff=0, session_filter="s")
+        report = ta.render_report(sessions, skills, since_spec="3d", top_n=5, warnings=warnings)
+        assert "- Compute time (observed): 00:00:20" in report
+        assert "- Unattributed wall time (excluded): 47:59:50" in report
+
+    def test_timing_intervals_are_clipped_at_both_window_edges(self, tmp_path: Path) -> None:
+        """Include only the portion of a known call interval overlapping the observation window."""
+        base = ta.parse_ts("2030-01-01T00:00:00Z")
+        timings = _write_jsonl(
+            tmp_path / "timings.jsonl",
+            [
+                _timing("2030-01-01T00:00:05Z", "Read", 5000, "s"),
+                _timing("2030-01-01T00:00:20Z", "Bash", 10_000, "s"),
+            ],
+        )
+        sessions, _, _ = ta.aggregate_sessions(timings, tmp_path / "missing", cutoff=base + 3, end=base + 13)
+        stats = sessions["s"]
+        assert (stats.first_ts, stats.last_ts, stats.local_ms) == (base + 3, base + 13, 5000)
+
     @pytest.mark.parametrize(
         ("field", "expected"),
         [
@@ -270,8 +313,8 @@ class TestAggregateSessions:
         sessions, _, _ = ta.aggregate_sessions(timings, inv, cutoff=0.0, session_filter="s2")
         assert set(sessions) == {"s2"}
 
-    def test_cutoff_keeps_boundary_after_and_future_rows(self, tmp_path: Path) -> None:
-        """Rows strictly before the cutoff are dropped; the boundary row, later rows and far-future rows are kept."""
+    def test_cutoff_keeps_calls_after_the_boundary(self, tmp_path: Path) -> None:
+        """A call that ends at or before the cutoff has no time inside the window."""
         cutoff = ta.parse_ts("2030-01-01T00:00:00Z")
         timings = _write_jsonl(
             tmp_path / "timings.jsonl",
@@ -284,7 +327,7 @@ class TestAggregateSessions:
         )
         invocations = _write_jsonl(tmp_path / "invocations.jsonl", [])
         sessions, _, _ = ta.aggregate_sessions(timings, invocations, cutoff=cutoff)
-        assert {name: s.local_ms for name, s in sessions.items()} == {"boundary": 200, "after": 300, "future": 400}
+        assert {name: s.local_ms for name, s in sessions.items()} == {"after": 300, "future": 400}
 
     def test_top_calls_kept_sorted_by_duration(self, synthetic_logs: tuple[Path, Path]) -> None:
         """With ``top_n=2`` session s1 keeps its two longest calls, longest first: idle (60_000) then skill (20_000)."""
@@ -315,9 +358,44 @@ class TestRenderReport:
         out = ta.render_report(sessions, skill_events, since_spec="24h", top_n=5, warnings=warnings)
         assert fragment in out
 
+    @pytest.mark.parametrize(
+        ("tool", "foreground_ms", "completed", "gap"),
+        [
+            pytest.param("Agent", 0, False, "unresolved background-agent joins", id="zero-duration-agent"),
+            pytest.param("Task", 2500, False, "unresolved background-agent joins", id="task-with-other-agent-time"),
+            pytest.param("Agent", 0, True, "substring match", id="joined-zero-duration"),
+        ],
+    )
+    def test_spawn_confidence_follows_join_evidence(
+        self, tmp_path: Path, tool: str, foreground_ms: int, completed: bool, gap: str
+    ) -> None:
+        """Spawn and join deductions survive zero durations and nonzero time from other agent calls."""
+        start, end = "2030-01-01T00:00:00Z", "2030-01-01T00:01:00Z"
+        timings = _write_jsonl(
+            tmp_path / "timings.jsonl",
+            [
+                _timing(start, "Read" if foreground_ms == 0 else "Agent", foreground_ms, "s1"),
+                _timing(end, tool, 0, "s1", "type=x desc=review"),
+            ],
+        )
+        invoke_rows = [_task_event(end, "started", "review")]
+        invoke_rows += [_task_event(end, "completed")] * completed
+        invocations = _write_jsonl(tmp_path / "invocations.jsonl", invoke_rows)
+        sessions, skill_events, warnings = ta.aggregate_sessions(timings, invocations, cutoff=0.0)
+        report = ta.render_report(sessions, skill_events, since_spec="1h", top_n=0, warnings=warnings)
+        assert sessions["s1"].agent_ms == foreground_ms
+        assert "Confidence: 0.85" in report
+        assert gap in report.lower()
+        assert ("unresolved background-agent joins" in report.lower()) is not completed
+
 
 class TestMain:
     """The command line entry point."""
+
+    @pytest.fixture(autouse=True)
+    def _freeze_window_end(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Set the analyzer snapshot time after the shared fixture's timing rows."""
+        monkeypatch.setattr(ta.time, "time", lambda: ta.parse_ts("2030-01-01T00:03:00Z"))
 
     @staticmethod
     def _argv(timings: Path, inv: Path, out: Path, since: str) -> list[str]:
@@ -329,7 +407,7 @@ class TestMain:
     ) -> None:
         """A run over the synthetic logs writes the report, prints its path and exits 0.
 
-        The synthetic rows are dated year 2030, so they sit inside any sane past window such as ``30d``.
+        The synthetic rows are inside the fixed snapshot window.
         """
         timings, inv = synthetic_logs
         out = tmp_path / "report.md"
@@ -358,11 +436,51 @@ class TestMain:
     def test_empty_window_returns_1(
         self, tmp_path: Path, synthetic_logs: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A timings log with no rows exits 1 and reports ``no sessions`` on stderr.
-
-        Empty timings are used because the synthetic rows are dated year 2030 and would match any past window.
-        """
+        """A timings log with no rows exits 1 and reports ``no sessions`` on stderr."""
         _timings, inv = synthetic_logs
         empty = _write_jsonl(tmp_path / "empty.jsonl", [])
         assert ta.main(self._argv(empty, inv, tmp_path / "report.md", "1h")) == 1
         assert "no sessions" in capsys.readouterr().err
+
+    def test_cli_reports_its_half_open_observation_window(self, tmp_path: Path) -> None:
+        """The producer reports actual bounds and includes only durations inside them."""
+        start, end = "2030-01-01T00:02:00Z", "2030-01-01T00:03:00Z"
+        timings = _write_jsonl(
+            tmp_path / "timings.jsonl",
+            [
+                _timing("2030-01-01T00:01:59Z", "Read", 500, "too-early"),
+                _timing(start, "Read", 2000, "s1"),
+                _timing("2030-01-01T00:02:59Z", "Agent", 0, "s1", "type=x desc=review"),
+                _timing(end, "Read", 500, "too-late"),
+            ],
+        )
+        invocations = _write_jsonl(
+            tmp_path / "invocations.jsonl", [_task_event(start, "started", "review"), _task_event(end, "completed")]
+        )
+        out = tmp_path / "report.md"
+        assert ta.main(self._argv(timings, invocations, out, "1m")) == 0
+        report = out.read_text(encoding="utf-8")
+        assert f"Clock window (UTC epoch seconds): {ta.parse_ts(start)!r} to {ta.parse_ts(end)!r}" in report
+        assert "sessions=2" in report
+        assert "- Local tools: 00:00:00 (" in report
+        assert "- Agent / subagent spawns: 00:01:00 (" in report
+        assert "Unresolved background-agent joins" not in report
+
+    @pytest.mark.parametrize(
+        ("since", "complete"), [pytest.param("30s", False, id="clipped"), pytest.param("3m", True, id="complete")]
+    )
+    def test_cli_certifies_clock_session_bounds_only_if_fully_covered(
+        self, tmp_path: Path, since: str, complete: bool
+    ) -> None:
+        """An older call or clipped duration prevents certification even if some of the session remains visible."""
+        timings = _write_jsonl(
+            tmp_path / "timings.jsonl",
+            [
+                _timing("2030-01-01T00:01:55Z", "Read", 1000, "s"),
+                _timing("2030-01-01T00:02:55Z", "Bash", 40_000, "s"),
+            ],
+        )
+        out = tmp_path / "report.md"
+        argv = self._argv(timings, tmp_path / "missing", out, since)
+        assert ta.main([*argv, "--session-id", "s"]) == 0
+        assert ("Clock session (UTC epoch seconds):" in out.read_text(encoding="utf-8")) is complete

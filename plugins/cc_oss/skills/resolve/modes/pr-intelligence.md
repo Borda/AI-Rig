@@ -158,7 +158,9 @@ Classify EVERY comment using these codes:
   [gh][req]      change required before merge (maintainer / write access, or a qualifying code-scanning finding, see Evidence)
   [gh][suggest]  improvement, non-blocking
   [gh][question] open question — needs answer before deciding what code to write
-  [info]         praise / acknowledgement / emoji-only — skip
+  [info]         praise / acknowledgement / emoji-only — skip. Also an overview that asks for no change: a bot's PR
+                 summary or walkthrough, or the author's own note of what was not run or verified — skip, and carry
+                 such a note into the motivation summary. A bot body naming a concrete code change stays an item.
   [self-review]  /oss:review finding — not a GitHub commenter
 Type = origin + kind only, never resolution state. No `[done]` type: a resolved comment keeps its [gh][req]/[gh][suggest]/[gh][question] type — classify it from content like any other.
 

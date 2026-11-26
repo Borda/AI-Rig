@@ -83,6 +83,14 @@ Sets `$TEST_CMD` (full suite) and `$PYTEST_CMD` (pytest flags). Run at skill sta
 
 **Language preflight gate**: apply §Language preflight gate from `runner-detection.md` (loaded above) — sets `NON_PY` and runs the abort/continue question.
 
+If a targeted Python test fails to import a declared package, load and follow the shared recovery instructions before interpreting the failure.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" env-provision.md
+```
+
 **Optional `--plan <path>`**: `$ARGUMENTS` contains `--plan <path>` (any position) → read plan file first. Extract `Affected files`, `Risks`, `Suggested approach` — populate Step 1 analysis instead of cold codebase exploration. Store plan path as `PLAN_FILE`. Reuse its independent challenge and feasibility coverage only when `python "${CLAUDE_PLUGIN_ROOT}/bin/plan_hash.py" challenge-check "$PLAN_FILE"` exits 0 and that review covers the current acceptance criteria; missing, skipped, blocked or mismatching provenance requires the normal challenger gate. The extraction block also records the plan's build-time hash (`.plans/` is gitignored, so edits leave no diff); Final Report re-checks it.
 
 ```bash

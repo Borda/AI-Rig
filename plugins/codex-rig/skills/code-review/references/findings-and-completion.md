@@ -186,6 +186,8 @@ Copy each canonical `authors` list to its final finding row without changing the
 
 Before final chat/`result.json`, write `Confidence Calibration` in `review-notes.md`; mirror in `CODE_REVIEW_METADATA.confidence_recovery`.
 
+Before writing confidence, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gap_records.py prepare --run <run-directory>`. For each `GAP_KNOWN_LIMIT=` whose absence the current evidence confirms, use the exact reason and record the gap once as `(-0.00) <id>: <reason> (known limit)` with an unresolved closure. Omit limits whose absence the current evidence no longer shows. If the file is ignored, deduct and name each hardware gap once.
+
 First execute [Agent-owned confidence recovery](../../../shared/quality-gates.md#agent-owned-confidence-recovery). Missing child-join provenance requires inspecting authentic receipts and completing eligible bounded recovery through [Reviewer validation recovery](validation-recovery.md) before choosing a parent fallback. Do not hand the user recoverable agent preparation or unexecuted checks merely as confidence deductions. If required independent coverage remains unavailable after permitted recovery, preserve that failure and the exact blocker; parent inspection cannot close it.
 
 Required confidence calibration content:
@@ -214,7 +216,7 @@ Run review validator with `--manifest-only` against completed run directory and 
 Preflight success is not review completion. Follow `../../../shared/helper-cli-contract.md` and authoritative help; finish this ordered sequence before reporting the assessed verdict, including `MAJOR_REVISION`:
 
 1. Follow `../../../shared/final-handoff-contract.md` to prepare the branch-appropriate handoff, then run `final_handoff.py render` to bind `final-handoff.json`, `final.md`, and `final-handoff.validation.json`.
-2. Run `write-result.py` with `CODE_REVIEW_METADATA` and `FOLLOW_UP` to write `result.candidate.json`, retaining canonical failed checks and final-handoff binding.
+2. Run `write-result.py` with `CODE_REVIEW_METADATA` and `FOLLOW_UP` to write `result.candidate.json`, retaining canonical failed checks and final-handoff binding. The writer adds failed gate ids and records `metadata.status_axes` (`gates_status`, `review_status`, `review_decision`); never author that block. Name every other cause of a failing status in `--extra-checks-failed` only from the closed ids in `PLUGIN_ROOT/shared/review-status-axes.json`: `source-refused` when `gates.json` records refused gates, `verification-readiness` while readiness is blocked or incomplete, `independent-review-coverage` while required independent coverage is unmet, and `critical-findings` while a confirmed critical finding remains. A confidence score alone never adds a failed check, and a failed status with no named cause is rejected.
 3. Run the review-specific validator against that candidate and this run's actual parent-thread provenance.
 4. Run the shared validator for `code-review` against the same candidate and run.
 5. Only after both validators pass, promote that candidate to `result.json`.

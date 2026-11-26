@@ -63,8 +63,14 @@ MAX_BACKGROUND_JOBS = 4
 HEALTH_LOCK_TIMEOUT_SECONDS = 2.0
 #: Envelope fields returned to the caller, in order; every child answer must supply all of them.
 CORE_FIELDS = ("status", "verdict", "findings", "files_touched", "remaining", "blockers")
-#: Exact key set a child envelope must carry: the core fields plus the free-form details list.
-PEER_FIELDS = (*CORE_FIELDS, "details")
+#: Child-authored list naming each limit on its result as ``(-0.NN) <gap>``; the harness derives ``confidence`` from it.
+GAP_FIELD = "confidence_gaps"
+#: Exact key set a child envelope must carry: the core fields, the gap list, and the free-form details list. A child
+#: that omits only the gap list still delivers its answer; its confidence is then ``unscored``.
+PEER_FIELDS = (*CORE_FIELDS, GAP_FIELD, "details")
+#: Harness-owned public fields describing how far a result can be trusted: the derived number (or ``None``), the child's
+#: named gaps it derives from, and the closed-set reason code that is set exactly when the number is ``None``.
+CONFIDENCE_FIELDS = ("confidence", GAP_FIELD, "confidence_null_reason")
 #: Statuses a child itself may report in its envelope.
 CORE_STATUSES = {"complete", "partial", "blocked"}
 #: Statuses allowed in a finished result: the child-reported ones plus the bridge-assigned timeout and refused.
@@ -355,9 +361,9 @@ def validate_model_core(value: Any) -> dict[str, Any]:
     Peer results include supporting ``details`` within the child capture budget for transcript storage. The supervisor
     removes that field before it validates and returns the public envelope without discarding evidence.
     """
-    if not isinstance(value, dict) or set(value) != set(PEER_FIELDS):
-        raise ValueError("model result must contain exactly the seven peer fields")
-    if value["status"] not in CORE_STATUSES:
+    if not isinstance(value, dict) or set(value) not in (set(PEER_FIELDS), set(PEER_FIELDS) - {GAP_FIELD}):
+        raise ValueError("model result must contain exactly the peer fields; only confidence_gaps may be absent")
+    if not isinstance(value["status"], str) or value["status"] not in CORE_STATUSES:
         raise ValueError("model result has an unsupported status")
     _validate_result_summary(value)
     _validate_string_list(value["details"], "details")
@@ -365,8 +371,12 @@ def validate_model_core(value: Any) -> dict[str, Any]:
 
 
 def _public_core(value: dict[str, Any]) -> dict[str, Any]:
-    """Remove peer-only detail before the compact public-envelope boundary."""
-    return {field: value[field] for field in CORE_FIELDS}
+    """Remove peer-only detail before the compact public-envelope boundary.
+
+    The gap list is carried through unvalidated: a missing or malformed list never discards the child's answer, it only
+    leaves the result ``unscored`` when :func:`_make_envelope` derives the confidence.
+    """
+    return {**{field: value[field] for field in CORE_FIELDS}, GAP_FIELD: value.get(GAP_FIELD)}
 
 
 def _validate_result_summary(value: dict[str, Any]) -> None:
@@ -387,9 +397,14 @@ def _validate_string_list(value: Any, field: str) -> None:
 
 
 def validate_envelope(value: Any) -> dict[str, Any]:
-    """Validate and return the public harness-enriched result envelope."""
+    """Validate and return the public harness-enriched result envelope.
+
+    This is the writer's contract: the confidence fields are required. A stored envelope written before they existed is
+    read through :func:`read_stored_envelope` instead.
+    """
     required = {
         *CORE_FIELDS,
+        *CONFIDENCE_FIELDS,
         "model",
         "effort",
         "effort_substituted",
@@ -406,7 +421,7 @@ def validate_envelope(value: Any) -> dict[str, Any]:
     }
     if not isinstance(value, dict) or set(value) - {"partial_output"} != required:
         raise ValueError("public envelope has missing or unknown fields")
-    if value["status"] not in FINAL_STATUSES:
+    if not isinstance(value["status"], str) or value["status"] not in FINAL_STATUSES:
         raise ValueError("public envelope has an unsupported status")
     if value["verb"] not in DEFAULT_TIMEOUTS or value["direction"] not in {
         "claude_to_codex",
@@ -460,7 +475,76 @@ def validate_envelope(value: Any) -> dict[str, Any]:
         _validate_result_summary(core)
     elif not isinstance(value["verdict"], str) or not value["verdict"]:
         raise ValueError("harness terminal result needs a verdict")
+    validate_confidence_fields(value)
     return value
+
+
+def read_stored_envelope(value: Any) -> dict[str, Any]:
+    """Validate a public envelope read back from disk, upgrading one written before the confidence fields existed.
+
+    An envelope that carries none of :data:`CONFIDENCE_FIELDS` predates them: it is read as unscored with the reason
+    ``not-recorded`` and an empty gap list, so every envelope the bridge returns has the same shape. An envelope that
+    carries only some of the fields is malformed and fails validation like any other.
+
+    Examples:
+        >>> legacy = {"status": "complete", "verdict": "ok"}
+        >>> read_stored_envelope(legacy)
+        Traceback (most recent call last):
+        ValueError: public envelope has missing or unknown fields
+    """
+    if isinstance(value, dict) and not any(field in value for field in CONFIDENCE_FIELDS):
+        value = {
+            **value,
+            "confidence": None,
+            GAP_FIELD: [],
+            "confidence_null_reason": ConfidenceNullReason.NOT_RECORDED.value,
+        }
+    return validate_envelope(value)
+
+
+def unscored_scope_gap(scope: Mapping[str, Any]) -> str | None:
+    """Name an unscored split's index, status, and reason without assigning a deduction."""
+    if scope.get("confidence") is not None:
+        return None
+    reason = scope.get("confidence_null_reason") or ConfidenceNullReason.NOT_RECORDED.value
+    return f"split {scope['index']}: confidence unavailable ({scope.get('status')}, {reason})"
+
+
+def validate_confidence_fields(value: Mapping[str, Any], *, merged: bool = False) -> None:
+    """Validate confidence and its gap accounting for a single call or a merged split.
+
+    Single calls bind the reason to the status in :data:`CONFIDENCE_REASON_STATUSES`. Merges can inherit a scope's
+    reason independently of the aggregate status, and their gaps must account for the aggregate's missing score.
+    """
+    gaps = value[GAP_FIELD]
+    if not isinstance(gaps, list) or not all(isinstance(item, str) for item in gaps):
+        raise ValueError("public envelope confidence_gaps must be a list of strings")
+    confidence = value["confidence"]
+    reason = value["confidence_null_reason"]
+    if reason is not None and (not isinstance(reason, str) or reason not in CONFIDENCE_NULL_REASONS):
+        raise ValueError("public envelope confidence_null_reason is not a known reason code")
+    if (confidence is None) == (reason is None):
+        raise ValueError("public envelope needs exactly one of confidence and confidence_null_reason")
+    if merged and any(
+        gap is not None and gap not in gaps for gap in map(unscored_scope_gap, value.get("splits") or [])
+    ):
+        raise ValueError("public envelope confidence_gaps must name every unscored scope")
+    status = value["status"]
+    derived = derive_confidence(gaps)
+    if reason is not None:
+        if not merged and status not in CONFIDENCE_REASON_STATUSES[reason]:
+            raise ValueError(f"public envelope confidence_null_reason {reason} cannot accompany status {status}")
+        if reason == ConfidenceNullReason.NOT_RECORDED.value and gaps:
+            raise ValueError("public envelope confidence_gaps must be empty for not-recorded confidence")
+        if (merged or status == "complete") and derived is not None:
+            raise ValueError("public envelope confidence is required with scorable confidence_gaps")
+        return
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+        raise ValueError("public envelope confidence must be null or a number from 0 to 1")
+    if status != "complete":
+        raise ValueError("public envelope confidence is only derived for a complete result")
+    if derived != confidence:
+        raise ValueError("public envelope confidence must equal 1.00 minus the deductions in confidence_gaps")
 
 
 def _github_read_overrides(request: Request) -> list[str]:
@@ -870,13 +954,22 @@ def _run_request_attempt(
         # a structured result, not as an opaque transport error; the envelope
         # itself needs a valid depth, so the rejected value is clamped there.
         reportable = Request(**{**request.__dict__, "depth": max(request.depth, 0)})
-        return _terminal_envelope(_unstarted_context(reportable, paths), "blocked", str(error))
+        return _terminal_envelope(
+            _unstarted_context(reportable, paths),
+            "blocked",
+            str(error),
+            null_reason=ConfidenceNullReason.INVALID_REQUEST,
+        )
     if request.depth >= 1:
-        return _terminal_envelope(_unstarted_context(request, paths), "refused", "recursion-depth")
+        return _terminal_envelope(
+            _unstarted_context(request, paths), "refused", "recursion-depth", null_reason=ConfidenceNullReason.REFUSED
+        )
     try:
         effective_effort, substitution = normalize_effort(request.effort, host, request.supported_efforts)
     except ValueError as error:
-        return _terminal_envelope(_unstarted_context(request, paths), "blocked", str(error))
+        return _terminal_envelope(
+            _unstarted_context(request, paths), "blocked", str(error), null_reason=ConfidenceNullReason.INVALID_REQUEST
+        )
     effective_request = Request(**{**request.__dict__, "effort": effective_effort})
     schema_path = Path(__file__).resolve().parents[1] / "schemas" / "envelope.schema.json"
     command = (
@@ -888,7 +981,12 @@ def _run_request_attempt(
     if request.network == "github-read" and host == "codex" and _attempt == 0:
         # after validation and a cancel check, so a request that cannot run never reaches GitHub
         if _job_path is not None and _job_cancel_requested(_job_path, paths=paths):
-            return _terminal_envelope(_unstarted_context(effective_request, paths), "blocked", "cancelled by job owner")
+            return _terminal_envelope(
+                _unstarted_context(effective_request, paths),
+                "blocked",
+                "cancelled by job owner",
+                null_reason=ConfidenceNullReason.CANCELLED,
+            )
         preflight_started = time.monotonic()
         failure = _github_read_preflight(request)
         preflight_seconds = time.monotonic() - preflight_started
@@ -902,6 +1000,7 @@ def _run_request_attempt(
                 "refused",
                 f"github-read preflight failed: {failure}",
                 fault="network-preflight",
+                null_reason=ConfidenceNullReason.REFUSED,
             )
         # from here on the request describes the child: its prompt, cutoff, retries and incidents use what remains
         effective_request = Request(**{**effective_request.__dict__, "timeout_seconds": float(remaining)})
@@ -915,6 +1014,7 @@ def _run_request_attempt(
                 "refused",
                 f"github-read preflight failed: the remaining budget makes the request too large ({error})",
                 fault="network-preflight",
+                null_reason=ConfidenceNullReason.REFUSED,
             )
         command = build_codex_argv(effective_request, schema_path)
     child_budget = effective_request.timeout_seconds
@@ -926,7 +1026,12 @@ def _run_request_attempt(
         outcome = _run_child(command, effective_request.workspace, child_cutoff)
     else:
         if _job_cancel_requested(_job_path, paths=paths):
-            return _terminal_envelope(_unstarted_context(effective_request, paths), "blocked", "cancelled by job owner")
+            return _terminal_envelope(
+                _unstarted_context(effective_request, paths),
+                "blocked",
+                "cancelled by job owner",
+                null_reason=ConfidenceNullReason.CANCELLED,
+            )
         outcome = _run_child(command, effective_request.workspace, child_cutoff, _job_path)
     duration = time.monotonic() - started
     attempt_ended_at = time.time()
@@ -982,6 +1087,7 @@ def _run_request_attempt(
             prior_incident=_prior_incident,
             partial_output=outcome.partial_output if host == "codex" else None,
             returncode=returncode,
+            null_reason=ConfidenceNullReason.OUTPUT_LIMIT,
         )
     if outcome.timed_out:
         retry = _lower_effort_retry(effective_request, child_budget)
@@ -1029,8 +1135,17 @@ def _run_request_attempt(
             workspace_delta=_delta(),
             prior_incident=_prior_incident,
             returncode=returncode,
+            null_reason=_provider_reason(failure_kind) if failure_kind is not None else ConfidenceNullReason.TIMEOUT,
         )
     if outcome.error:
+        # A child that never started is an unavailable peer; one that started and was stopped by the job owner is a
+        # cancellation; any other harness-side stop of a started child (an undrained pipe) is an unclassified failure.
+        if outcome.cancelled:
+            null_reason = ConfidenceNullReason.CANCELLED
+        elif not outcome.started:
+            null_reason = ConfidenceNullReason.PEER_UNAVAILABLE
+        else:
+            null_reason = ConfidenceNullReason.PEER_FAILED
         return _terminal_envelope(
             observed,
             "blocked",
@@ -1038,6 +1153,7 @@ def _run_request_attempt(
             workspace_delta=_delta(),
             prior_incident=_prior_incident,
             returncode=returncode,
+            null_reason=null_reason,
         )
     if returncode != 0:
         failure = event_info.failure
@@ -1100,6 +1216,7 @@ def _run_request_attempt(
             prior_incident=_prior_incident,
             extra_blockers=_advisory_blockers(event_info),
             returncode=returncode,
+            null_reason=ConfidenceNullReason.EMPTY_RESULT,
         )
     # Only the write-capable verb may report a resumable session; the others drop it from the envelope.
     reportable_session = observed if _is_write_verb(effective_request.verb) else replace(observed, session_id=None)
@@ -1137,6 +1254,7 @@ def _provider_stop_envelope(
             workspace_delta=delta,
             prior_incident=prior_incident,
             returncode=returncode,
+            null_reason=_provider_reason(kind),
         )
     return _terminal_envelope(
         observed,
@@ -1146,6 +1264,7 @@ def _provider_stop_envelope(
         prior_incident=prior_incident,
         extra_blockers=_advisory_blockers(event_info) if event_info.failure is None else (),
         returncode=returncode,
+        null_reason=ConfidenceNullReason.PEER_FAILED,
     )
 
 
@@ -1185,6 +1304,8 @@ class ChildOutcome:
     output_limited: bool = False
     partial_output: str | None = None
     started: bool = True
+    #: The job owner's cooperative cancellation stopped the child; ``error`` then holds the cancellation reason.
+    cancelled: bool = False
 
 
 class FailureClass(str, Enum):
@@ -1197,6 +1318,76 @@ class FailureClass(str, Enum):
     QUOTA = "quota-exhausted"
     RATE = "rate-limited"
     CAPACITY = "capacity"
+
+
+class ConfidenceNullReason(str, Enum):
+    """Closed set of causes for a result that carries no confidence number; the value is the public reason code.
+
+    The three provider classes, ``timeout``, ``output-limit`` and ``refused`` equal the incident ``fault`` the harness
+    records for the same stop (``refused`` also covers a ``network-preflight`` refusal). The incident fault ``blocked``
+    is shared by several causes, so the harness names each one here at the point it builds the result; it never derives
+    a code from verdict or blocker text. ``rules/envelope.md`` §Confidence holds the consumer-facing table.
+    """
+
+    QUOTA = "quota-exhausted"
+    RATE = "rate-limited"
+    CAPACITY = "capacity"
+    TIMEOUT = "timeout"
+    OUTPUT_LIMIT = "output-limit"
+    REFUSED = "refused"
+    #: The child could not be started, for example a missing peer executable.
+    PEER_UNAVAILABLE = "peer-unavailable"
+    #: The child ran and failed for a cause the harness does not classify (non-zero exit, unclassified turn failure).
+    PEER_FAILED = "peer-failed"
+    #: The child finished without a usable model result: none at all, or one that fails the core contract.
+    EMPTY_RESULT = "empty-result"
+    #: The result answers only part of the request: the child itself reported ``partial`` or ``blocked`` (no incident is
+    #: recorded for a peer-authored status), a split's unscored scopes all have legacy results, or the partition
+    #: skipped files or spans multiple waves.
+    INCOMPLETE = "incomplete"
+    #: The job owner cancelled the detached job.
+    CANCELLED = "cancelled"
+    #: The request was rejected before any child ran (invalid depth, unsupported effort).
+    INVALID_REQUEST = "invalid-request"
+    #: A complete result whose gap list is absent, empty, malformed, or deducts more than 1.00 in total.
+    UNSCORED = "unscored"
+    #: A stored envelope written before the bridge recorded confidence.
+    NOT_RECORDED = "not-recorded"
+
+
+#: Every public ``confidence_null_reason`` value, for validation at the envelope boundary.
+CONFIDENCE_NULL_REASONS = frozenset(reason.value for reason in ConfidenceNullReason)
+
+#: The final ``status`` values each reason code may accompany on a single-call envelope: the Status column of the table
+#: in ``rules/envelope.md`` §Confidence, and the ``allOf`` pairs of ``schemas/harness-envelope.schema.json``. A merged
+#: split envelope lifts a scope's code onto its own merged status, so it is not held to this table.
+CONFIDENCE_REASON_STATUSES: dict[str, frozenset[str]] = {
+    **dict.fromkeys(
+        (ConfidenceNullReason.QUOTA.value, ConfidenceNullReason.RATE.value, ConfidenceNullReason.CAPACITY.value),
+        frozenset({"blocked", "timeout"}),
+    ),
+    ConfidenceNullReason.TIMEOUT.value: frozenset({"timeout"}),
+    **dict.fromkeys(
+        (
+            ConfidenceNullReason.OUTPUT_LIMIT.value,
+            ConfidenceNullReason.PEER_UNAVAILABLE.value,
+            ConfidenceNullReason.PEER_FAILED.value,
+            ConfidenceNullReason.EMPTY_RESULT.value,
+            ConfidenceNullReason.CANCELLED.value,
+            ConfidenceNullReason.INVALID_REQUEST.value,
+        ),
+        frozenset({"blocked"}),
+    ),
+    ConfidenceNullReason.REFUSED.value: frozenset({"refused"}),
+    ConfidenceNullReason.INCOMPLETE.value: frozenset({"partial", "blocked"}),
+    ConfidenceNullReason.UNSCORED.value: frozenset({"complete"}),
+    ConfidenceNullReason.NOT_RECORDED.value: frozenset(FINAL_STATUSES),
+}
+
+
+def _provider_reason(kind: FailureClass) -> ConfidenceNullReason:
+    """Return the reason code for a classified provider stop; it is the same string as the incident fault."""
+    return ConfidenceNullReason(kind.value)
 
 
 @dataclass(frozen=True)
@@ -1302,13 +1493,8 @@ class _ChildOutputBuffer:
             return
         try:
             record = json.loads(line)
-            item = record.get("item") if isinstance(record, dict) else None
-            if (
-                isinstance(item, dict)
-                and record.get("type") == "item.completed"
-                and item.get("type") == "agent_message"
-                and isinstance(item.get("text"), str)
-            ):
+            item = _completed_agent_message(record)
+            if item is not None and isinstance(item.get("text"), str):
                 self.last_agent_message = (
                     item["text"].encode("utf-8")[:MAX_CHILD_FRAGMENT_BYTES].decode("utf-8", errors="ignore")
                 )
@@ -1625,7 +1811,8 @@ def _run_child(command: list[str], workspace: Path, timeout: float, job_path: Pa
                 False,
                 "child output drain exceeded the Bridge cleanup grace",
             )
-        return ChildOutcome(stdout, stderr, process.returncode, timed_out, error)
+        # _wait_for_child reports an error only for a cooperative cancellation.
+        return ChildOutcome(stdout, stderr, process.returncode, timed_out, error, cancelled=error is not None)
     except BaseException:
         # Once launched, a rejected boundary or interrupted setup/wait must not
         # leave the owned peer running. Retain partial reader startup for draining.
@@ -1902,9 +2089,10 @@ def _parse_output(stdout: str, host: str) -> ParsedOutput:
             # A top-level error is a notice (reconnect, retry) unless a turn.failed follows it; it is never a verdict.
             advisory = _error_from(record) or advisory
         _collect_touched(record, touched)
-        candidate = _model_candidate(record)
-        if candidate is not None:
-            core = candidate
+        message = _completed_agent_message(record)
+        if message is not None:
+            text = message.get("text")
+            core = _decode_possible_json(text) if isinstance(text, str) else None
     return ParsedOutput(core, tokens, cost, session_id, failure, _observed_models(records), advisory, tuple(touched))
 
 
@@ -1981,7 +2169,7 @@ def _claude_record(records: list[Any]) -> Any:
 def _json_records(stdout: str) -> list[Any]:
     """Load JSON lines while retaining a standalone JSON response as one record."""
     records: list[Any] = []
-    for line in stdout.splitlines():
+    for line in stdout.split("\n"):
         try:
             records.append(json.loads(line))
         except (ValueError, RecursionError):
@@ -1994,19 +2182,12 @@ def _json_records(stdout: str) -> list[Any]:
         return []
 
 
-def _model_candidate(record: dict[str, Any]) -> Any | None:
-    """Extract a possible structured final answer from one event without guessing fields."""
+def _completed_agent_message(record: Any) -> dict[str, Any] | None:
+    """Return a completed Codex agent message even when its text is unusable."""
+    if not isinstance(record, dict) or record.get("type") != "item.completed":
+        return None
     item = record.get("item")
-    if isinstance(item, dict):
-        for key in ("text", "content"):
-            candidate = _decode_possible_json(item.get(key))
-            if candidate is not None:
-                return candidate
-    for key in ("text", "result"):
-        candidate = _decode_possible_json(record.get(key))
-        if candidate is not None:
-            return candidate
-    return None
+    return item if isinstance(item, dict) and item.get("type") == "agent_message" else None
 
 
 def _decode_possible_json(value: Any) -> Any | None:
@@ -2192,6 +2373,11 @@ def _prompt_with_budget(request: Request, *, host: str | None = None) -> str:
         "If unfinished, use partial with remaining work; if blocked, name blockers instead of waiting. "
         "Keep verdict, findings, files_touched, remaining, and blockers decision-critical; put verbose supporting material only "
         "in details. The harness persists details in the transcript artifact and omits them from the public envelope. "
+        "In confidence_gaps, name every limit on how far your result can be trusted, one entry per limit, each written "
+        'exactly "(-0.NN) <limit>": its deduction from 1.00 with two decimals, then the specific limit, such as a file '
+        'not read, a check not run or a claim not verified; a limit that did not lower your trust is "(-0.00) <limit>". '
+        "Deductions sum to at most 1.00. The harness derives the confidence as 1.00 minus their sum and cannot score an "
+        'empty list, so when nothing limits the result, say so in one "(-0.00) <reason>" entry. '
         f"Bridge depth is {request.depth}; run id is {request.run_id}.\n\n"
     )
     child_host = host or ("claude" if request.direction == "codex_to_claude" else "codex")
@@ -2424,12 +2610,22 @@ def _workspace_delta(before: list[str] | None, workspace: Path, touched: Iterabl
 
 
 def _make_envelope(
-    context: EnvelopeContext, core: dict[str, Any], cost: float | None, incident: str | None
+    context: EnvelopeContext,
+    core: dict[str, Any],
+    cost: float | None,
+    incident: str | None,
+    null_reason: ConfidenceNullReason | None = None,
 ) -> dict[str, Any]:
-    """Merge validated core and observed values into the sole public result shape."""
+    """Merge validated core and observed values into the sole public result shape.
+
+    ``null_reason`` is the harness's cause for a result it built itself; without one, the confidence is derived from the
+    child's gap list (see :func:`_confidence_fields`).
+    """
     request = context.request
+    summary = {field: value for field, value in core.items() if field != GAP_FIELD}
     envelope = {
-        **core,
+        **summary,
+        **_confidence_fields(core["status"], core.get(GAP_FIELD), null_reason),
         "model": request.model or "host-default",
         "effort": request.effort,
         "effort_substituted": context.substitution,
@@ -2458,11 +2654,13 @@ def _terminal_envelope(
     partial_output: str | None = None,
     returncode: int | None = None,
     extra_blockers: tuple[str, ...] = (),
+    null_reason: ConfidenceNullReason,
 ) -> dict[str, Any]:
     """Create, record, and return a harness-owned terminal result.
 
     ``fault`` names the incident cause when it is more specific than the status; ``extra_blockers`` adds harness-
     authored context lines after the reason, and ``returncode`` records the child exit status in the incident.
+    ``null_reason`` is required: every harness-built result names why it carries no confidence.
     """
     paths = context.paths
     observed = context.transcript_path is not None
@@ -2492,8 +2690,79 @@ def _terminal_envelope(
     )
     if partial_output is not None:
         core["partial_output"] = partial_output
-    envelope = _make_envelope(context, core, None, incident)
+    envelope = _make_envelope(context, core, None, incident, null_reason)
     return envelope
+
+
+def _confidence_fields(status: str, gaps: Any, null_reason: ConfidenceNullReason | None) -> dict[str, Any]:
+    """Return the public confidence fields for one result.
+
+    A harness-built result passes its cause as ``null_reason``. A child result is scored only when it is ``complete``
+    and its gap list is usable; a ``partial`` or ``blocked`` child result is ``incomplete`` and an unusable gap
+    list is ``unscored``. The child's string gaps stay public in every case, as named limits the caller can report.
+
+    Examples:
+        >>> _confidence_fields("complete", ["(-0.20) tests not run"], None)
+        {'confidence': 0.8, 'confidence_gaps': ['(-0.20) tests not run'], 'confidence_null_reason': None}
+        >>> _confidence_fields("partial", [], None)["confidence_null_reason"]
+        'incomplete'
+        >>> _confidence_fields("complete", None, None)["confidence_null_reason"]
+        'unscored'
+    """
+    public_gaps = list(gaps) if isinstance(gaps, list) and all(isinstance(item, str) for item in gaps) else []
+    reason = null_reason
+    if reason is None and status != "complete":
+        reason = ConfidenceNullReason.INCOMPLETE
+    if reason is None:
+        confidence = derive_confidence(gaps)
+        if confidence is not None:
+            return {"confidence": confidence, GAP_FIELD: public_gaps, "confidence_null_reason": None}
+        reason = ConfidenceNullReason.UNSCORED
+    return {"confidence": None, GAP_FIELD: public_gaps, "confidence_null_reason": reason.value}
+
+
+#: One named gap: its deduction from 1.00 with two decimals, a space, then the limit it names.
+_GAP_LINE = re.compile(r"\(-(?P<whole>[01])\.(?P<hundredths>\d{2})\) (?P<gap>\S.*)")
+
+
+def derive_confidence(gaps: Any) -> float | None:
+    """Derive a confidence as 1.00 minus the deductions a gap list names, or ``None`` when it cannot be derived.
+
+    Each entry must read exactly ``(-0.NN) <gap>`` (``(-1.00)`` at most): the deduction, then the specific limit it
+    stands for, the same shape as a Confidence Block gap. ``(-0.00)`` names a limit that did not lower the score. The
+    sum is taken in hundredths, so the result is exact to two decimals. A value that is not a list of such strings, an
+    empty list, or deductions above 1.00 cannot be scored: an empty list is what a peer that skipped the accounting
+    returns, so a full score needs an explicit ``(-0.00)`` line saying nothing limits the result.
+
+    Args:
+        gaps: The child's ``confidence_gaps`` value, or ``None`` when the child omitted it.
+
+    Returns:
+        The derived confidence from 0.0 to 1.0, or ``None`` when the list cannot be scored.
+
+    Examples:
+        >>> derive_confidence(["(-0.10) tests not run", "(-0.05) one module unread"])
+        0.85
+        >>> derive_confidence(["(-0.00) read-only sandbox"])
+        1.0
+        >>> derive_confidence([]) is None
+        True
+        >>> derive_confidence(["tests not run"]) is None
+        True
+        >>> derive_confidence(["(-0.60) first", "(-0.50) second"]) is None
+        True
+    """
+    if not isinstance(gaps, list) or not gaps:
+        return None
+    total = 0
+    for entry in gaps:
+        match = _GAP_LINE.fullmatch(entry) if isinstance(entry, str) else None
+        if match is None:
+            return None
+        total += int(match["whole"]) * 100 + int(match["hundredths"])
+    if total > 100:
+        return None
+    return (100 - total) / 100
 
 
 def _write_incident(
@@ -3327,7 +3596,7 @@ def job_result(workspace: Path, job_id: str) -> dict[str, Any]:
         # The stored result crossed a disk boundary; re-validate so a tampered
         # or truncated record cannot masquerade as a validated envelope, even
         # when a late cancellation is about to overwrite the status fields.
-        stored = validate_envelope(record["result"])
+        stored = read_stored_envelope(record["result"])
         if _job_cancel_requested(_job_record_path(workspace, job_id), paths=BridgePaths(workspace)):
             return _cancelled_envelope(stored)
         return stored
@@ -3461,6 +3730,9 @@ def _cancelled_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         "status": "blocked",
         "verdict": "cancelled by job owner",
         "blockers": ["cancelled by job owner"],
+        # A score derived for the completed child no longer describes the authoritative, cancelled result.
+        "confidence": None,
+        "confidence_null_reason": ConfidenceNullReason.CANCELLED.value,
     }
     return validate_envelope(cancelled)
 

@@ -454,6 +454,27 @@ class TestBindingFlow:
 
     @pytest.mark.integration
     @_each_executable_tool
+    @pytest.mark.parametrize(
+        "timeout", [pytest.param(10**400, id="huge-positive-int"), pytest.param(-(10**400), id="huge-negative-int")]
+    )
+    def test_malformed_tool_timeout_keeps_stdio_open(self, tool: str, timeout: int, git_workspace: Path) -> None:
+        """Reject a JSON integer outside float range before the provider and keep serving the same connection."""
+        with client() as connection:
+            connection.initialize()
+            binding = bind(connection, git_workspace)["result"]["structuredContent"]
+            arguments = {"task": "Reject before provider dispatch.", "binding_id": binding["binding_id"]}
+            connection.call(tool, 4, {**arguments, "timeout_seconds": timeout})
+            connection.request(5, "ping")
+
+            rejected = connection.receive()
+            assert rejected["id"] == 4
+            assert rejected["error"]["code"] == -32602
+            assert "timeout_seconds" in rejected["error"]["message"]
+            assert connection.receive() == {"jsonrpc": "2.0", "id": 5, "result": {}}
+            assert not (git_workspace / ".temp").exists()
+
+    @pytest.mark.integration
+    @_each_executable_tool
     def test_calls_require_confirmed_binding_before_any_provider_artifacts(
         self, tool: str, git_workspace: Path
     ) -> None:

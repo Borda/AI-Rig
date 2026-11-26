@@ -61,20 +61,28 @@ Exit 0 → print the summary lines (incl. `cost:`) as reply text before any spaw
 
 ## Step 5
 
-Consolidator prompt adds `FILL_GAPS_PLAN=<literal $REPORT_DIR/fill-gaps.json>`; consolidator merges per `consolidator-prompt.md` §Fill-gaps carry-over, incl. one new `findings.jsonl` row per `publish_rows` id. Zero units and zero `candidates` (publish-rows only) → skip Steps 2 launch and 4; consolidator only (`modes/post-agent.md` Step 5).
+Consolidator prompt adds `FILL_GAPS_PLAN=<literal $REPORT_DIR/fill-gaps.json>`; consolidator merges per `consolidator-prompt.md` §Fill-gaps carry-over, incl. one new `findings.jsonl` row per `publish_rows` id. Zero units and zero `candidates` (publish-rows only) → skip Steps 2 launch and 4; consolidator only (`modes/post-agent.md` Step 5). Before dispatch, run Gap ledger preparation from `modes/agent-launch.md` even with zero units, and bind the consolidator to the complete carried set in `$REPORT_DIR/gaps.jsonl`: take the latest record per ID and consider every open record with `carried_from` for closure against current evidence.
 
 ### Carry check
 
-After the publication summary, before the Step 5 publication gate:
+After the publication summary, while the parent publication marker is still present, run this check before the Step 5 publication gate. Leave the marker in place across every refusal, recovery and re-spawn. The Step 5 gate releases the report only after carry verification and producer validation pass.
 
 ```bash
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
 [ -n "$_REPORT_DIR" ] || { echo "! BLOCKED — report-dir sentinel missing; cannot check fill-gaps carry-over"; exit 1; }
+IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
+[ -n "$_RUN_DIR" ] || { echo "! BLOCKED — run-dir sentinel missing; cannot authenticate the fill-gaps plan"; exit 1; }
+_FILL_PLAN="$_RUN_DIR/fill-gaps.json"
+cmp -s "$_FILL_PLAN" "$_REPORT_DIR/fill-gaps.json" || { echo "[gate] parent evidence: fill-gaps.json"; exit 1; }
 python "$PLUGIN_ROOT/bin/fill_gaps_scope.py" verify --report "$_REPORT_DIR/review-report.md"  # timeout: 10000
 ```
 
 - Exit 0 (`[carry] intact`) → Step 5 publication gate.
-- Exit 1, re-spawn unused → run the publication gate's park block (modes/post-agent.md Step 5), then re-spawn the consolidator **once** (`model="opus"`, `effort="high"` for a `foundry:sw-engineer` consolidator, as in modes/post-agent.md Step 5), same prompt plus `Carry-over check rejected: <every printed [carry] line>. The refused report is parked at <REPORT_DIR>/review-report.refused.md; write the corrected <REPORT_DIR>/review-report.md and restore each carried record verbatim from the prior run; only additions are allowed.` Re-run this block. The re-spawn budget is shared with the publication gate: one per run.
-- Exit 1 once the re-spawn is used, or the re-spawn ⏱ timed out or returned no publication → run the publication gate's truncation block (modes/post-agent.md Step 5), print `! BLOCKED — fill-gaps run altered carried prior records: <reasons>; report kept at <path> for inspection` and stop before Step 5b.
+- `[gate] parent evidence: fill-gaps.json` → follow the parent recovery rule in `modes/post-agent.md` to restore the exact plan copy. Re-enter this check after restoration.
+- `[gate] parent evidence: prior ` → run the publication gate's truncation block, print `! BLOCKED — carry check lacks usable prior evidence` with the diagnostic, and stop before Step 5b. Direct the user to run a full `/oss:review <N>`. The consolidator re-spawn budget stays available.
+- Exit 1 with a stdout line beginning with `[carry] ` → carry violation. Follow the applicable branch:
+  - Re-spawn unused → run the publication gate's park block (modes/post-agent.md Step 5), then re-spawn the consolidator **once** (`model="opus"`, `effort="high"` for a `foundry:sw-engineer` consolidator, as in modes/post-agent.md Step 5), same prompt plus `Carry-over check rejected: <every printed [carry] line>. The refused report is parked at <REPORT_DIR>/review-report.refused.md; write the corrected <REPORT_DIR>/review-report.md and restore each carried record verbatim from the prior run; only additions are allowed.` Re-run this block. The re-spawn budget is shared with the publication gate: one per run.
+  - Re-spawn used, or the re-spawn ⏱ timed out or returned no publication → run the publication gate's truncation block (modes/post-agent.md Step 5), print `! BLOCKED — fill-gaps run altered carried prior records: <reasons>; report kept at <path> for inspection` and stop before Step 5b.
+- Any other nonzero result → run the publication gate's truncation block and stop with `! BLOCKED — carry check could not run` and its diagnostic. For any retry, follow the report-dir sentinel recovery rule in `modes/post-agent.md` Step 5.

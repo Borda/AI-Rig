@@ -19,21 +19,21 @@ Section order (fixed): 🚀 Added → ⚠️ Breaking Changes → 🌱 Changed �
 | Category | Section | What goes here |
 | -- | -- | -- |
 | New Features | 🚀 Added | User-visible additions |
-| Breaking Changes | ⚠️ Breaking Changes | Existing code stops working immediately — no prior deprecation period. Prior release deprecated → ❌ Removed instead. |
+| Breaking Changes | ⚠️ Breaking Changes | Behavior verified at `$BASELINE_REF` stops working without published deprecation evidence. |
 | Improvements | 🚀 Added or 🌱 Changed | Enhancements to existing behavior |
 | Performance | 🚀 Added / 🔧 Fixed / 🌱 Changed | Quantitative claims require benchmark evidence; else rewrite to "improved performance" without number. |
 | Deprecations | 🗑️ Deprecated | Old API still works; scheduled removal; replacement exists |
-| Removals | ❌ Removed | Previously deprecated — users had warning. Not ⚠️ Breaking Changes. |
+| Removals | ❌ Removed | Public behavior disappeared after a caller-visible warning or deprecation notice verified at `$BASELINE_REF`. |
 | Bug Fixes | 🔧 Fixed | Correctness fixes |
 | Security | 🔒 Security | Security fixes + CVE dep updates. Security-intent keywords in body always classify here regardless of commit type. OMIT-INTERNAL does NOT apply. |
 | Internal | *(omit)* | Refactors, CI/tooling, deps, housekeeping — omit unless user-impacting |
 | Reverted | 🔄 Reverted (CHANGELOG only) | Introduced AND reverted within range (REVERT_SET) — net effect zero; omitted from DRAFT.md per Net-state principle |
 
-**Same-release feature+fix dedup**: 🔧 Fixed targeting code introduced same release = never shipped = fold into 🚀 Added or omit. **Exception**: fix's commit body itself states a caller-visible behavior change (e.g. "changes behavior for any caller currently relying on...") → still surface a ⚠️ Breaking Changes entry, or a labeled breaking-behavior callout within the Added bullet — never silently absorbed into plain feature prose.
+**Same-release feature+fix dedup**: Fold a fix to never-published behavior into 🚀 Added or omit it. If the fix also changes a different, already-published behavior, surface that part as ⚠️ Breaking Changes only after verifying the affected behavior at `$BASELINE_REF`. The commit body's claim of a caller-visible change is a lead for verification.
 
-**Breaking vs Deprecated vs Removed**: old call still works → Deprecated. Deprecated in prior release, now removed → Removed. **Prior-deprecation body-signal**: commit body contains "deprecated in vX", "previously deprecated", "was deprecated", "emits DeprecationWarning since", or "deprecated since" → treat as Removed regardless of `feat!:`/`BREAKING CHANGE:` markers. **Bug fixed to match spec**: classify as 🌱 Changed when users relied on buggy behavior; ⚠️ Breaking Changes only if load-bearing, causes widespread breakage.
+**Breaking vs Deprecated vs Removed**: If the old call still works, classify as Deprecated. Classify a removal as ❌ Removed only when `$BASELINE_REF` shows both the old public behavior and a caller-visible deprecation warning or published deprecation notice for it. A prior-deprecation claim in a commit body is a lead for checking that baseline. If the published behavior stops working and the baseline has no such warning or notice, classify as ⚠️ Breaking Changes. If baseline evidence is inconclusive, qualify the claim and resolve it in Truth check before assigning either category. When a bug fix changes behavior users relied on, use 🌱 Changed unless `$BASELINE_REF` proves the behavior was published and the correction causes widespread breakage.
 
-**OMIT-INTERNAL body-signal override**: commit body contains "No code changes", "no user-facing changes", "internal only", "no public API changes", "internal buffer changes only", "internal restructure" OR all paths under `.github/`, `ci/`, `scripts/`, `Makefile`, `*.yml` under `.github/` → classify as Internal. **Exception**: BREAKING CHANGE footer or confirmed user-visible breakage overrides.
+**OMIT-INTERNAL body-signal override**: commit body contains "No code changes", "no user-facing changes", "internal only", "no public API changes", "internal buffer changes only", "internal restructure" OR all paths under `.github/`, `ci/`, `scripts/`, `Makefile`, `*.yml` under `.github/` → classify as Internal. **Exception**: investigate a BREAKING CHANGE footer and override the omission when user-visible breakage is verified against `$BASELINE_REF`.
 
 **Cherry-pick annotation (stable-branch mode)**: when `$CHERRY_PICK_SUBJECTS` set, match subject against it. Match → append "(backported from $SOURCE_TAG_REF)". Subject-text matching is heuristic — verify manually for generic subjects.
 
@@ -43,16 +43,25 @@ Section order (fixed): 🚀 Added → ⚠️ Breaking Changes → 🌱 Changed �
 
 Gate — runs after Classify, before Audit changelog.
 
-**Scope**: 🚀 Added, ⚠️ Breaking Changes, 🌱 Changed, ❌ Removed naming a symbol. Skip: 🔧 Fixed, 🔒 Security, 🗑️ Deprecated, 🔄 Reverted. A ❌ Removed claim needs the opposite HEAD result from Added/Changed: the old name must be gone.
+**Resolve the published baseline** before inline or delegated classification. Shared setup pins the commit for the newest tag in `SHIPPED_ELSEWHERE_TAGS`, or `LAST_TAG` when the list is empty. It prints `BASELINE_FILE` with a distinct path for this invocation. Pass that literal path as `BASELINE_FILE` to this block and every later block that reads it. Use the path printed by this invocation's setup even when another invocation in the same session has since run setup. An initial commit used as a range base supplies no publication evidence.
+
+```bash
+IFS= read -r BASELINE_REF 2>/dev/null < "${BASELINE_FILE:-}" || BASELINE_REF=""
+printf 'BASELINE_REF=%s\n' "$BASELINE_REF"
+```
+
+Use the printed `BASELINE_REF` for every published-baseline comparison in this invocation, including promotion, the Draft migration guide's Snippet shape, and subsequent migration verification. Fresh shells read `BASELINE_REF` from the path printed by this invocation's Shared setup. A blank or missing value leaves the old side unverified and rules out a Before snippet. The start of `$RANGE` can be an append marker and supplies no publication evidence.
+
+**Scope**: 🚀 Added, ⚠️ Breaking Changes, 🌱 Changed, ❌ Removed naming a symbol. Skip: 🔧 Fixed, 🔒 Security, 🗑️ Deprecated, 🔄 Reverted. Migration fences of 🗑️ Deprecated items are still checked despite this skip — by adversarial review dimension 1 (`modes/adversarial-review.md`). A ❌ Removed claim needs the opposite HEAD result from Added/Changed: the old name must be gone.
 
 **File set**: not source extensions alone — a public surface can be a `pyproject.toml`/`setup.cfg` extra or config key, invisible to symbol-only tooling (codemap's `fn-rdeps` included). Check code definitions in source (`*.py *.ts *.js *.go *.rs`) and exact key/extra declarations in manifest/config files (`pyproject.toml setup.cfg *.toml`) separately. A mention in a docstring, comment, or reference is not a definition.
 
-For each in-scope change, check the name appropriate to its category — final name at HEAD for 🚀 Added/🌱 Changed, old name at the last published tag for ⚠️ Breaking Changes/❌ Removed/renames. Use the **same claim-specific declaration predicate at both refs**: for Python, identify the actual public module file named by the claim and set `PUBLIC_PATH` to its repository-relative `.py` path.
+For each in-scope change, check the final name at HEAD for 🚀 Added/🌱 Changed and the old name at the published baseline for ⚠️ Breaking Changes/❌ Removed/renames. Use the **same claim-specific declaration predicate at both refs**. For Python, set `PUBLIC_PATH` to the repository-relative `.py` path of the actual public module named by the claim.
 
 - Unknown path or class-method coordinate → inconclusive and manual inspection; never scan unrelated files for a bare name.
 - The AST probe below proves only a module-level binding candidate in that exact file, including direct definitions, assignments, imports, and literal module-level `add_argument` flags. Exit 0 = candidate binding present; 2 = inconclusive, including every unmatched, unsupported, or parse/command failure.
-- A candidate is not public-export proof: confirm the claimed export/entrypoint at `$LAST_TAG` and HEAD (for example package `__init__.py` or `__all__`) before marking the claim truth-checked.
-- Set `REF` and `SYMBOL` for the old name at `$LAST_TAG`, then the category-appropriate name at `HEAD`; use its corresponding `PUBLIC_PATH` at each ref. Codemap may help locate a current candidate but cannot verify a past ref from a HEAD index.
+- Confirm the candidate's public export or entry point at `$BASELINE_REF` and HEAD (for example package `__init__.py` or `__all__`) before marking the claim truth-checked.
+- Set `REF` to `$BASELINE_REF` and `SYMBOL` to the old name, then set `REF` to `HEAD` and `SYMBOL` to the category-appropriate name. Use the corresponding `PUBLIC_PATH` at each ref. Codemap's HEAD index can locate current candidates.
 - Establish absence through explicit source review of the relevant public surface; if it remains uncertain, keep the claim qualified.
 
 ```bash
@@ -60,7 +69,7 @@ PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin
 python "$PLUGIN_ROOT/bin/symbol_exists_at_ref.py" "$REF" "$SYMBOL" "$PUBLIC_PATH"  # timeout: 5000
 ```
 
-Reload `$LAST_TAG` from `${TMPDIR:-/tmp}/release-setup-${CSID}/LAST_TAG` before the baseline probe (Check 41); `$LAST_TAG` is the published boundary, never `$RANGE`'s start in `--append` mode. If unresolved, keep the claim qualified, not baseline-verified. For TypeScript/JavaScript/Go/Rust, inspect a declaration at each ref in `git show <ref>:<path>`; do not count a raw `git grep -w` hit as definition evidence. For a manifest/config claim, use `git grep -nF '<name>' <ref> -- 'pyproject.toml' 'setup.cfg' '*.toml'` to locate candidates at both refs, then confirm the exact key/extra declaration and relevant section; a mention in a comment or value does not count. A command or parse failure is inconclusive, not absence.
+If the baseline is unresolved, keep the claim qualified as not baseline-verified. For TypeScript/JavaScript/Go/Rust, inspect a declaration at each ref in `git show <ref>:<path>`. A raw `git grep -w` hit only locates a candidate. For a manifest/config claim, use `git grep -nF '<name>' <ref> -- 'pyproject.toml' 'setup.cfg' '*.toml'` to locate candidates at both refs, then confirm the exact key/extra declaration and relevant section. A command or parse failure leaves presence inconclusive.
 
 **Category-specific outcomes**: 🚀 Added/🌱 Changed final name present at HEAD → keep (note "truth-checked"); absent → remove from the classified table and append (reload `$WAIVED_FILE` per "Waived changes ledger" below, exact prefix matching `templates/gather-prompt.md`'s delegated-path phrasing):
 
@@ -70,12 +79,12 @@ echo "REMOVED: <item> — symbol not found in HEAD" >> "$WAIVED_FILE"
 
 Cannot determine current state → keep with "(not HEAD-verified)" qualifier.
 
-For ❌ Removed, old name **present at `$LAST_TAG` and absent at `HEAD`** → **keep the ❌ Removed claim** (subject to prior-deprecation classification); HEAD absence is required evidence, never a reason to waive it. Old name still present at HEAD → remove the removal claim, append `REMOVED: <item> — old name still present in HEAD` to `$WAIVED_FILE`; correct its category only when the diff proves another user-visible change. If the old name is absent at `$LAST_TAG`, it did not ship under that name: omit the removal claim and append `REMOVED: <item> — old name absent at <LAST_TAG>, never shipped` to `$WAIVED_FILE`. Do not invent an Added entry unless a final replacement exists at HEAD. An unresolved baseline keeps the qualified claim; it does not prove the removal.
+For ❌ Removed, old name **present at the published baseline and absent at `HEAD`** → **keep the ❌ Removed claim** only with published deprecation evidence at `$BASELINE_REF`. If the baseline had no applicable warning or notice, reclassify under ⚠️ Breaking Changes after verifying that the old public behavior shipped and no longer works. Old name still present at HEAD → remove the removal claim and append `REMOVED: <item> — old name still present in HEAD` to `$WAIVED_FILE`. Correct its category only when the diff proves another user-visible change. If the old name is absent at the published baseline, omit the removal claim and append `REMOVED: <item> — old name absent at <BASELINE_REF>, never shipped` to `$WAIVED_FILE`. Add a replacement entry only when its final name exists at HEAD. An unresolved baseline or inconclusive deprecation evidence keeps the qualified claim.
 
-For ⚠️ Breaking Changes / rename claims specifically: `LAST_TAG` unresolved → keep, qualify "(not baseline-verified)", never auto-downgrade. Old name absent at `$LAST_TAG` and a final name exists at HEAD → reclassify as 🚀 Added (final name only), append:
+For ⚠️ Breaking Changes / rename claims, unresolved `$BASELINE_REF` → keep the claim with "(not baseline-verified)". Old name absent at `$BASELINE_REF` and a final name exists at HEAD → reclassify as 🚀 Added (final name only) and append:
 
 ```bash
-echo "NET-STATE-ADD: ⚠️ Breaking Changes: <item> — <old_name> absent at <LAST_TAG>, reclassified as Added" >> "$WAIVED_FILE"
+echo "NET-STATE-ADD: ⚠️ Breaking Changes: <item> — <old_name> absent at <BASELINE_REF>, reclassified as Added" >> "$WAIVED_FILE"
 ```
 
 — never keep as Breaking without review. This started life as a ⚠️ Breaking Changes claim: in delegated (`prepare`/`audit`) mode it must still count into the returned envelope's `unconfirmed_breaking` and pass the Delegation strategy's item-evidence `AskUserQuestion` gate. Inline modes apply that same gate after Truth check. If no final name exists, omit the unsupported claim and record `REMOVED: ⚠️ Breaking Changes: <item> — no final name exists in HEAD` instead.
@@ -113,15 +122,15 @@ CODEMAP_OK=$(codemap-py query list 2>/dev/null | wc -l)  # timeout: 5000
 
 When `CODEMAP_OK` non-zero:
 
-1. Extract changed public symbols (diff-derived, `__init__.py` surface) — fresh shell, so reload `RANGE` here; an empty range makes the extractor exit 0 with no output, which would read as "no changes":
+1. Extract changed public symbols (`__init__.py` surface) by comparing the published baseline to the release range endpoint. Bind this invocation's `BASELINE_FILE` literal before running the block.
    ```bash
    PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
    IFS= read -r RANGE < "${TMPDIR:-/tmp}/release-range-${CSID}" 2>/dev/null || RANGE=""
    [ -n "$RANGE" ] || { echo "! BLOCKED — release-range sentinel missing; Breaking classification not run (human Classify labels stand, report as unverified)"; exit 1; }
-   IFS= read -r SHIPPED_TAGS < "${TMPDIR:-/tmp}/release-setup-${CSID}/SHIPPED_ELSEWHERE_TAGS" 2>/dev/null || SHIPPED_TAGS=""
-   [ -z "$SHIPPED_TAGS" ] || RANGE="${SHIPPED_TAGS%% *}..${RANGE##*..}"  # API baseline = newest tag users already hold; LAST_TAG..HEAD would flag backported symbols
-   CHANGED_SYMBOLS=$(python "$PLUGIN_ROOT/bin/extract_changed_symbols.py" "$RANGE")  # timeout: 15000
+   IFS= read -r BASELINE_REF 2>/dev/null < "${BASELINE_FILE:-}" || BASELINE_REF=""
+   [ -n "$BASELINE_REF" ] || { echo "Published baseline unresolved; skipping Breaking promotion (keep qualified classifications)"; exit 0; }
+   CHANGED_SYMBOLS=$(python "$PLUGIN_ROOT/bin/extract_changed_symbols.py" "$BASELINE_REF..${RANGE##*..}") || exit $?  # timeout: 15000
    [ -n "$CHANGED_SYMBOLS" ] || { echo "No changed public symbols — skipping Breaking classification"; exit 0; }
    printf '%s\n' "$CHANGED_SYMBOLS"
    ```
@@ -152,14 +161,14 @@ When `CODEMAP_OK` non-zero:
 **Apply**:
 
 - Every `breaking` symbol not already under ⚠️ Breaking Changes → treat as a proposed promotion, citing its external callers as evidence. Do not move it or draft migration output until the gate below accepts it.
-- `migration_lines` = the affected call-site draft — carry into **Draft migration guide** (`breaking_callers` findings) only for an approved Breaking classification; each external call site gets a before→after entry.
+- `migration_lines` = the affected call-site draft — carry into **Draft migration guide** (`breaking_callers` findings) only for an approved Breaking classification; each external call site is listed as an evidence line under its symbol's one before→after snippet, never a snippet of its own (Snippet shape, Draft migration guide).
 - `internal` symbols → leave under their human Classify label (🚀 Added / 🌱 Changed); a same-package-only caller is not a downstream break.
 - `query_complete:false` → label the evidence "possibly-incomplete (codemap coverage partial)" rather than dropping it; do not silently trust it as exhaustive.
 
-**Post-promotion baseline and item-approval gate** — runs after codemap classification, before Audit changelog and every release artifact. For each proposed Added/Changed → ⚠️ Breaking Changes promotion, re-run the category-specific Truth check on the old public behavior/name at `$LAST_TAG` and the relevant HEAD surface; earlier Added/Changed truth evidence and the delegated gather envelope do not verify a later Breaking label.
+**Post-promotion baseline and item-approval gate** — runs after codemap classification, before Audit changelog and every release artifact. For each proposed Added/Changed → ⚠️ Breaking Changes promotion, re-run the category-specific Truth check on the old public behavior/name at the stored `$BASELINE_REF` and on the relevant HEAD surface. The promotion needs its own Breaking evidence.
 
 - Show the exact item, baseline and HEAD evidence or uncertainty, external caller evidence, and proposed final category through `AskUserQuestion`.
-- If the old behavior did not ship at `$LAST_TAG`, retain Added/Changed and omit its Breaking migration line; if baseline or HEAD evidence is inconclusive, do not claim a verified Breaking classification.
+- If the old behavior did not ship at `$BASELINE_REF`, retain Added/Changed and omit its Breaking migration line. Inconclusive baseline or HEAD evidence leaves the proposed Breaking classification unverified.
 - Proceed only after explicit approval of the final category for **each** proposed promotion; ambiguous or absent response aborts before artifact writes.
 - Record the decision and evidence in the gather findings used by downstream phases so highlights, changelog, and migration use the same accepted category.
 - This gate also applies if a delegated classifier proposes a promotion during `prepare`/`audit`; complete it before Phase 2b writes the changelog.

@@ -603,23 +603,35 @@ def _signal_process_group(process_group_id: int, sent_signal: signal.Signals) ->
     return True
 
 
+def _taskkill_tree(pid: int) -> subprocess.CompletedProcess[bytes]:
+    """Run one bounded ``taskkill`` tree kill and refuse to claim cleanup when it cannot report."""
+    try:
+        return subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            check=False,
+            capture_output=True,
+            timeout=2,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ProtocolViolation(
+            "windows-process-tree-cleanup-unproven: "
+            f"returncode=unavailable timeout={error.timeout} "
+            f"stdout={(error.stdout or b'')[:256]!r} stderr={(error.stderr or b'')[:256]!r}"
+        ) from error
+
+
 def terminate_process(process: subprocess.Popen[str], platform: str | None = None) -> None:
     """Terminate and prove cleanup of one local reviewer wave process boundary."""
     active_platform = sys.platform if platform is None else platform
     if active_platform == "win32":
-        try:
-            completed = subprocess.run(
-                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                check=False,
-                capture_output=True,
-                timeout=2,
-            )
-        except subprocess.TimeoutExpired as error:
-            raise ProtocolViolation(
-                "windows-process-tree-cleanup-unproven: "
-                f"returncode=unavailable timeout={error.timeout} "
-                f"stdout={(error.stdout or b'')[:256]!r} stderr={(error.stderr or b'')[:256]!r}"
-            ) from error
+        completed = _taskkill_tree(process.pid)
+        if completed.returncode == 255 and process.poll() is not None:
+            # A tree member can exit between taskkill's process snapshot and its kill, which makes the pass report 255
+            # although nothing it targeted survives. With the leader gone, a second pass over the finished tree proves
+            # the cleanup when it ends the rest (0) or finds nothing left to end (128).
+            retry = _taskkill_tree(process.pid)
+            if retry.returncode in (0, 128):
+                completed = subprocess.CompletedProcess(retry.args, 0, retry.stdout, retry.stderr)
         if completed.returncode != 0:
             raise ProtocolViolation(
                 "windows-process-tree-cleanup-unproven: "

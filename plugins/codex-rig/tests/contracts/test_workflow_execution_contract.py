@@ -1067,10 +1067,10 @@ def test_worktree_publication_requires_native_consent_and_single_runtime_attempt
                 "before, during or after remediation",
                 "carry the request through local promotion without asking the user to request publication again",
                 "including when the original invocation omitted `--worktree`",
-                "Independently read the exact destination branch ref from the verified head repository",
+                "the exact destination ref and its admitted head OID",
                 "a strict ancestor of the delivered commit",
                 "Ask once through native User Questions with **Approve** and **Deny**",
-                "After approval recheck the same source, clean state, current open PR and exact destination branch ref OID",
+                "After approval recheck the same source and clean state, and run `publication_preflight.py` as in step 1",
                 "a direct, one-time runtime approval for the complete owning helper",
                 "The trusted temporary pre-push check requires exactly one update with the approved old commit",
                 "Git's receiver compares that same old commit",
@@ -1081,7 +1081,7 @@ def test_worktree_publication_requires_native_consent_and_single_runtime_attempt
         )
         == []
     )
-    assert "open the standard **Approve** / **Deny** push question" in _contract(_REMEDIATE_SKILL)
+    assert "open the single standard **Approve** / **Deny** push question" in _contract(_REMEDIATE_SKILL)
 
 
 @pytest.mark.installed_plugin

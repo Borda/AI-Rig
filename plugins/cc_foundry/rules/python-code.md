@@ -51,7 +51,8 @@ For multi-OS projects, scripts/hooks/entry points/CI run on every supported OS (
 
 ## Security
 
-- `pickle.load` / `torch.load` on external data require `weights_only=True`
+- Never deserialize untrusted data with `pickle`, including `pickle.load`, `pickle.loads`, and `pickle.Unpickler`.
+- Require `weights_only=True` for external checkpoints loaded with `torch.load`.
 
 ## Code Quality Rules
 

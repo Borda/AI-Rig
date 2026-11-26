@@ -115,6 +115,13 @@ function stripChars(text, chars) {
 
 // ── Normalization ─────────────────────────────────────────────────────────────
 
+const BACKTICK = "`";
+
+/** Whether a hash opens a comment at the start of a line or after a shell blank. */
+function startsLineComment(text, index, start) {
+  return text[index] === "#" && (index === start || text[index - 1] === " " || text[index - 1] === "\t");
+}
+
 /**
  * Remove a word-start `#` comment from one line, tracking quote state.
  * Port of build_blueprint_manifest.strip_line_comment.
@@ -143,12 +150,81 @@ function stripLineComment(line, quote) {
       index += 1;
       continue;
     }
-    if (char === "#" && (index === 0 || line[index - 1] === " " || line[index - 1] === "\t")) {
+    if (startsLineComment(line, index, 0)) {
       return [rstrip(line.slice(0, index)), quote];
     }
     index += 1;
   }
   return [rstrip(line), quote];
+}
+
+/** Find the end of a quoted span, using the generator's raw delimiter rules. */
+function closeNormalizationQuote(text, index) {
+  const quote = text[index];
+  if (quote === "'" && text[index - 1] !== "$") {
+    const end = text.indexOf("'", index + 1);
+    return end === -1 ? null : end + 1;
+  }
+  let position = index + 1;
+  while (position !== null && position < text.length) {
+    const char = text[position];
+    if (char === "\\") position += 2;
+    else if (char === quote) return position + 1;
+    else if (quote === '"' && (char === "$" || char === BACKTICK)) {
+      position = closeNormalizationExpansion(text, position);
+    } else position += 1;
+  }
+  return null;
+}
+
+/** Skip a dollar or backtick expansion inside a quoted span without decoding its text. */
+function closeNormalizationExpansion(text, index) {
+  if (text[index] === BACKTICK) return closeNormalizationQuote(text, index);
+  const opener = text[index + 1];
+  if (opener !== "(" && opener !== "{") return index + 1;
+  const closer = opener === "(" ? ")" : "}";
+  let depth = 1;
+  let position = index + 2;
+  while (position !== null && position < text.length) {
+    const char = text[position];
+    if (char === "\\") position += 2;
+    else if (char === "'" || char === '"') position = closeNormalizationQuote(text, position);
+    else if (char === "$" || char === BACKTICK) position = closeNormalizationExpansion(text, position);
+    else {
+      if (char === opener) depth += 1;
+      if (char === closer) depth -= 1;
+      if (depth === 0) return position + 1;
+      position += 1;
+    }
+  }
+  return null;
+}
+
+/** Yield right-stripped lines, with quoted spans kept intact across physical line breaks. */
+function* unquotedLines(text) {
+  let start = 0;
+  let index = 0;
+  while (index < text.length) {
+    const char = text[index];
+    if (char === "'" || char === '"' || char === BACKTICK) {
+      const end = closeNormalizationQuote(text, index);
+      if (end === null) {
+        yield text.slice(start);
+        return;
+      }
+      index = end;
+      continue;
+    }
+    if (char === "\n" || startsLineComment(text, index, start)) {
+      yield rstrip(text.slice(start, index));
+      const newline = text.indexOf("\n", index);
+      if (newline === -1) return;
+      start = index = newline + 1;
+      continue;
+    }
+    index += char === "\\" && text[index + 1] !== "\n" ? 2 : 1;
+  }
+  yield rstrip(text.slice(start));
 }
 
 /** Drop leading/trailing blank lines and collapse internal blank runs to one. */
@@ -164,15 +240,8 @@ function collapseBlankLines(lines) {
 
 /** Apply the full normalization pipeline to a bash block or command. */
 function normalize(text) {
-  const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-  let quote = null;
-  const stripped = [];
-  for (const line of lines) {
-    const result = stripLineComment(rstrip(line), quote);
-    stripped.push(result[0]);
-    quote = result[1];
-  }
-  return collapseBlankLines(stripped).join("\n");
+  const lfText = text.replace(/\r\n?/g, "\n");
+  return collapseBlankLines(unquotedLines(lfText)).join("\n");
 }
 
 /** Lowercase SHA-256 hex digest of `text` encoded as UTF-8. */

@@ -192,3 +192,7 @@ Known symbol + file >~300 lines: `symbol <mod::name>` → take line span → `Re
 ## Result-prepend contract
 
 Prepend returned results as `## Structural Context (codemap)` section to any agent spawn prompt, with hotspot JSON + per-query output. `codemap_evidence:` line at end of block reports retrieval reliability; agents may skip re-querying only when `completeness=exhaustive`. `codemap-py` unavailable or index missing → emit one-line ⚠ to stderr, proceed with file-read context.
+
+## Change set at a reviewed head
+
+Only when wrapper supplies worktree at reviewed head, its diff file and head commit (review, resolve, remediation of change set at another head): `codemap-py context --root <worktree-at-head> --diff-file <diff> --expect-head <sha> --out <run-dir>/codemap-structural-context.json` replaces batch above for that change set. Wrapper without those inputs keeps batch above. Builds/refreshes index for that head outside the worktree, returns `diff-impact` or one closed cause slug plus low-confidence text-search fallback. Record, status, cause table, fallback rules: `shared/structural-context-contract.md` (same install; `resolve_shared_path.py codemap-py shared`). Report missing structural context only by cause slug; launcher absent → consumer records `codemap-not-installed`, exit `127` → `codemap-interpreter-unsupported`.

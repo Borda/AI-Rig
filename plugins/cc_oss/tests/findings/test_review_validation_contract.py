@@ -141,6 +141,8 @@ def _publication(tmp_path: Path, outcome: str | None = "APPROVE", readiness: str
     }
     _save_envelope(tmp_path, envelope)
     write_lf(tmp_path / "findings.jsonl", "")
+    # a fresh ranked run's Step 2 lineup record; the review's publication gate requires it outside fill-gaps
+    write_lf(tmp_path / "lineup.md", "qa-specialist | spawned | roles: QA\n")
     return report
 
 
@@ -167,6 +169,7 @@ def _candidate(disposition: str | None) -> dict:
         "reason": "hardware-specific assertion still required",
         "feasible_checks_complete": disposition is not None,
         "missing_capability": "native backend hardware",
+        "missing_capability_kind": "hardware",
     }
 
 
@@ -892,13 +895,17 @@ class TestReviewShellGates:
         skill = (_PLUGIN / "skills/review/modes/post-agent.md").read_text(encoding="utf-8")
         step5 = skill.split("## Step 5: Consolidate findings", 1)[1]
         step5 = step5.split('TaskUpdate "Step 5b: Print report header" → `in_progress`', 1)[0]
-        return next(block for block in _bash_blocks(step5) if '--report "$_REPORT_DIR/review-report.md"' in block)
+        return next(
+            block for block in _bash_blocks(step5) if "find_review_report.py" in block and "--producer" in block
+        )
 
     @classmethod
     def _run_review_publication_gate(cls, report_dir: Path) -> subprocess.CompletedProcess[str]:
         """Run the shipped Step 5 block on the report in ``report_dir``, which is also the TMPDIR."""
         session = "publication-gate"
         write_lf(report_dir / f"oss-review-report-dir-{session}", report_dir.as_posix() + "\n")
+        cls._stage_allocation(report_dir, session)
+        (report_dir / "lineup.launch.md").write_bytes((report_dir / "lineup.md").read_bytes())
         env = {
             **os.environ,
             "CLAUDE_PLUGIN_ROOT": _PLUGIN.as_posix(),
@@ -913,6 +920,18 @@ class TestReviewShellGates:
             check=False,
             timeout=15,
         )
+
+    @staticmethod
+    def _stage_allocation(report_dir: Path, session: str) -> None:
+        """Seal the original identity and mode alongside the session's staged report."""
+        launch = report_dir / "launch"
+        launch.mkdir()
+        write_lf(report_dir / f"oss-review-run-dir-{session}", launch.as_posix() + "\n")
+        write_lf(launch / "report-dir.txt", report_dir.as_posix() + "\n")
+        write_lf(launch / "review-mode.txt", "fresh\n")
+        _write_head(launch)
+        _write_head(report_dir)
+        (report_dir / "review-publication.pending").touch()
 
     @_skip_bash_unavailable
     @pytest.mark.parametrize(
@@ -938,6 +957,7 @@ class TestReviewShellGates:
         assert result.returncode == returncode, result.stdout + result.stderr
         assert expected in result.stdout
         assert report.exists()
+        assert (tmp_path / "review-publication.pending").exists() == (returncode != 0)
 
     @_skip_bash_unavailable
     def test_review_publication_gate_refuses_a_row_resolve_cannot_merge(self, confirmed_publication: Path) -> None:
@@ -946,6 +966,37 @@ class TestReviewShellGates:
         result = self._run_review_publication_gate(confirmed_publication.parent)
         assert result.returncode == 1, result.stdout + result.stderr
         assert "[gate] reason: findings.jsonl finding 1 missing author" in result.stdout
+
+    @pytest.mark.parametrize(
+        ("gate", "outcome", "diagnostic"),
+        [
+            pytest.param(f"REVIEW_V1_REJECT_SCOPE @{_HEAD}", "REJECT", "", id="frozen-head"),
+            pytest.param("REVIEW_V1_REJECT_SCOPE @1234567abcdef", "REJECT", "frozen review head", id="stale-head"),
+            pytest.param("REVIEW_V1_REJECT_SCOPE", "REJECT", "frozen review head", id="missing-head-suffix"),
+            pytest.param("REVIEW_V1_PASS", "APPROVE", "frozen review head", id="ordinary-report"),
+        ],
+    )
+    def test_parent_releases_only_a_validated_rejection(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        gate: str,
+        outcome: str,
+        diagnostic: str,
+    ) -> None:
+        """The terminal release requires the canonical rejection to identify the exact allocated head."""
+        report = _publication(tmp_path, outcome)
+        text = report.read_text(encoding="utf-8").replace(f"REVIEW_V1_REJECT_SCOPE @{_HEAD}", gate)
+        write_lf(report, text)
+        self._stage_allocation(tmp_path, "terminal-release")
+        monkeypatch.setenv("CSID", "terminal-release")
+        monkeypatch.setenv("TMPDIR", str(tmp_path))
+
+        assert frr.main(["--report", str(report), "--publish-rejection"]) == bool(diagnostic)
+        assert diagnostic in capsys.readouterr().out
+        assert report.with_name("review-publication.pending").exists() == bool(diagnostic)
+        assert report.with_name("review-publication.published").exists() == (not diagnostic)
 
     @staticmethod
     def _stage_resolve_consumer(run_dir: Path, source_rel: str, seed: dict[str, str]) -> _ResolveConsumerRun:
@@ -1071,7 +1122,7 @@ class TestSkillProse:
             pytest.param("template", "publish nothing", id="template-publishes-nothing"),
             pytest.param(
                 "skill",
-                "Stage 1's existing confirmed-ground block and terminal publisher",
+                "Stage 1's confirmed-ground preparation and terminal publisher",
                 id="skill-existing-publisher",
             ),
             pytest.param(
@@ -1640,6 +1691,7 @@ class TestProducerGate:
         line, so the review's gate-failure routing and its one consolidator re-spawn work unchanged.
         """
         damage(confirmed_publication)
+        _write_head(confirmed_publication.parent)
         assert frr.main(["--report", str(confirmed_publication), "--producer"]) == returncode
         output = capsys.readouterr().out
         assert expected in output

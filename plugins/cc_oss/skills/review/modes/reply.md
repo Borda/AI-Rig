@@ -43,6 +43,8 @@ grep -qE '^\| *Importance *\| *Confidence *\| *File *\| *Line' "$REPLY_OUT" && e
 
 `PART2_PRESENT=false` while the Step 5 report has ≥1 file:line finding → reply is non-compliant (findings folded into prose). Re-spawn `oss:shepherd` once with the same inputs plus: `"Part 2 table is MANDATORY — every file:line finding from the report must be its own row in the | Importance | Confidence | File | Line | Comment | table; do not fold file:line findings into Part 1 prose."` Re-check; if still absent, surface `⚠ Part 2 table missing — findings remain in prose` in the terminal summary.
 
+Posting is separate and never done here. When the user then wants the reply and thread resolutions posted, collect every reply and resolution (all threads, all PRs of the request) into one `gh api graphql -f query='mutation { … }'` command and ask one `gh-write` question for it (`public-github.md` §One approval per request); never a question per thread or PR.
+
 End with `## Confidence` block per CLAUDE.md. Always last thing, regardless of `--reply`.
 
 ```bash

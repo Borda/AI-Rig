@@ -13,7 +13,7 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   /npm_[A-Za-z0-9]{10,}/g,
   /glpat-[A-Za-z0-9_-]{10,}/g,
   /AKIA[0-9A-Z]{16}/g,
-  /\b(?:[Bb]earer|Basic)\s+(?=[A-Za-z0-9._~+/-]*[0-9._~+/-=])[A-Za-z0-9._~+/-]{8,}={0,2}/g,
+  /\b(?:Bearer|Basic)\s+(?=[A-Za-z0-9._~+/-]*[0-9._~+/-=])[A-Za-z0-9._~+/-]{8,}={0,2}/gi,
   /-----BEGIN ([A-Z ]*PRIVATE KEY)-----[\s\S]*?(?:-----END \1-----|$)/g,
 ]
 
@@ -32,7 +32,7 @@ export function redact(value: string): string {
   if (value.length > 2_000) {
     // A cut token or authorization value must not leak its remaining visible prefix.
     output = output.replace(
-      /(?<![A-Za-z0-9])(?:gh[pousr]_|github_pat_|sk-(?:ant-|proj-)?|xox[a-z]-|npm_|glpat-|AKIA|(?:[Bb]earer|Basic)\s+)[A-Za-z0-9_.~+/-]*={0,2}$/g,
+      /(?<![A-Za-z0-9])(?:gh[pousr]_|github_pat_|sk-(?:ant-|proj-)?|xox[a-z]-|npm_|glpat-|AKIA|(?:Bearer|Basic)\s+)[A-Za-z0-9_.~+/-]*={0,2}$/gi,
       "[redacted]",
     )
   }

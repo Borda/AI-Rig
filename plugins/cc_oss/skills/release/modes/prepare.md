@@ -83,7 +83,7 @@ python "$PLUGIN_ROOT/bin/setup_release_dir.py" "$RELEASE_DIR" "$CHANGELOG_FILE" 
 
 **a. Identify highlights** — apply **Identify highlights** logic using classified changes from `$GATHER_FILE`: rank top 3–5 most significant changes (breaking > new public API > major UX > notable fixes), pull one concrete code example per highlight from diff. Write to `releases/$VERSION/HIGHLIGHTS.md`. Source of truth for demo, executive summary, release draft spotlights
 
-**b. Draft migration guide** — apply **Draft migration guide** logic using breaking/deprecated changes from `$GATHER_FILE`. No breaking changes → single line: `No breaking changes in this release.` Shepherd voice review applies. Write to `releases/$VERSION/MIGRATION.md`.
+**b. Draft migration guide** — apply **Draft migration guide** logic using Breaking/Deprecated/Removed changes from `$GATHER_FILE` and the stored `$BASELINE_REF` from the delegated Truth check for Before evidence. When the baseline is unresolved, omit any unsupported Before snippet and state why. No matching changes → `No breaking changes, deprecations or removals in this release.` Shepherd voice review preserves fenced code blocks byte-identically (Snippet shape). Write to `releases/$VERSION/MIGRATION.md`.
 
 ### Phase 4: Demo and summary
 
@@ -118,12 +118,14 @@ Fix and re-run until exits 0 with expected output — **max 3 attempts total**. 
 
 Every ⚠️ Breaking/❌ Removed/rename claim that Truth check, Gather changes' cross-cycle detection, or Post-merge re-validation excluded during this run lives in this invocation's `$WAIVED_FILE` (`.temp/release-waived-$BRANCH-$DATE-<unique suffix>` — see `modes/classify-truth-check.md` "Waived changes ledger"), never in a public artifact. Consolidate it into the version directory so the audit trail survives past `.temp/` cleanup:
 
+Bind the `BASELINE_FILE` literal printed by this invocation's Shared setup before running the block.
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r VERSION < "${TMPDIR:-/tmp}/release-prepare-version-${CSID}" 2>/dev/null || VERSION=""  # reload (Check 41)
 IFS= read -r WAIVED_FILE < "${TMPDIR:-/tmp}/release-waived-${CSID}" 2>/dev/null || WAIVED_FILE=""
 IFS= read -r UNCONFIRMED < "${TMPDIR:-/tmp}/release-unconfirmed-${CSID}" 2>/dev/null || UNCONFIRMED=""
-IFS= read -r LAST_TAG < "${TMPDIR:-/tmp}/release-setup-${CSID}/LAST_TAG" 2>/dev/null || LAST_TAG=""
+IFS= read -r BASELINE_REF 2>/dev/null < "${BASELINE_FILE:-}" || BASELINE_REF=""
 OUT="releases/$VERSION/waived-changes.md"
 [ -n "$VERSION" ] && [ -n "$WAIVED_FILE" ] && [ -f "$WAIVED_FILE" ] || { echo "Error: waiver ledger or release version missing — cannot claim no waived changes" >&2; exit 1; }
 case "$UNCONFIRMED" in ''|*[!0-9]*) echo "Error: verified gather waiver count missing" >&2; exit 1;; esac
@@ -132,7 +134,7 @@ LEDGER_UNCONFIRMED=$(grep -Ec '^(REMOVED|NET-STATE-ADD):' "$WAIVED_FILE" || true
 {
   echo "# Waived changes — $VERSION"
   echo
-  echo "Changes classified during release prep against ${LAST_TAG:-no prior tag} that did not survive into this release — never shipped under the claimed name, reverted before shipping, or superseded across append cycles. Audit trail only; not part of the public changelog."
+  echo "Changes excluded during release prep. Published baseline: ${BASELINE_REF:-unresolved}. Reasons include names that never shipped, pre-release reverts, and changes superseded across append cycles. This file is the internal audit trail."
   echo
   if [ -s "$WAIVED_FILE" ]; then
     sed 's/^/- /' "$WAIVED_FILE"
@@ -156,11 +158,11 @@ Reproduce the full Phase-1 readiness table verbatim — the `| Check | Status | 
 Render as the markdown bullet list below — NOT a box-drawing (`┌─┬─┐`) `File | Status` table.
 - `$CHANGELOG_FILE` — $VERSION entry stamped (Phase 2b); `releases/$VERSION/CHANGELOG.md` symlinks here
 - `releases/$VERSION/HIGHLIGHTS.md` — top 3–5 spotlights with code examples (Phase 3a)
-- `releases/$VERSION/MIGRATION.md` — migration guide (N breaking changes, or "No breaking changes") (Phase 3b)
+- `releases/$VERSION/MIGRATION.md` — migration guide (N migration items, or "No breaking changes, deprecations or removals") (Phase 3b)
 - `releases/$VERSION/demo.py` — story-telling jupytext notebook (Phase 4a; omit if demo excluded)
 - `releases/$VERSION/SUMMARY.md` — internal executive summary (Phase 4b)
 - `releases/$VERSION/DRAFT.md` — user-facing release notes, final assembly (Phase 5)
-- `releases/$VERSION/waived-changes.md` — Breaking/Removed/rename claims excluded against `$LAST_TAG` (N waived, or "No changes were waived") (Phase 6)
+- `releases/$VERSION/waived-changes.md` — excluded Breaking/Removed/rename claims and the published baseline used (N waived, or "No changes were waived") (Phase 6)
 
 ### Next steps
 1. Review all written files

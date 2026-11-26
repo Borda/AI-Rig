@@ -636,7 +636,7 @@ class TestFixtureAdmissionBindings:
         plan = _load(plan_path)
         manifest = _direct_manifest(plan_path, plan)
         roles = set(routing["triggered_roles"])
-        assert plan["schema_version"] == 3
+        assert plan["schema_version"] == 4
         assert plan["inert_fixture_admissions"] == admissions
         # The next guard requires real child provenance; reaching it proves the consumer accepted this exact plan.
         with pytest.raises(SystemExit, match="review-direct-role-set-mismatch"):
@@ -1110,6 +1110,9 @@ def _downgrade_to_historical_plan(run: Path, home: Path) -> None:
         if payload.get("type") == "function_call" and payload.get("name", "").endswith("spawn_agent"):
             arguments = json.loads(payload["arguments"])
             arguments["model"] = "test-parent-model"
+            # Older runs delivered the whole frozen task as the spawn message, not a pointer to it.
+            context = plan["contexts"][int(payload["call_id"].removeprefix("spawn-"))]
+            arguments["message"] = (run / context["context_path"]).read_text(encoding="utf-8")
             payload["arguments"] = json.dumps(arguments)
     _write_jsonl(parent_path, parent)
 

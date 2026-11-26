@@ -65,13 +65,13 @@ def test_skills_designate_all_external_task_sources(host: str, verb: str) -> Non
 
 @pytest.mark.parametrize("host", ["claude", "codex"])
 def test_implement_requires_peer_exit_after_a_stalled_supervisor(host: str) -> None:
-    """A stalled supervisor alone cannot release the caller's workspace edit exclusion."""
+    """A stalled supervisor keeps edit ownership with the peer even after the cutoff."""
     lines = (PLUGIN / f"{host}-skills/implement/SKILL.md").read_text(encoding="utf-8").splitlines()
     instruction = next(line for line in lines if "After a `stalled` status" in line)
-    assert "edit the workspace only after" in instruction
-    assert "peer is confirmed terminated" in instruction
-    assert "terminal peer status or confirmed cancellation" in instruction
-    assert "original hard cutoff has passed" in instruction
+    assert instruction.startswith(
+        "After a `stalled` status, edit the workspace only after the peer is confirmed terminated "
+        "(terminal peer status or confirmed cancellation)."
+    )
     assert "`stalled` and `cancel_requested` do not confirm peer termination" in instruction
     assert "a dead supervisor cannot enforce the hard cutoff" in instruction
 

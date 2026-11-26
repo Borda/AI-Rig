@@ -110,7 +110,7 @@ CODEMAP_ENABLED=auto    # on by default if codemap installed + index found; --no
 - Key boundary: end of Step 3 — parallel review-agent fan-out outputs collected, before Step 5 consolidation.
 - Second boundary: end of Step 5 — consolidated report written, before Step 6 follow-up.
 - Third boundary: immediately before the Step 6 follow-up gate — the idle window; refresh makes a mid-wait `/compact` lossless.
-- Preserve at boundary 1: RUN_DIR, REPORT_DIR, target, CLASSIFICATION, per-agent finding file paths, --keep items, frozen REVIEWED_COMMIT_SHA and REVIEWED_COMMIT_KIND.
+- Preserve at boundary 1: RUN_DIR, REPORT_DIR, target, CLASSIFICATION, per-agent finding file paths, `lineup.md`, `codex-review-reply.md`, --keep items, frozen REVIEWED_COMMIT_SHA and REVIEWED_COMMIT_KIND.
 - Preserve at boundary 2: final report path.
 - Preserve at boundary 3: final report path.
 
@@ -474,12 +474,12 @@ if [ "$codemap_available" = "true" ] && [ -f "${TMPDIR:-/tmp}/dev-review-codemap
     cp "${TMPDIR:-/tmp}/dev-review-codemap-context.md-${CSID}" "$RUN_DIR/codemap-context.md"
 fi
 # review depth by code path — gates FIX perf+arch skip; missing sentinel = FULL
-IFS= read -r IMPACT_LINE < "${TMPDIR:-/tmp}/dev-review-impact-${CSID}" 2>/dev/null || IMPACT_LINE="FULL · impact unknown"
+IFS= read -r IMPACT_LINE < "${TMPDIR:-/tmp}/dev-review-impact-${CSID}" 2>/dev/null || IMPACT_LINE="FULL · impact unknown: codemap unavailable"
 echo "IMPACT_TIER=${IMPACT_LINE%% *}"
 echo "IMPACT=$IMPACT_LINE"
 ```
 
-If Codex available:
+**Optional Codex dispatch.** If Codex is unavailable, skip to [Record the Codex outcome](#record-the-codex-outcome).
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -495,11 +495,19 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 python "$PLUGIN_ROOT/bin/dev_load_shared.py" codex-prepass.md  # timeout: 5000
 ```
 
-Use the loaded `codex-prepass.md` for the **skip/run criteria only** (formatting-only skip, availability check) — do NOT use its dispatch line as the call: its args name no output path, so `$RUN_DIR/codex.md` would never be written and Step 6 would silently skip.
+Use the loaded `codex-prepass.md` for the **skip/run criteria only** (formatting-only skip, availability check) when deciding whether to dispatch. Use the dispatch and scope rules here so the parent records the reply and Step 6 can find `$RUN_DIR/codex.md`.
+
+When the criteria say to skip, continue at [Record the Codex outcome](#record-the-codex-outcome).
 
 Dispatch — substitute `<TARGET>` with its resolved literal value before the call: `Skill(skill="bridge:review", args="--timeout-seconds 230 Read-only adversarial review of <TARGET>. Look for bugs, missed edge cases, incorrect logic, and inconsistencies with existing code patterns. Report findings with file:line locations; do not apply fixes.")` (requires `bridge@borda-ai-rig`).
 
-Oversized `<TARGET>` (optional): dispatch it as the `codex-prepass.md` §Oversized diff partition, with this brief as `task` and `"against": "HEAD"` for the working tree, or `"range": "HEAD~1..HEAD"` under `--committed`; write the merged findings and any `skipped` or failed group to `$RUN_DIR/codex.md` the same way.
+Oversized `<TARGET>` (optional): use the `codex-prepass.md` §Oversized diff partition wave instructions with this brief as `task`. Select the scope by target:
+
+- **Working-tree diff** uses `"paths"` containing only the repository-relative changed files admitted in Step 1. Use the literal Git path names (the NUL-delimited form of the same diff file listing), including admitted non-Python files. Exclude untracked files and paths outside the admitted list. Tell each group to review its listed files' changes against the frozen Step 1 base, using literal Git pathspecs. If the bridge cannot represent admitted paths such as deletions, report them as unreviewed by the partition or use the single call on the same admitted diff. Use the single call or record the lane as unreviewed when the path list is empty or cannot be verified.
+- **Committed diff** uses `"range": "HEAD~1..HEAD"` when Step 1 resolved the target to the last commit.
+- **Explicit file or directory** uses the single call for only that target.
+
+Write the merged findings and the paths or groups the partition could not review to `$RUN_DIR/codex.md`. If the bridge rejects partition mode, use the single call on the same target. In a multi-wave partition no wave carries a `confidence`. The lane score is the one `codex-prepass.md` derives from every wave's group rows, never one wave's envelope. A single-wave partition keeps its own envelope score.
 
 Note: with `--timeout-seconds 230`, `bridge:review` uses its synchronous foreground route and blocks until it returns. Its Write tool is limited to its own scratch task file; it returns findings inline in its response envelope and does not write `$RUN_DIR/codex.md`. No background health-monitoring/liveness-probe protocol applies. After `Skill(skill="bridge:review", ...)` returns, the orchestrator itself writes `$RUN_DIR/codex.md` from the returned envelope's `.findings`/`.verdict`/`.transcript_path` fields.
 
@@ -509,6 +517,14 @@ Quota-blocked co-review (a `blocked` or `timeout` result):
 - Its `fault` is `quota-exhausted` (peer out of credits, never retried by the bridge) → write `codex-blocked:quota` as the first line of `codex.md`.
 - A null `incident`, an unreadable file or any other `fault` (`rate-limited`, `capacity`, …) keeps today's record.
 - Never decide from verdict or blockers text, which a model-authored `blocked` result can copy.
+
+### Record the Codex outcome
+
+Retain the bridge envelope's `status`, `confidence`, `confidence_null_reason` and `confidence_gaps` fields as returned for the Step 4 evidence handoff. In every route, use the Write tool to record the evidence in `$RUN_DIR/codex-review-reply.md` before Step 3 (bridge absent → `peer-unavailable`). Store original envelopes in fenced JSON blocks.
+
+- **Single call or single-wave partition** records the original envelope.
+- **Multi-wave partition** records every wave's original envelope, including its `splits` rows, along with the expected groups, the derived lane score and qualified gap lines, or a null score with the observed cause and any unscored group names.
+- **Failure, skip or absence** records the observed failure, skip or absence reason with the original envelope if one returned. If no envelope exists, record the reason explicitly and leave the lane unscored.
 
 After `$RUN_DIR/codex.md` is written (or skipped/blocked), extract compact seed list (≤10 items, `[{"loc":"file:line","note":"..."}]`) to inject into agent prompts in Step 3 as pre-flagged issues to verify or dismiss. Codex skipped, timed out, or found nothing → proceed with empty seed.
 
@@ -568,13 +584,20 @@ Three stages, in order — never collapse them:
 1. **Classification preselection** (always): the FIX (at `IMPACT_TIER=LIGHT`) / CHORE skips above decide which dimensions are *relevant at all*. Agent 1 always survives because intended behavior applies to every review target. Any other dimension with no target file in its territory is out here and never comes back, at any flag.
 2. **Unit grouping** (always): fold the survivors into spawn units per §Merged spawn units below — Agents 3+6 share one spawn, Agents 4+5 share one spawn, Agents 1 and 2 stay standalone. A unit exists when at least one of its dimensions survived stage 1; its prompt lists only the surviving dimensions' brief files.
 3. **Relevance ranking** (default only): Agent 1 is never ranked out; reserve its unit within the cap, then rank the other units by evidence — target files and lines in their dimensions' territory, what the classification implies, what the structural context flagged (a merged unit ranks by its strongest surviving dimension) — and fill the remaining `FANOUT_MAX - 1` slots. With `--full` (`FANOUT_CAP=0`) skip this stage and spawn every unit of stage 2.
+   - **Promotion within the cap.** Promote any surviving unit covering a changelog or migration guide, a CI workflow, or a stated performance claim in the target. Route CI test jobs to QA when that unit survives preselection and other CI workflow behavior to Agent 1, which also covers test jobs when QA is out. Include the trigger in the unit's delta task line. Rank promoted units ahead of lower-evidence units, using the existing evidence ranking within each group. Fill the remaining slots with unpromoted units. Agent 1 keeps its reserved slot and promotion adds no slots.
+   - A promoted unit left unslotted gets an `Unreviewed dimension: <unit> — <trigger>` line and the 0.85 ceiling applies. Its required reviewer coverage is missing, so Readiness is `incomplete` and the lower 0.70 ceiling binds.
 
 - More work → give each agent more, never add agents.
 - **Spawn the fewest that keep each near `AGENT_CALL_BUDGET`** — not the most the cap allows. Small diff → merge surviving units into fewer spawns, **never zero**.
 - **Diff size never licenses inline review.** ~73-call inline rule covers work-displacement spawns only; review specialists are role-isolated (own system prompt, independent eyes), so it does not apply here. Small diff ≠ low risk: few-line change on hot path often riskiest. Orchestrator never substitutes itself for a unit that survived stages 1–3.
 - **Merge before you split**: two dimensions whose files overlap go to one agent, not two — the fixed pairs below are the floor, not the ceiling.
 - Every spawn prompt states the budget, requires an envelope even on exhaustion — `partial: true` plus what was finished.
-- Dimensions dropped by the cap are listed in the report; never silently skipped.
+
+Dimensions dropped by the cap are listed in the report. Before spawning the batch, use the Write tool to save the cap decisions to `$RUN_DIR/lineup.md` for Step 4:
+
+- **Cap-dropped** records the exact unit name, affected roles and cap reason for every drop.
+- **Promoted but unslotted** records the exact unit name, promotion trigger and required roles for every unit left without a slot.
+- **No omissions** records `No cap omissions` when every preselected unit ran or has a slot.
 
 ### Merged spawn units (shared pattern with oss:review — each spawn costs ~120,851 tok fixed overhead, so paired dimensions share one spawn)
 
@@ -692,7 +715,7 @@ Never drop challenger candidates from validation; only parent-CONFIRMED claims b
 
 ## Step 4: Validate all candidates and independently verify critical/blocking concerns
 
-Agent phase reports must be written to the run-dir before this refresh.
+Write the agent phase reports, `lineup.md` and `codex-review-reply.md` to the run-dir before this refresh. The boundary inventories all three under `finding-files`.
 
 ```bash
 # compaction boundary 1 (compaction-contract.md §Lifecycle) — written before entering Step 4
@@ -721,6 +744,8 @@ fi
 
 Follow the Boundary step printed above before candidate validation and consolidation; reports are the preserved finding-files in the run-dir.
 
+Read `$RUN_DIR/lineup.md` and `$RUN_DIR/codex-review-reply.md` with the Read tool after the boundary, including on resume. If either record is missing or unreadable, recover it from available run evidence. If recovery fails, record that coverage evidence is incomplete, name the missing record and the recovery check, and leave any unsupported Codex score unscored.
+
 File present → parent validates all candidates using the printed protocol before consolidation. File absent → record incomplete process coverage, owner and reinstall recovery; no unconditional approval or unvalidated actionable findings. Exhaust allowed static checks. A child read-only limit does not establish that authorized parent runtime checks are infeasible; record the actual authorization/capability boundary and next check when blocked, and feasible undone work as incomplete.
 
 **Skill-specific**: use **same agent type** that raised finding as verifier (e.g. foundry:sw-engineer verifies foundry:sw-engineer's critical finding). **Spawn cap: max 3 verifier agents** — critical/blocking findings > 3 → group into batches of ≤2 findings per verifier (same origin type per batch); note grouped IDs in rationale; each finding still gets its own verdict. Same cap as the shared protocol and oss:review — unbounded verifier fanout costs ~120,851 tok per critical finding.
@@ -728,6 +753,7 @@ File present → parent validates all candidates using the printed protocol befo
 Before consolidation, persist the parent's all-severity candidate validation and reviewer assessment evidence in `$RUN_DIR/cross-validation.md` with the Write tool.
 
 - Include structured envelope fields defined by the loaded protocol and retain all dispositions.
+- Copy the bridge evidence and cap decisions from those records into `$RUN_DIR/cross-validation.md`, including any unresolved coverage evidence gap. Include returned reviewer confidence scores and whether an authorized runtime check ran against the reviewed source.
 - Pass that literal evidence path to the consolidator.
 - Parent rechecks new/materially strengthened claims and the final envelope before delivery; a model's confirmation label alone is not proof.
 - Non-empty `new_claims` in the consolidator envelope → validate each listed candidate ID against the source before delivery; any still unvalidated stays out of Findings and is listed under the report's open concerns.
@@ -769,12 +795,12 @@ REVIEWED_COMMIT_SHA=<frozen full Step 1 SHA or explicit unavailable reason>
 REVIEWED_COMMIT_KIND=<frozen Step 1 source/base description>
 REVIEW_CHECKLIST=<resolved optional checklist path or empty>
 REVIEW_TEMPLATE=<resolved report-template path>
-Return ONLY compact JSON: {"status":"done","findings":N,"severity":{"critical":N,"high":N,"medium":N,"low":N},"file":"<REPORT_DIR_LITERAL>/review-report.md","confidence":0.N,"summary":"<one-line verdict>"}
+Return ONLY compact JSON: {"status":"done","findings":N,"severity":{"critical":N,"high":N,"medium":N,"low":N},"file":"<REPORT_DIR_LITERAL>/review-report.md","confidence":0.N,"new_claims":["<candidate_id>"],"summary":"<one-line verdict>"}
 ```
 
 `CONSOLIDATOR_INSTRUCTIONS_LITERAL` and `REVIEW_TEMPLATE` are the paths printed above; `VALIDATION_PROTOCOL_LITERAL` is the resolved own-plugin shared directory's `foundry--cross-validation-protocol.md`. Pass only the reference, literal bindings, run-dir preamble and required return envelope. Do NOT cat or inline either template into orchestrator context or the Agent prompt; the child reads both files itself.
 
-Main context receives only the one-liner verdict.
+Parse the compact envelope before delivery. Apply the Step 4 validation rule to the returned `new_claims` IDs, then use `summary` as the one-line verdict.
 
 **Consolidator-unavailable fallback**: `Agent` tool deferred or consolidator times out → read the same instruction file and each agent finding file from `$RUN_DIR/` directly, apply the full validation, precision gate, density and output rules, synthesize the report, and write `$REPORT_DIR/review-report.md` with the Write tool. Missing instruction/report-template files block with restore/reinstall recovery; never synthesize from absent rules.
 

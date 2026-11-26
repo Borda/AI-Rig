@@ -36,7 +36,7 @@ _BASE_REF_SENTINEL = "resolve-base-ref"
 _PLUMBING_TIMEOUT = 3
 #: Seconds allowed for ``git commit``: far above any normal pre-commit hook run, yet bounded so a hook or a signing
 #: prompt waiting on input that never comes cannot hang the resolve run for ever.
-_COMMIT_TIMEOUT = 600
+_COMMIT_TIMEOUT = 540
 
 
 class _CommitAbort(RuntimeError):

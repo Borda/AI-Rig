@@ -18,6 +18,10 @@ Read a detached Codex bridge job's compact result and report its verified comple
 
 Require one job identifier. Run `python "${CLAUDE_PLUGIN_ROOT}/bin/bridge_call.py" result --job-id "<job-id>"`; always pass the same `--workspace` value the originating detached call used; a different or omitted value can resolve to another default workspace and report `missing` for a job still running elsewhere. Return compact JSON envelope. Preserve workspace-relative `transcript_path` and `incident` references; never inline the bounded transcript or peer `details`.
 
+<!-- policy-sibling: plugins/bridge_cc-codex/claude-skills/review/SKILL.md, plugins/bridge_cc-codex/claude-skills/advise/SKILL.md, plugins/bridge_cc-codex/claude-skills/implement/SKILL.md, plugins/bridge_cc-codex/codex-skills/review/SKILL.md, plugins/bridge_cc-codex/codex-skills/advise/SKILL.md, plugins/bridge_cc-codex/codex-skills/implement/SKILL.md (confidence reporting) -->
+
+Report confidence from the envelope: `confidence` is a number only when `status=complete`, derived by the bridge as 1.00 minus the deductions in `confidence_gaps`; otherwise it is `null` and `confidence_null_reason` names the exact cause from the closed set in `rules/envelope.md` §Confidence. Report that code beside the status, carry each `confidence_gaps` line as a named gap, and never substitute a number.
+
 <!-- policy-sibling: plugins/bridge_cc-codex/claude-skills/advise/SKILL.md, plugins/bridge_cc-codex/claude-skills/review/SKILL.md, plugins/bridge_cc-codex/claude-skills/implement/SKILL.md (failure handling; preserve verb-specific recovery) -->
 
 If the Bash call fails before producing JSON (missing interpreter, non-zero exit, malformed stdout), stop and report the raw failure; never fabricate a status. Otherwise handle the status:

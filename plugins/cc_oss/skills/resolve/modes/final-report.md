@@ -41,7 +41,104 @@ cat "$_OSS_RESOLVE/templates/resolve-report.md"  # timeout: 5000
 
 Report template (loaded above) — use for section structure. Its `### Push` section shows the printed `PUSH_STATUS` through the template's status table, never a prose recollection of Step 10. Its `### Review Intake` section appears only when the block printed `INTAKE=degraded`, built from the gap JSON printed beside it, never from recollection of the triage. More than 50 items selected → the report's summary carries Step 3d's large-selection line.
 
-In the final user-facing reply, repeat the PR number and canonical link beside the delivery outcome from `PR_HANDOFF`. For a missing link, reuse this PR's observed metadata URL or validated report link when available. Name a successful push with missing or different head evidence as pushed, PR update unverified. Give the recorded reason for a failed, blocked, declined or unattempted push. Identify staged changes as local even when a separate merge commit was pushed. Missing push evidence means status unknown. For runs without a PR, identify the local checkout and result.
+`skipped-by-user` records the user's own answer (Step 3d "don't push" or Step 10 "Hold"): report it as that decision, never as a failure, a defect or a Confidence gap.
+
+**Report file — required.** Step 9 left an incomplete stub at `<run dir>/resolve-report.md` the moment the run dir existed, and Step 10 updated it. This block names the run dir (minting one when Step 9 never ran), marks the stub as having reached Step 11 and prints `RESOLVE_REPORT=<path>` — the path the full report is written to below:
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR=""
+IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
+IFS= read -r PUSH_STATUS < "${TMPDIR:-/tmp}/resolve-push-status-${CSID}" 2>/dev/null || PUSH_STATUS="unknown"
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/resolve-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
+[ -n "$RUN_DIR" ] || RUN_DIR=".reports/resolve/$(date -u +%Y-%m-%dT%H-%M-%SZ)"  # Step 9 never ran: this run's dir starts here
+echo "$RUN_DIR" > "${TMPDIR:-/tmp}/resolve-run-dir-${CSID}"
+python "$PLUGIN_ROOT/bin/resolve_report_stub.py" mark --run-dir "$RUN_DIR" --pr "$_PR_NUMBER" --impl-dir "$_IMPL_DIR" --step "Step 11 — final report being written (push status $PUSH_STATUS)"  # timeout: 5000
+# gap ledger identity keyed on the head this run started from, so a rerun on the same head carries its open gaps
+IFS= read -r _PR_URL < "${TMPDIR:-/tmp}/resolve-pr-html-url-${CSID}" 2>/dev/null || _PR_URL=""
+IFS= read -r _START_HEAD < "${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}" 2>/dev/null || _START_HEAD=""
+[ -n "$_START_HEAD" ] || IFS= read -r _START_HEAD < "${TMPDIR:-/tmp}/resolve-saved-sha-${CSID}" 2>/dev/null || _START_HEAD=""
+python "$PLUGIN_ROOT/bin/gap_emit.py" prepare --kind resolve --dir "$RUN_DIR" --plugin-root "$PLUGIN_ROOT" --pr "$_PR_NUMBER" --pr-url "$_PR_URL" --head "$_START_HEAD"  # timeout: 15000
+IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""
+cat "$_OSS_SHARED/gap-emission.md" 2>/dev/null || echo "⚠ gap-emission.md absent — record no gap ledger this run"
+```
+
+**Remote branch and run leftovers** — read once here, before the worktree exit below, so both lines describe the checkout that holds the run's commits:
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PUSH_STATUS < "${TMPDIR:-/tmp}/resolve-push-status-${CSID}" 2>/dev/null || PUSH_STATUS="unknown"
+IFS= read -r FORK_REMOTE < "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}" 2>/dev/null || FORK_REMOTE=""
+IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-remote-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""
+IFS= read -r START_HEAD < "${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}" 2>/dev/null || START_HEAD=""
+IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR=""
+covered_by_bounds() {
+    local _COUNT
+    _COUNT=$(git rev-list --count "$1" --not "$START_HEAD" "$2" ${3:+"$3"}) && [ "$_COUNT" = 0 ]
+}
+
+base_extends_bounds() {
+    local _COMMON _SHARED
+    git merge-base --is-ancestor "$2" HEAD || return 1
+    [ -z "$3" ] || git merge-base --is-ancestor "$3" "$2" || return 1
+    # Only advance the exclusion if the new base carries none of the run's earlier work.
+    _SHARED=$(git merge-base --all "$1" "$2") || return 1
+    while IFS= read -r _COMMON; do
+        covered_by_bounds "$_COMMON" "$4" "$3" || return 1
+    done <<< "$_SHARED"
+}
+
+read_remote_bounds() {
+    local _K _BEFORE _AFTER _EXTRA _PENDING="" _BASE="" _PULL="$START_HEAD"
+    local _OID_RE='^([0-9a-f]{40}|[0-9a-f]{64})$'
+    [[ "$START_HEAD" =~ $_OID_RE ]] || return 1
+    while read -r _K _BEFORE _AFTER _EXTRA; do
+        [[ "$_BEFORE" =~ $_OID_RE && "$_AFTER" =~ $_OID_RE && -z "$_EXTRA" ]] || return 1
+        [ -z "$_PENDING" ] || [ "$_K" = pull-end ] || return 1
+        case "$_K" in
+            pull-start)
+                [ "$_BEFORE" = "$_AFTER" ] || return 1
+                _PENDING="$_BEFORE"
+                ;;
+            pull-end)
+                [ "$_PENDING" = "$_BEFORE" ] || return 1
+                _PENDING=""
+                [ "$_BEFORE" != "$_AFTER" ] || continue
+                # A whole-tip exclusion would also erase any run commits before this pull.
+                git merge-base --is-ancestor "$_BEFORE" "$_AFTER" \
+                    && covered_by_bounds "$_BEFORE" "$_PULL" "$_BASE" || return 1
+                _PULL="$_AFTER"
+                ;;
+            base)
+                [ "$_BASE" != "$_AFTER" ] || continue
+                base_extends_bounds "$_BEFORE" "$_AFTER" "$_BASE" "$_PULL" || return 1
+                _BASE="$_AFTER"
+                ;;
+            *) return 1 ;;
+        esac
+    done
+    [ -z "$_K$_BEFORE$_AFTER$_EXTRA$_PENDING" ] && [ -n "$_BASE" ] && printf '%s %s\n' "$_BASE" "$_PULL"
+}
+
+_BOUNDS=""
+_IMPORTS="${TMPDIR:-/tmp}/resolve-remote-imports-${CSID}"
+if [ -s "$_IMPORTS" ]; then
+    _BOUNDS=$(read_remote_bounds < "$_IMPORTS") || _BOUNDS=""
+fi
+read -r BASE_HEAD POST_PULL_HEAD <<< "$_BOUNDS"
+python "$PLUGIN_ROOT/bin/resolve_remote_state.py" --push-status "$PUSH_STATUS" --remote "$FORK_REMOTE" --branch "$HEAD_REF" --start-head "$START_HEAD" --imports-file "$_IMPORTS"  # timeout: 45000
+python "$PLUGIN_ROOT/bin/resolve_leftovers.py" --impl-dir "$_IMPL_DIR" --stash-before "${TMPDIR:-/tmp}/resolve-stash-before-${CSID}"  # timeout: 20000
+[ ! -s "$_IMPL_DIR/group-replay-fallbacks.txt" ] || sed 's/^/GROUP_REPLAY_FALLBACK=/' "$_IMPL_DIR/group-replay-fallbacks.txt"
+```
+
+- `REMOTE_STATE` other than `n/a` → one `**Remote branch**:` line under `### Push`, after the status line. Use the printed `REMOTE_DETAIL` to give the observed head and distinguish all, some, or none of the run's commits. `pushed-externally` can mean all or part of the run. `moved` means the run made no commits, `absent` means the branch is missing, and `unknown` means the comparison was inconclusive. Attribute no branch movement to a specific actor or cause.
+- Missing import bounds leave commit delivery unverified when the remote moved and requires an ancestry comparison. A fast-forward that includes earlier run commits cannot be used as a whole-tip exclusion.
+- `LEFTOVER_BRANCH`, `LEFTOVER_WORKTREE` and `LEFTOVER_STASH` → list each entry under `### Run leftovers`, followed by every `CLEANUP=` command verbatim in one fenced block, in the printed order, and the `STASH_DROP=` text when present. Force-delete suggestions require branch ancestry or identical content on the paths changed since the merge base. An unproven branch may hold unique work. Its `git cherry -v HEAD` output is diagnostic and may omit merge resolutions. The user decides whether to run the listed commands. A stash is named by commit id and only known to have appeared during the run.
+- `LEFTOVER_CHECK=incomplete` → include the printed reason under `### Run leftovers` even if `LEFTOVERS=none`. Otherwise `LEFTOVERS=none` omits the section. `STASH_CHECK=unavailable` → say stashes were not compared.
+
+In the final user-facing reply, repeat the PR number and canonical link from `PR_HANDOFF`. For a missing link, reuse this PR's observed metadata URL or validated report link when available. Name a successful push with missing or different head evidence as pushed, PR update unverified. Give the recorded reason for a failed, blocked, declined or unattempted push and summarize what the remote comparison verified. Identify staged changes as local even when a separate merge commit was pushed. Missing push evidence means status unknown. For runs without a PR, identify the local checkout and result.
 
 Codex quota stop: a printed `C1 codex-blocked:quota item=<id>` → the summary carries one `codex-blocked:quota` line:
 
@@ -59,7 +156,7 @@ A printed `C1 codex-blocked:quota source=challenger` → the same `codex-blocked
 **Tell the review what happened.** When this run consumed a review report, append one outcome per review-sourced item to `resolution.jsonl` beside that report.
 
 - Each outcome: `fixed` / `self-resolved` / `rejected` / `skipped` / `pending`, finding title and location, commit hash, reason.
-- `fixed` and `self-resolved` need an implementation record (Phase 2 commit, Codex-direct record, or a `[resolve No.<id>]` commit after this run's base head); an accepted but unmerged item stays `pending`.
+- Grouped `fixed` and `self-resolved` outcomes require item proof from replay against the current checkout; an item absent from that proof stays `pending`. Other commit modes retain their existing Phase 2, Codex-direct and per-item commit evidence.
 - The next `/oss:review` of this PR reads the ledger, confirms earlier fixes at the new head and re-checks rejected findings before deciding whether to report them again.
 - Append-only and idempotent per run; the script builds records from this run's own files, never from recollection:
 
@@ -69,21 +166,22 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 IFS= read -r BASE_SHA < "${TMPDIR:-/tmp}/resolve-base-sha-${CSID}" 2>/dev/null || BASE_SHA=""
+IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" 2>/dev/null || COMMIT_MODE="unset"
 if [ -n "$REPORT_FILE" ] && [ -f "$REPORT_FILE" ] && [ -f "$IMPL_DIR/action-items.jsonl" ]; then
-    python "$PLUGIN_ROOT/bin/append_resolution.py" --impl-dir "$IMPL_DIR" --review-dir "$(dirname "$REPORT_FILE")" --base-sha "$BASE_SHA"  # timeout: 30000
+    python "$PLUGIN_ROOT/bin/append_resolution.py" --impl-dir "$IMPL_DIR" --review-dir "$(dirname "$REPORT_FILE")" --base-sha "$BASE_SHA" --commit-mode "$COMMIT_MODE"  # timeout: 30000
 else
     echo "→ no review report consumed — resolution ledger skipped"
 fi
 ```
 
-**A push the user approved that did not land — flag it.** Applies when `PUSH_STATUS` is `rejected-remote` or `rejected-non-ff`: the push was asked and approved (Step 3d run approval or the Step 10 question) and then failed, so the PR on GitHub does not carry this run's commits.
+**A push the user approved that failed.** Applies when `PUSH_STATUS` is `rejected-remote` or `rejected-non-ff`.
 
-- The opening one-line summary names it (`… push failed`), never counting the run as done or leaving it to the `### Push` section alone.
-- `### Push` shows the template's line for the status, with the printed `PUSH_ERROR` line (`rejected-remote`) verbatim.
-- Under the Confidence `**Gaps**`, add `- (-0.NN) approved push did not land — the PR on GitHub does not carry these commits`.
-- Never claim the PR carries the local commits, and never describe a remote 5xx or a refused push as a missing upstream or a guard block.
+- The opening one-line summary names the attempt (`… push failed`) and states the observed delivery outcome when available.
+- In `### Push`, use `Push rejected (non-fast-forward)` for `rejected-non-ff` and `Push approved but failed` with the printed `PUSH_ERROR` verbatim for `rejected-remote`. These replace the template's rejection lines. Put branch contents and any recovery action after the attempt status, using `REMOTE_STATE` and `REMOTE_DETAIL`.
+- Apply no delivery deduction when the observed branch contains all run commits. For partial delivery, base the deduction on the missing commits. If the branch is absent or the observation proves none of the run's commits reached it, record that observed delivery gap.
+- With `unknown` or missing comparison evidence, report delivery as unverified and base any deduction on the verification gap. A rejection alone gives no evidence of branch contents.
 
-**Unblock push — last actionable item.** Applies when `PUSH_STATUS` is `blocked-guard`, `blocked-permission`, `blocked-needs-manual-push` or `rejected-remote`.
+**Unblock push — last actionable item.** Applies to `blocked-guard`, `blocked-permission`, and `blocked-needs-manual-push`. For `rejected-remote`, include it only when remote evidence shows missing commits or delivery remains unverified. Omit it when all run commits are verified on the remote.
 
 - The block above `cat`s the `PUSH_UNBLOCK` file; end the report — after `**Next**`, the Challenge Log, Confidence, and every other section — with a `## Unblock push` section that repeats its lines verbatim in a fenced block.
 - The user returns to the bottom of the report and runs exactly those lines; never paraphrase, reorder, or regenerate them.
@@ -95,13 +193,39 @@ Immediately before printing it — the one standalone bookkeeping call, so a com
 TaskUpdate(task_id=TASK_CLOSE, status="completed")
 ```
 
-**Print the final report — including the full Action Items resolution table — inline to terminal.**
+**Write the final report to the printed `RESOLVE_REPORT` path with the Write tool, then print it — including the full Action Items resolution table — inline to terminal.** Both are required: the file replaces the incomplete stub, so the run dir records how the run ended; the terminal copy is what the user acts on. The path already holds the stub, and the Write tool refuses to overwrite a file not read in this session: Read the stub at `RESOLVE_REPORT` with the Read tool first, then Write over it.
 
 > **Output-Routing exemption (canonical)**: the Step 11 final report is a read-in-context, acted-on-immediately resolution summary the user must see to confirm every item and how it resolved.
 >
 > - Always print the full Action Items table inline to terminal regardless of row count — this is the whole point of the report.
 > - Global Output Routing (*5+ findings → `.temp/output-*.md`, summary only*) does **not** apply; never divert this table to a file in place of showing it.
-> - Writing a durable copy to `.reports/resolve/` in addition is fine, but the inline terminal print is mandatory and never replaced by a prose summary.
+> - The durable copy at `RESOLVE_REPORT` is required as well, never instead of the inline print; the inline print is never replaced by a prose summary.
+
+**Gap ledger** (`gap-emission.md`, printed by the Report file block): after the report, Write each gap of its `## Confidence` **Gaps** to the printed `GAP_STAGE` path (`<run dir>/gaps.jsonl.rec`) with the Write tool, gap fields only, never a `GAP_CARRIED` id again; no gaps → stage nothing. The block below appends it.
+
+Then confirm the file on disk is the final report, not the stub, and append the staged gaps:
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/resolve-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
+[ -n "$_RUN_DIR" ] || { echo "REPORT_STATE=missing (no run dir recorded — run the Report file block above)"; exit 0; }
+python "$PLUGIN_ROOT/bin/resolve_report_stub.py" status --run-dir "$_RUN_DIR"  # timeout: 5000
+python "$PLUGIN_ROOT/bin/gap_emit.py" append --dir "$_RUN_DIR"  # timeout: 15000
+```
+
+`REPORT_STATE` → what to do; the block asks nothing and never stops the run:
+
+- `final` → continue.
+- `incomplete` → Read the printed `RESOLVE_REPORT` path, Write the report over it and run this block once more.
+- `missing` → Write the report to the printed `RESOLVE_REPORT` path and run this block once more.
+- `unreadable` → the path exists but cannot be read (a directory, no permission): treat it as `missing` and try the Write once; refused → print `⚠ final report not saved: <RESOLVE_REPORT> unreadable` and add one Confidence line `final report not saved: <RESOLVE_REPORT> unreadable`, then continue — the inline copy still carries the report.
+
+`GAP_LEDGER=refused` → correct the named records in the staged file once and rerun the block; refused again → one Confidence line `gap ledger refused: <first error>`, continue.
+
+**GitHub writes for you.** An item only a GitHub write can close (a PR description edit, a review-thread resolution, a code-scanning alert dismissal, a reply) is never done by this run and never asked about here. List each one in a `### GitHub writes for you` section: the item and what the write does, one table row each. Every write that GraphQL can carry (thread replies and resolutions, comments) goes into ONE combined `gh api graphql -f query='mutation { … }'` command printed under the table, ready for the user's own `gh-write` approval as a single approval (`public-github.md` §One approval per request); never one command per item or per PR. Long text that needs `--body-file` goes to `<run dir>/gh-write-<id>.md` with the Write tool and keeps its own command. In the Action Items table such an item keeps `⊘` / `skipped`, never a failure; the section carries the handoff.
+
+**Grouped-commit fallbacks.** Every `GROUP_REPLAY_FALLBACK=` line the remote-branch block printed goes into the Action Items summary as "committed with its group as a whole file".
 
 **Action Items table** — one row per selected item, columns: `#` | `Type` | `Change` | `Status` | `Resolution` | `Commit`:
 
@@ -139,9 +263,9 @@ IFS= read -r PUSH_STATUS < "${TMPDIR:-/tmp}/resolve-push-status-${CSID}" 2>/dev/
 # stage mode: skip restore, else staged work lost
 if [ "$COMMIT_MODE" = "stage" ]; then
     echo "⚠ COMMIT_MODE=stage: changes are staged on $(git branch --show-current) — caller restore skipped to preserve staged work (saved HEAD=$SAVED_SHA). Commit on this PR branch first; then restore the caller's branch or detached HEAD."
-# unpushed work (declined, blocked, rejected or never attempted): stay on the branch holding it, for review or a manual push
+# Keep the checkout available for review when this run did not push.
 elif [ -n "$SAVED_BRANCH" ] && [ "$PUSH_STATUS" != "pushed" ]; then
-    echo "→ Staying on $(git branch --show-current) — commits not pushed (PUSH_STATUS=$PUSH_STATUS). Return later with: git switch $SAVED_BRANCH"
+    echo "→ Staying on $(git branch --show-current) (PUSH_STATUS=$PUSH_STATUS). Return later with: git switch $SAVED_BRANCH"
 elif [ -n "$SAVED_BRANCH" ]; then
     if git switch "$SAVED_BRANCH" 2>/dev/null; then echo "→ Restored to $SAVED_BRANCH"; else echo "⚠ Could not restore $SAVED_BRANCH — staying on $(git branch --show-current); saved caller HEAD=$SAVED_SHA"; fi  # timeout: 5000
 else
@@ -149,7 +273,7 @@ else
 fi
 ```
 
-**Branch after the run** — the block above returns to `SAVED_BRANCH` only when `PUSH_STATUS=pushed`. Any unpushed outcome (push declined, blocked, rejected or never attempted) leaves the session on the PR branch that holds the commits, so the user can inspect them or push by hand; the block prints how to switch back.
+**Branch after the run** — the block above returns to `SAVED_BRANCH` only when `PUSH_STATUS=pushed`. Other attempt statuses leave the session on the PR branch for inspection. The block prints how to switch back.
 
 **Worktree exit** — if `WT_ENABLED=true` and a worktree was entered at Step 4, follow `worktree-isolation.md` §Exit — `git branch --show-current`, then `ExitWorktree(action="keep")` to return the session to the main tree. Append the `Worktree` block with the path to any local work. Describe the worktree as disposable only when the push was verified and all changes were committed. The `SAVED_BRANCH` restore above was a no-op — the main tree was never switched. Never auto-merge.
 

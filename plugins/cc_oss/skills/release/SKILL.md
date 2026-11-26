@@ -178,6 +178,8 @@ fi
 
 **Agent Resolution** — `agent-resolution.md` (loaded above): foundry check + fallback table. Foundry not installed → at every spawn substitute `foundry:X` with `general-purpose` + the table's role prefix and model. Agents this skill dispatches: `foundry:sw-engineer` (gather, size-guard gather, adversarial review), `foundry:doc-scribe` (changelog audit, contributors), `oss:shepherd` (public-facing voice review). The `foundry:humanizer` pass in `modes/release-draft-template.md` keeps its own availability rule. <!-- Inline fallback (if agent-resolution.md unreadable): foundry:sw-engineer → general-purpose, foundry:doc-scribe → general-purpose. -->
 
+**Published baseline handoff** — `release_setup.py` prints `BASELINE_FILE=<path>` for this invocation. The file under the setup directory holds the full commit ID for the newest tag in `SHIPPED_ELSEWHERE_TAGS`, or `LAST_TAG` if that list is empty. It is empty when no published tag resolves. Keep the literal path from this setup output and bind it as `BASELINE_FILE` in every later shell that reads it, including after compaction or another release invocation in the same session.
+
 <!-- branch: no-stable-tags — isolated; ≤1 call; fires only when repo has no stable git tags -->
 
 When no stable tags exist, `LAST_TAG` resolves to initial commit — surface via `AskUserQuestion` ("No stable tags found. Range base is initial commit — proceed?"). Options: (a) Proceed with initial commit as base · (b) Abort — stop release process. On (b): stop, print "Release aborted — no stable tags found; create a tag first with `git tag v0.1.0`" and exit.
@@ -224,13 +226,35 @@ Pick top 3–5 most significant changes from Classify. Ranking: breaking changes
 
 ## Draft migration guide
 
-Always produce. No breaking changes → single line "No breaking changes in this release." Deprecations/removals → show before→after code examples. State in preamble: API deprecated in prior release and now removed → ❌ Removed (not Breaking).
+Always produce. No ⚠️ Breaking, 🗑️ Deprecated or ❌ Removed items → single line "No breaking changes, deprecations or removals in this release." (no snippet). Any such item → before→after snippet per **Snippet shape** below — deprecations or removals without breaking changes included. State in preamble: API deprecated in prior release and now removed → ❌ Removed (not Breaking).
 
-**Tone for a scheduled removal** (deprecated earlier, removed now as announced): calm, matter-of-fact, reassuring. Say it was deprecated since `<version>` with a warning, this removal is the planned follow-through, then give replacement and a short before→after. No alarm words (breaking, urgent, must, suddenly, dropped, no longer works), no ⚠️. Say users already on the replacement need no change. Unwarned breaking changes keep direct wording.
+**Snippet shape** (canonical — DRAFT.md Migration guide, `MIGRATION.md`, append, prepare, strike, provenance and review paths reference this, never restate):
 
-If `migration_gaps` non-empty (from Validate migration docs): for each `[MISSING-MIGRATION]` item, add dedicated section covering that symbol with before→after example. For each `[SHALLOW]` item, expand existing coverage to add concrete upgrade instructions.
+- Scope: one snippet per migration symbol — each ⚠️ Breaking / 🗑️ Deprecated / ❌ Removed symbol write-up and `### <symbol>` block. Never one per call site: `breaking_callers` call sites (`migration_lines`) are listed under their symbol's snippet as evidence lines (`` `caller` — `path` ``), no snippet each.
+- Published baseline = the commit ID read as `BASELINE_REF` from this invocation's `BASELINE_FILE`. Use it for both classification and migration evidence, including `--append`. If the file has no published commit, leave the Before claim unverified.
+- Evidence only: `Before` only from `git show <published baseline>:<path>`, `After` only from HEAD; identifiers verbatim, trimmed to the changed call (the symbol's call shape, or one caller line present at both refs). Diff lines (`-`/`+`, incremental `--append` ranges included) only locate the change, never source a snippet — an intermediate form never shipped.
+- Removed symbol → `Before` from the published baseline, `After` = its replacement at HEAD; no replacement → no snippet plus a one-clause reason.
+- No verifiable old/new code (config-only, behavior-only, form absent at either ref) → state the change in prose plus the setting's before and after, each on its own line (`` Before: `timeout: 30` `` then `` After: `timeout: 60` ``), when both values are verifiable; else omit the snippet and say why in one clause. Never fabricate code.
+- Form: one minimal fenced block, a few lines; fence language matches the source file; `Before` first, then `After`, each label a code comment in that language on its own line above its code (`# Before (<previous version>)`, `# After (<this version>)`). Every before/after the skill writes — fence, setting, comment or behavior prose — puts Before and After on separate lines, never joined on one line (`X → Y`). A commented output or behavior inside a fence follows the same rule: one comment line for what Before gave, another for what After gives (`# Before: returns 3`, `# After: returns 4`), never `# was 3, now 4` on one line. Only grouped-table rows keep `old → new` in one row.
+- Grouping: a run of more than 3 mechanical items sharing one transformation (pure renames, same-shape deprecations, moved imports) → one shared representative before/after snippet plus a compact `old → new` table with one row per symbol. Every symbol keeps its row, so migration-doc coverage (`[MISSING-MIGRATION]`) still matches names and a row counts as covered with an upgrade path. Signature or behavior changes keep an individual snippet. Each row obeys the evidence rule (old name at the published baseline, new name at HEAD).
+- Unit: a migration item = heading + prose + fence (+ its call-site evidence lines) — record (provenance `anchor_text`), add and strike it as one unit, never leaving an orphaned fence. Grouped block: record, add and strike per table row; the struck row was the representative → re-derive the shared snippet from a surviving row; last row struck → strike the whole block as one unit.
+- Rewrites (shepherd, humanizer) keep every fenced code block byte-identical; the orchestrator compares fences before and after each rewrite and restores the pre-review fences on any difference (`modes/release-draft-template.md`).
+- Gate: adversarial review dimension 1 checks every fence line and grouped table row against its ref (`modes/adversarial-review.md`).
 
-If `breaking_callers` non-empty (from Breaking-change classification): for each Breaking symbol, add a before→after section citing its external call sites (the `migration_lines`) so downstream consumers see exactly which of their call sites must change. When that phase reported `query_complete:false`, prefix the section "Affected call sites (possibly-incomplete — codemap coverage partial)".
+```python
+# Before (<previous version>)
+old_name(arg, flag=True)
+# Before: returns a list
+# After (<this version>)
+new_name(arg, enabled=True)
+# After: returns a tuple
+```
+
+**Tone for a scheduled removal** (deprecated earlier, removed now as announced): calm, matter-of-fact, reassuring. Say it was deprecated since `<version>` with a warning, this removal is the planned follow-through, then give replacement and a short Before/After per **Snippet shape**. No alarm words (breaking, urgent, must, suddenly, dropped, no longer works), no ⚠️. Say users already on the replacement need no change. Unwarned breaking changes keep direct wording.
+
+If `migration_gaps` non-empty (from Validate migration docs): for each `[MISSING-MIGRATION]` item, add that symbol's coverage per **Snippet shape** (its own section, or a row in a grouped block). For each `[SHALLOW]` item, expand existing coverage to add concrete upgrade instructions and its snippet when missing.
+
+If `breaking_callers` non-empty (from Breaking-change classification): for each Breaking symbol, add a section with its one **Snippet shape** before→after and its external call sites (the `migration_lines`) listed under it as evidence lines, so downstream consumers see exactly which call sites must change. When that phase reported `query_complete:false`, prefix the section "Affected call sites (possibly-incomplete — codemap coverage partial)".
 
 ## Generate release demo
 

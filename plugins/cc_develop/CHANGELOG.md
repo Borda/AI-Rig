@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.53.0
+
+- `/develop:review` reports confidence from named coverage gaps.
+  - Each capped unit is named on an `Unreviewed dimension:` line. A missed promoted unit caps confidence at 0.85, or at 0.70 when owed reviewer coverage makes Readiness `incomplete`. The report explains the separate Gate, Outcome and Readiness axes. Candidate validation records missing capabilities by kind and names failed package provisioning. A confirmed critical or high finding bars approval.
+  - An oversized Codex co-review partitions only the admitted Git diff or commit range. Explicit files and directories use a single call. The report names paths and groups the partition could not cover. A multi-wave run takes the lowest eligible group score only when every expected group has one. Unscored replies carry the bridge cause and named gaps. A missing hardware class reads `not reproducible on this host: requires <CLASS>`.
+  - Review keeps the lineup and original Codex replies through cross-validation and resume. If either cannot be recovered, the report names the missing evidence and closing check, marks Readiness `incomplete`, and leaves unsupported Codex confidence unscored. Required controls are enforced and closed gaps do not lower the score.
+- A missing declared package can be provisioned once in `/develop:fix`, `/develop:feature` and `/develop:refactor`.
+  - `dev_env_provision.py` builds a reusable environment outside the checkout from declared runtime dependencies, extras, and test and dev groups. It validates full requirement specs, accepts hash-pinned names, and installs only approved official-index wheels. The fallback declines unapproved transitive requirements. The receipt gives a specific cause for skipped and failed requirements and records host facts.
+  - Default-index planning honors scoped sources and locks, project installer settings, and site settings from the selected interpreter. Unreadable or unmodeled routing stops the default-index plan, as do requirements includes whose sources cannot be established. Receipts distinguish includes, direct references and routing without printing source credentials. Reuse binds the cache to the declarations and selected interpreter, checks applicable distributions, and retries any still missing.
+  - `dev_run_tests.py`, `dev_test_targets.py --run` and `run_pytest_short.py` accept `--env <receipt>` for a direct pytest retry with the same arguments, output capture and verdict checks. The selector refuses an empty or changed ordered target list and writes the ordinary record after a valid retry. Invalid Git revisions stop discovery and non-ASCII paths survive it. The checkout's `src/` and root precede the inherited `PYTHONPATH` so the original source is imported.
+  - `/develop:review` stays read-only and names `dev_env_provision.py --repo <root> --probe-import <module>` as the closing check for a missing package.
+- `/develop:review`'s impact line names why impact was unknown. A stale or root-mismatched index, a failed query, or malformed change or caller data keeps the full lineup. The shared impact-tier helper accepts a `codemap-py context` record and distinguishes a refused context request from a failed query.
+- The adversarial loop uses `foundry:challenger --codex-full` for every round with Foundry installed, subject to the recorded Codex quota stop. Findings already present in the reviewed scope follow the same fix rules. A recurring invariant requires root-cause evidence and an invariant still open after three fix rounds prompts a redesign decision.
+- Blueprint matching preserves quoted data, including multiline values and literal `#` characters. A command with changed quoted text goes through normal permission checks.
+- The review checklist flags external `pickle.load` inputs and treats `weights_only=True` as a `torch.load` option so findings can name the applicable control.
+- Windows runs report a blast-radius answer that cannot be decoded as a failed query instead of an empty success, and agent wake-ups find deliverables listed with Git Bash `/c/...` paths, so a finished agent no longer stays pending.
+
 ## 0.52.1
 
 - `/develop:review` verdicts weigh the remaining required work against the change's own purpose and size. A finding whose fix reverses the change's central intent or rewrites most of its diff now yields Major revision (or Insufficient, but a good initiative) instead of Minor changes.

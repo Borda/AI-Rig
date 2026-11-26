@@ -12,12 +12,16 @@
 
 **Skip entire section if `CODEMAP_ENABLED=false`** — sets `codemap_available=false` for downstream agent prompts; agents fall back to file reads.
 
+**Change-set impact at the reviewed head.** `codemap-py context` (codemap-py `structural-context-contract.md`) builds or reuses a per-head index under `${TMPDIR:-/tmp}/codemap-context`, outside every checkout, refuses a root not at the snapshot head (`--expect-head`), and writes one record with a closed-set `status`/`cause`. The impact tier comes from that record (`review_impact_tier.py --context-record`); an `unavailable` record names its cause in `Impact:`, and its text-search fallback goes into the staged context as low-confidence evidence only. Step 2 copies the record to `$RUN_DIR/codemap-structural-context.json`. Launcher exit 127 → `codemap-interpreter-unsupported`; only a launcher without the `context` command (usage exit 2, `unknown command 'context'`) keeps the earlier `diff-impact` query on this checkout's index when its full `HEAD` matches the snapshot head (otherwise `head-mismatch`); a request the command refused (usage exit 2, `invalid_context_request`) → `context-request-invalid`; any other missing record (unwritten `--out`, crash) → `query-failed`; neither ever queries this checkout's index. A freeze the caller inherited (`SCAN_NO_AUTOBUILD=1`) also forbids building the per-head index; the stale-currency freeze covers only this checkout's index.
+
 ```bash
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 codemap_available=false
 IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/review-codemap-enabled-${CSID}" || CODEMAP_ENABLED="false"
 IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/review-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
+# caller's own freeze binds the per-head context index too; the stale-derived export below covers only this checkout's index
+_INHERITED_FREEZE="${SCAN_NO_AUTOBUILD:-0}"
 if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
 _CODEMAP_NO_HEAL=""
 if [ "$CODEMAP_CURRENCY" = "stale" ] || [ "${SCAN_NO_AUTOBUILD:-0}" = "1" ]; then _CODEMAP_NO_HEAL="--no-heal"; fi
@@ -40,10 +44,41 @@ if [ "$CODEMAP_ENABLED" = "true" ] && command -v codemap-py >/dev/null 2>&1; the
         echo "### Change-set blast radius (diff-impact)"
         # PR diff not in local git objects — feed the Step-0 snapshot (no re-fetch); captured (not streamed) so fn-rdeps/fn-blast loop below reuses its qname derivation
         IFS= read -r _SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" 2>/dev/null || _SNAP_DIR=""
-        _DIFF_IMPACT_JSON=$(codemap-py query --timeout 15 $_CODEMAP_NO_HEAL diff-impact --diff-file "$_SNAP_DIR/pr.diff" 2>/dev/null)
-        printf '%s\n' "$_DIFF_IMPACT_JSON"
-        # review depth from code path, not diff size — overrides Step 1's fail-safe FULL default; stdout to sentinel, not stage
-        printf '%s\n' "$_DIFF_IMPACT_JSON" | python "$PLUGIN_ROOT/bin/review_impact_tier.py" > "${TMPDIR:-/tmp}/oss-review-impact-${CLEAN_ARGS}-${CSID}" 2>/dev/null  # timeout: 300000 — whole battery: fn-rdeps/fn-blast loop + ≤12 tier fn-blast queries
+        # PR context requires the committed Python source at the snapshot head; Step 2 copies the staged record to $RUN_DIR
+        _CONTEXT_JSON="${TMPDIR:-/tmp}/oss-review-codemap-structural-${CLEAN_ARGS}-${CSID}.json"
+        _CONTEXT_ERR="${TMPDIR:-/tmp}/oss-review-codemap-structural-${CLEAN_ARGS}-${CSID}.err"
+        : > "$_CONTEXT_JSON"
+        _PR_HEAD_SHA=$(jq -r '.headRefOid // empty' "$_SNAP_DIR/pr-meta.json" 2>/dev/null)
+        SCAN_NO_AUTOBUILD="$_INHERITED_FREEZE" codemap-py context --root "$(git rev-parse --show-toplevel)" --diff-file "$_SNAP_DIR/pr.diff" --expect-head "$_PR_HEAD_SHA" --index-dir "${TMPDIR:-/tmp}/codemap-context" --timeout 60 --out "$_CONTEXT_JSON" >/dev/null 2>"$_CONTEXT_ERR"  # timeout: 450000 — whole battery: context build+query ≤2×60 s + fn-rdeps/fn-blast loop + ≤12 tier fn-blast queries
+        _CONTEXT_RC=$?
+        # review depth from code path, not diff size — overrides Step 1's fail-safe FULL default; stdout to sentinel, not stage. Unavailable record, error answer, stale/root-mismatch index → FULL with that cause named; text-search fallback is evidence only, never the tier
+        if [ -s "$_CONTEXT_JSON" ]; then
+            _DIFF_IMPACT_JSON=$(jq -c '.diff_impact // empty' "$_CONTEXT_JSON" 2>/dev/null)
+            printf '%s\n' "$_DIFF_IMPACT_JSON"
+            jq -c '{context: .status, cause, detail, index: .index.action, degraded_reasons}' "$_CONTEXT_JSON" 2>/dev/null
+            jq -e '.fallback != null' "$_CONTEXT_JSON" >/dev/null 2>&1 && echo "#### Text-search fallback (method: text-search, confidence: low — candidate files, not resolved edges; zero hits = unknown, never no impact)" && jq -c '.fallback | {modules: [(.modules // [])[] | {path, importer_files, importer_truncated}], symbols: [(.symbols // [])[] | {name, path, reference_files, reference_truncated}], not_covered}' "$_CONTEXT_JSON" 2>/dev/null
+            python "$PLUGIN_ROOT/bin/review_impact_tier.py" --context-record "$_CONTEXT_JSON" > "${TMPDIR:-/tmp}/oss-review-impact-${CLEAN_ARGS}-${CSID}" 2>/dev/null
+        elif [ "$_CONTEXT_RC" = 127 ]; then
+            _DIFF_IMPACT_JSON=""
+            python "$PLUGIN_ROOT/bin/review_impact_tier.py" --unknown codemap-interpreter-unsupported > "${TMPDIR:-/tmp}/oss-review-impact-${CLEAN_ARGS}-${CSID}"
+        elif [ "$_CONTEXT_RC" = 2 ] && grep -q -e "unknown command 'context'" -e "invalid choice: 'context'" "$_CONTEXT_ERR" 2>/dev/null; then
+            # The older provider cannot verify the source revision for us.
+            if [ -n "$_PR_HEAD_SHA" ] && _CHECKOUT_HEAD=$(git rev-parse --verify HEAD 2>/dev/null) && [ "$_CHECKOUT_HEAD" = "$_PR_HEAD_SHA" ]; then
+                _DIFF_IMPACT_JSON=$(codemap-py query --timeout 15 $_CODEMAP_NO_HEAL diff-impact --diff-file "$_SNAP_DIR/pr.diff" 2>/dev/null)
+                printf '%s\n' "$_DIFF_IMPACT_JSON"
+                printf '%s\n' "$_DIFF_IMPACT_JSON" | python "$PLUGIN_ROOT/bin/review_impact_tier.py" > "${TMPDIR:-/tmp}/oss-review-impact-${CLEAN_ARGS}-${CSID}" 2>/dev/null
+            else
+                _DIFF_IMPACT_JSON=""
+                python "$PLUGIN_ROOT/bin/review_impact_tier.py" --unknown head-mismatch > "${TMPDIR:-/tmp}/oss-review-impact-${CLEAN_ARGS}-${CSID}"
+            fi
+        elif [ "$_CONTEXT_RC" = 2 ] && grep -q -e '"invalid_context_request"' "$_CONTEXT_ERR" 2>/dev/null; then
+            _DIFF_IMPACT_JSON=""
+            python "$PLUGIN_ROOT/bin/review_impact_tier.py" --unknown context-request-invalid > "${TMPDIR:-/tmp}/oss-review-impact-${CLEAN_ARGS}-${CSID}"
+        else
+            # provider has `context` but wrote no record (unwritten --out, crash): name it; this checkout's index is not the reviewed head's
+            _DIFF_IMPACT_JSON=""
+            python "$PLUGIN_ROOT/bin/review_impact_tier.py" --unknown query-failed > "${TMPDIR:-/tmp}/oss-review-impact-${CLEAN_ARGS}-${CSID}"
+        fi
         echo
         echo "### Changed-function callers (fn-rdeps/fn-blast)"
         # fn-rdeps/fn-blast need module::fn qnames — bare-module calls failed 100% in prod. diff-impact derives qnames but only exposes caller_count not list (0.177x tokens, e.g. enumerate subclass overrides pre-signature-edit).
@@ -70,6 +105,9 @@ if [ "$CODEMAP_ENABLED" = "true" ] && command -v codemap-py >/dev/null 2>&1; the
         # mock-rdeps/uncovered/xrefs/undocumented moved to the post-ranking supplement below — 57% of query volume, consumed only by qa-specialist/doc-scribe; run only when the final lineup spawns them
     } > "$CODEMAP_CONTEXT_STAGE"
     printf '%s\n' "$CHANGED_MODS" | head -10 > "${TMPDIR:-/tmp}/oss-review-changed-mods-${CLEAN_ARGS}-${CSID}"
+elif [ "$CODEMAP_ENABLED" = "true" ]; then
+    # enabled but no binary: name that cause instead of keeping the generic `codemap unavailable` default
+    python "$PLUGIN_ROOT/bin/review_impact_tier.py" --unknown codemap-not-installed > "${TMPDIR:-/tmp}/oss-review-impact-${CLEAN_ARGS}-${CSID}"
 fi
 echo "$codemap_available"      > "${TMPDIR:-/tmp}/oss-review-codemap-available-${CLEAN_ARGS}-${CSID}"
 echo "$CODEMAP_CONTEXT_STAGE"  > "${TMPDIR:-/tmp}/oss-review-codemap-context-stage-${CLEAN_ARGS}-${CSID}"

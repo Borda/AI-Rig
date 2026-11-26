@@ -76,6 +76,10 @@ Worst-case wall time is `2 × (1.2 × --timeout-seconds + 9 seconds)`: the hard 
 
 Return compact JSON envelope. Preserve workspace-relative `transcript_path` and `incident` references. Never copy bounded transcript or peer `details` into conversation. Add one usage line copied from the envelope: `codex <model>/<effort> · in <input_tokens> (cached <cached_input_tokens>) · out <output_tokens> · <duration_seconds>s`; omit a counter the envelope lacks; never estimate cost.
 
+<!-- policy-sibling: plugins/bridge_cc-codex/claude-skills/review/SKILL.md, plugins/bridge_cc-codex/claude-skills/implement/SKILL.md, plugins/bridge_cc-codex/claude-skills/result/SKILL.md, plugins/bridge_cc-codex/codex-skills/review/SKILL.md, plugins/bridge_cc-codex/codex-skills/advise/SKILL.md, plugins/bridge_cc-codex/codex-skills/implement/SKILL.md (confidence reporting) -->
+
+Report confidence from the envelope: `confidence` is a number only when `status=complete`, derived by the bridge as 1.00 minus the deductions in `confidence_gaps`; otherwise it is `null` and `confidence_null_reason` names the exact cause from the closed set in `rules/envelope.md` §Confidence. Report that code beside the status, carry each `confidence_gaps` line as a named gap, and never substitute a number.
+
 <!-- policy-sibling: plugins/bridge_cc-codex/claude-skills/review/SKILL.md, plugins/bridge_cc-codex/claude-skills/implement/SKILL.md, plugins/bridge_cc-codex/claude-skills/result/SKILL.md, plugins/bridge_cc-codex/codex-skills/advise/SKILL.md (failure handling; preserve verb-specific recovery) -->
 
 If the Bash call fails before producing JSON (missing interpreter, non-zero exit, malformed stdout), stop and report the raw failure; never fabricate a status. Otherwise handle the status:

@@ -45,7 +45,7 @@ First apply [User Questions](../../../shared/codex-user-questions.md): confirm a
 
 After permitted automatic recovery and independent work, explain the concrete blocker, retained run and which evidence remains usable. Ask through the host's native user-question tool: `How should we continue the review of <target>?` Replace the target with the actual linked PR or local scope. Present exactly these three options, with recommendations in descriptions rather than changing the labels:
 
-- `New review`: start a fresh run, recollect current source and perform the full review. Preserve the old run. This choice does not clear denied capabilities, recurrence history or stopped-route limits.
+- `New review`: start a fresh run, follow [Start fresh](source-and-scope.md#previous-review-run-lookup) through current source collection, inspection and the normal validated handoff. Preserve the old run. This choice does not clear denied capabilities, recurrence history or stopped-route limits.
 - `Resume last one`: resume the identified latest retained run at its first unmet checkpoint, reusing only still-valid evidence. Reacquire missing checks or authentic reviewer coverage through permitted recovery; never relabel rejected output as valid. Explain any required capability or source refresh first. If no retained source or evidence identifies the requested run, explain that fact and request a new choice; never silently turn Resume into New. An unusable execution plan alone follows the recovery rule above, without another question.
 - `Stop`: stop this review and any waiting joined remediation, preserve artifacts and existing changes, and perform no further checks or fixes. Do not undo preparation or reinterpret Stop as continuing with available findings.
 

@@ -2747,6 +2747,6 @@
       "src": "skills/verify/SKILL.md:87"
     }
   },
-  "plugin": "cc_research@0.35.0",
+  "plugin": "cc_research@0.35.1",
   "schema": 2
 }

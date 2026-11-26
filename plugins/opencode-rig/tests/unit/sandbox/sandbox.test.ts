@@ -1,5 +1,5 @@
 /** Sandbox invocation: runtime detection, container shape and bounded input. */
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
@@ -44,8 +44,9 @@ describe("sandbox runtime", () => {
       "/tmp/opencode/sandbox-1/work:/work",
       "-w",
       "/work",
-      "python:3.12-slim",
+      "--entrypoint",
       "python",
+      "python:3.12-slim",
       "-m",
       "pytest",
       "tests",
@@ -54,6 +55,17 @@ describe("sandbox runtime", () => {
     expect(
       sandboxArgs({ runtime: "podman", image: "x", name: "n", workDirectory: "/w", argv: ["x"], network: true }),
     ).toContain("bridge")
+  })
+
+  it.each(["source", "destination"])("refuses a symlinked copy %s", (position) => {
+    const project = Project.withCommit()
+    const temporary = new Project()
+    const link = temporary.path("link")
+    symlinkSync(project.root, link, "junction")
+    const source = position === "source" ? link : project.root
+    const destination = position === "destination" ? link : temporary.path("copy")
+    expect(() => copyWorktree(source, destination)).toThrow(`copy ${position} must be a real directory`)
+    expect(existsSync(project.path("src/a.ts"))).toBe(true)
   })
 
   it("copies the worktree without any Git metadata", () => {
@@ -96,18 +108,18 @@ describe("sandbox runtime", () => {
     expect(isPinnedImage(pinned)).toBe(true)
     expect(isPinnedImage("repo:latest")).toBe(false)
     expect(() => runInSandbox({ ...base, argv: [] })).toThrow(SandboxError)
-    expect(() => runInSandbox({ ...base, image: "" })).toThrow(/image/)
+    expect(() => runInSandbox({ ...base, argv: [""] })).toThrow(/command/)
     expect(() => runInSandbox({ ...base, image: "repo:latest" })).toThrow(/digest-pinned/)
     expect(() => runInSandbox({ ...base, timeoutMs: 10 })).toThrow(/timeout/)
   })
 
-  it("reports unavailable instead of running host code when no runtime exists", () => {
+  it("reports unavailable instead of running host code when no runtime exists", async () => {
     const project = Project.withCommit()
     const original = process.env.PATH
     process.env.PATH = ""
     try {
       expect(detectRuntime()).toBeUndefined()
-      expect(() =>
+      await expect(
         runInSandbox({
           worktree: project.root,
           argv: ["true"],
@@ -115,7 +127,7 @@ describe("sandbox runtime", () => {
           timeoutMs: 30_000,
           logDirectory: join(tmpdir(), "opencode-rig-test-logs"),
         }),
-      ).toThrow(/no container runtime/)
+      ).resolves.toMatchObject({ disposition: "not-run:runtime", exit_code: null })
     } finally {
       process.env.PATH = original
     }

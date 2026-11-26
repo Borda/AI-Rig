@@ -43,7 +43,7 @@ if command == "scan":
     out = sys.argv[sys.argv.index("--out") + 1]
     Path(out).write_text("{}")
     print("verdict: clean\\nrisk: none")
-elif command == "bind":
+elif command == "record":
     sys.exit(int(os.environ.get("STUB_BIND_RC", "0")))
 """
 
@@ -185,7 +185,7 @@ def test_auto_only_when_the_check_says_auto_and_binds_the_sandbox_tier(world: Pa
     assert run.decision == "auto\n"
     (check,) = run.called("check")
     assert "--no-sandbox-needed" not in check
-    (bind,) = [line for line in run.called("guard") if line.startswith("guard bind")]
+    (bind,) = [line for line in run.called("guard") if line.startswith("guard record")]
     assert "--scope run" in bind
     assert not any(flag in bind for flag in ("--tier", "--decision", "unsandboxed"))
 
@@ -204,7 +204,7 @@ def test_anything_but_clean_scans_asks_and_binds_nothing(world: Path, check: str
     run = _run(world, STUB_CHECK=check)
     assert run.plan == "pr-code=ask hooks=run"
     assert run.decision is None
-    assert not [line for line in run.called("guard") if line.startswith("guard bind")]
+    assert not [line for line in run.called("guard") if line.startswith("guard record")]
 
 
 @pytest.mark.parametrize(
@@ -220,7 +220,7 @@ def test_anything_but_the_exact_word_auto_asks(world: Path, check: str) -> None:
     run = _run(world, STUB_CHECK=check)
     assert run.plan == "pr-code=ask hooks=run"
     assert run.decision is None
-    assert not [line for line in run.called("guard") if line.startswith("guard bind")]
+    assert not [line for line in run.called("guard") if line.startswith("guard record")]
 
 
 def test_a_crashed_check_asks(world: Path) -> None:
@@ -712,7 +712,9 @@ def test_an_answer_binds_the_commit_a_stale_refusal_saved(
     done = _bash(world, _PYTHON_FUNCTION + _answer_block(marker), environ)
     assert done.returncode == 0, done.stdout + done.stderr
     (bind,) = [
-        line for line in (world / "stub.log").read_text(encoding="utf-8").splitlines() if line.startswith("guard bind")
+        line
+        for line in (world / "stub.log").read_text(encoding="utf-8").splitlines()
+        if line.startswith("guard record")
     ]
     assert f"--head {expected} " in bind
     assert all(flag in bind for flag in extra)
@@ -723,7 +725,7 @@ def test_a_stale_word_never_rebinds_on_a_clean_check(world: Path) -> None:
     (world / "impl" / "pr-code-decision.txt").write_text("stale\n", encoding="utf-8", newline="\n")
     run = _run(world, STUB_CHECK="auto")
     assert run.plan == "pr-code=ask hooks=run"
-    assert not [line for line in run.called("guard") if line.startswith("guard bind")]
+    assert not [line for line in run.called("guard") if line.startswith("guard record")]
     assert run.decision == "stale\n"
 
 
@@ -753,7 +755,7 @@ def test_the_sandbox_flag_binds_the_sandbox_tier_and_asks_nothing(world: Path) -
     (check,) = run.called("check")
     assert "check-sandbox" in check
     assert "--status" not in check
-    (bind,) = [line for line in run.called("guard") if line.startswith("guard bind")]
+    (bind,) = [line for line in run.called("guard") if line.startswith("guard record")]
     assert "--tier sandbox" in bind
     assert "unsandboxed" not in bind
 
@@ -765,7 +767,7 @@ def test_the_sandbox_flag_reports_tests_not_run_on_a_host_without_a_sandbox(worl
     run = _run(world, STUB_CHECK="deny reason=no-sandbox")
     assert run.plan == "pr-code=recorded hooks=run"
     assert run.decision == "deny\n"
-    assert not [line for line in run.called("guard") if line.startswith("guard bind")]
+    assert not [line for line in run.called("guard") if line.startswith("guard record")]
 
 
 @pytest.mark.parametrize(
@@ -783,7 +785,7 @@ def test_the_sandbox_flag_asks_unless_the_check_says_exactly_sandbox(world: Path
     run = _run(world, STUB_CHECK=check)
     assert run.plan == "pr-code=ask hooks=run"
     assert run.decision is None
-    assert not [line for line in run.called("guard") if line.startswith("guard bind")]
+    assert not [line for line in run.called("guard") if line.startswith("guard record")]
 
 
 def test_a_flag_that_is_not_true_leaves_the_default_rules(world: Path) -> None:
@@ -812,7 +814,7 @@ def test_a_clean_rescan_renews_a_stale_approval_without_a_question(world: Path) 
     (check,) = [line for line in log if line.startswith("check")]
     assert "check-rebind" in check
     assert "code-approval.set-aside" in check
-    (bind,) = [line for line in log if line.startswith("guard bind")]
+    (bind,) = [line for line in log if line.startswith("guard record")]
     assert f"--head {_head(_checkout(world))} " in bind
     assert "--tier sandbox" in bind
     assert "no question" in done.stdout
@@ -825,7 +827,7 @@ def test_a_rescan_with_anything_to_decide_keeps_the_stale_word_and_binds_nothing
     assert done.returncode == 0, done.stdout + done.stderr
     assert (world / "impl" / "pr-code-decision.txt").read_text(encoding="utf-8") == "stale\n"
     log = (world / "stub.log").read_text(encoding="utf-8").splitlines()
-    assert not [line for line in log if line.startswith("guard bind")]
+    assert not [line for line in log if line.startswith("guard record")]
 
 
 def test_a_failed_rescan_keeps_the_stale_word(world: Path) -> None:

@@ -89,6 +89,8 @@ def test_coverage_waiver_completes_separate_fallback_without_synthetic_actions(t
         fallback / "result.json",
         "--parent-thread-id",
         "thread",
+        "--extra-checks-failed",
+        "verification-readiness,independent-review-coverage",
         "--promote",
     )
     completed = _script(FINDER, "--complete-run", fallback, "--parent-thread-id", "thread")
@@ -102,7 +104,7 @@ def test_coverage_waiver_completes_separate_fallback_without_synthetic_actions(t
     assert result["metadata"]["independence_required"] is False
     assert result["metadata"]["independence_satisfied"] is False
     assert result["metadata"]["operational_blockers"] == []
-    assert result["checks_failed"] == ["types"]
+    assert result["checks_failed"] == ["types", "verification-readiness", "independent-review-coverage"]
     assert completed.returncode == 0, completed.stderr
     assert "Review Findings and Merge Blocks" not in completed.stdout
     assert discovered.returncode == 0, discovered.stderr
@@ -133,7 +135,7 @@ def test_parent_fallback_promotes_and_preserves_failed_gate_obligations_at_intak
 
     assert json.loads(finalized.stdout)["promoted"] is True
     assert result["status"] == "fail"
-    assert result["checks_failed"] == ["types"]
+    assert result["checks_failed"] == ["types", "verification-readiness", "independent-review-coverage"]
     assert result["metadata"]["execution_mode"] == "serial-fallback"
     assert result["metadata"]["independence_required"] is False
     assert result["metadata"]["independence_satisfied"] is False
@@ -149,7 +151,8 @@ def test_parent_fallback_promotes_and_preserves_failed_gate_obligations_at_intak
     (consumer / "findings-input.txt").write_bytes(result_path.read_bytes())
     original = result["metadata"]
     blocker = original["operational_blockers"][0]
-    blocker_body = "\n".join([blocker["title"], blocker["required_change"], *blocker["evidence"], "types"])
+    named = ["verification-readiness", "independent-review-coverage", "types"]
+    blocker_body = "\n".join([blocker["title"], blocker["required_change"], *blocker["evidence"], *named])
     items = [
         {
             "input_item_id": blocker["id"],
@@ -489,14 +492,20 @@ def _finalize(
     return finalized, outcome, completed
 
 
-def _assert_producer_evidence_preserved(staged: _Finalization) -> None:
-    """Assert that finalization left every producer file untouched except the appended reviewed-source note."""
+def _assert_producer_evidence_preserved(staged: _Finalization, *, promoted: bool) -> None:
+    """Assert that finalization left every producer file untouched except the reviewed-source note.
+
+    Promotion also removes the incomplete ``run-state.json`` stub, so no promoted result sits beside a stub that still
+    says the run is incomplete; a refused finalization keeps the stub byte-identical.
+    """
     source = json.loads((staged.run / "local-source/source-snapshot.json").read_bytes())
-    expected = dict(staged.before)
+    stub = staged.run / "run-state.json"
+    expected = {path: content for path, content in staged.before.items() if not (promoted and path == stub)}
     expected[staged.run / "review-notes.md"] += (
         f"\n\n## Reviewed Source\n\nReviewed commit: {source['revision']} (working-tree base)\n".encode()
     )
     assert {path: path.read_bytes() for path in expected} == expected
+    assert stub.exists() is not promoted
 
 
 def _assert_accepted(staged: _Finalization, finalized: object, outcome: dict[str, object], completed: object) -> None:
@@ -517,7 +526,7 @@ def _assert_accepted(staged: _Finalization, finalized: object, outcome: dict[str
     assert admitted.returncode == 0, admitted.stderr
     assert admitted.stdout == str(result_path) + "\n"
     assert {path: path.read_bytes() for path in after_finalization} == after_finalization
-    _assert_producer_evidence_preserved(staged)
+    _assert_producer_evidence_preserved(staged, promoted=True)
 
 
 def _assert_refused(
@@ -531,7 +540,7 @@ def _assert_refused(
     assert not staged.result_path.exists()
     assert completed.returncode == 1
     assert completed.stdout == b""
-    _assert_producer_evidence_preserved(staged)
+    _assert_producer_evidence_preserved(staged, promoted=False)
 
 
 def _keep_finalizer(staged: _Finalization) -> None:
@@ -770,6 +779,25 @@ class TestProcessLimitContracts:
                 "remediate",
                 "fresh verification is evidence-only closure, never `implemented`",
                 id="fresh-verification-not-implemented",
+            ),
+            pytest.param(
+                "remediate",
+                "never blocks completion, opens a question, or adds an unresolved row or incomplete status",
+                id="unrun-challenge-never-blocks",
+            ),
+            pytest.param("remediate", "implementation challenge not run: <reason>", id="unrun-challenge-limitation"),
+            pytest.param(
+                "remediate", "`(-0.NN) implementation-challenge-not-run: <reason>`", id="unrun-challenge-confidence-gap"
+            ),
+            pytest.param(
+                "remediate",
+                "an implementation challenge that did not run is not such verification",
+                id="unrun-challenge-not-required-verification",
+            ),
+            pytest.param(
+                "shared",
+                "A bounded implementation challenge that cannot run is a limitation, never a completion gate",
+                id="unrun-challenge-not-a-gate",
             ),
         ],
     )

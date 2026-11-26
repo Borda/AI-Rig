@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from textwrap import indent
 
 import pytest
 
@@ -48,12 +49,17 @@ if "HANG" in task:
 time.sleep(1.0)
 if "SILENT" in task:
     sys.exit(3)
+if task.startswith("RAW "):
+    print(task.removeprefix("RAW "))
+    sys.exit(0)
 status = (
     "timeout" if "TIMEOUT" in task else "blocked" if "BLOCKED" in task else "partial" if "PARTIAL" in task else "complete"
 )
 findings = [f"finding for {task}"] if status in {"complete", "partial"} else []
 blockers = ["hard cutoff reached"] if status == "timeout" else []
 envelope = {"status": status, "findings": findings, "blockers": blockers, "run_id": args[args.index("--run-id") + 1]}
+if status == "complete":
+    envelope.update(confidence=0.9, confidence_gaps=["(-0.10) tests not run"], confidence_null_reason=None)
 if status == "partial":
     envelope["remaining"] = ["unfinished part"]
 print(json.dumps(envelope))
@@ -67,7 +73,13 @@ def split(tmp_path: Path) -> Path:
     bin_dir.mkdir()
     for name in ("bridge_split.py", "bridge_task_path.py"):
         shutil.copy(_BIN / name, bin_dir / name)
-    (bin_dir / "bridge_call.py").write_text(_STUB, encoding="utf-8")
+    shutil.copy(_BIN / "bridge_call.py", bin_dir / "bridge_call_runtime.py")
+    imports = (
+        "CONFIDENCE_FIELDS, FINAL_STATUSES, ConfidenceNullReason, _GAP_LINE, "
+        "unscored_scope_gap, validate_confidence_fields"
+    )
+    child = f"if __name__ != '__main__':\n    from bridge_call_runtime import {imports}\nelse:\n"
+    (bin_dir / "bridge_call.py").write_text(child + indent(_STUB, "    "), encoding="utf-8")
     return bin_dir / "bridge_split.py"
 
 
@@ -216,6 +228,32 @@ class TestRun:
         rows = output["splits"]
         assert rows[1]["status"] == "error"
         assert "exit 3" in rows[1]["blockers"][0]
+
+    @pytest.mark.parametrize(
+        "stdout",
+        [
+            pytest.param('notice\n{"status":', id="truncated-json-after-banner"),
+            pytest.param("{}", id="empty-object"),
+            pytest.param("[{}]", id="non-object-json"),
+            pytest.param('{"status":"complete","confidence":0.9}', id="partial-confidence-fields"),
+            pytest.param(
+                '{"status":"complete","confidence":0.9,"confidence_gaps":[],"confidence_null_reason":null}',
+                id="unsupported-scope-score",
+            ),
+        ],
+    )
+    def test_a_child_with_unusable_output_has_a_result_failure(self, split: Path, tmp_path: Path, stdout: str) -> None:
+        """The merged result keeps successful siblings and explains why a completed child has no usable result."""
+        code, output, _ = _run(split, tmp_path, ["alpha", f"RAW {stdout}"])
+        assert code == 0
+        assert output["status"] == "partial"
+        assert output["confidence_null_reason"] == "empty-result"
+        assert output["findings"] == [{"split": 1, "finding": "finding for alpha"}]
+        row = output["splits"][1]
+        assert row["status"] == "error"
+        assert row["confidence"] is None
+        assert row["confidence_null_reason"] == "empty-result"
+        assert "exit 0" in row["blockers"][0]
 
     def test_every_child_failing_is_blocked_not_a_refused_plan(self, split: Path, tmp_path: Path) -> None:
         """Scopes that all ran and failed merge to ``blocked``, so a caller never mistakes it for an unsupported split.
@@ -484,7 +522,9 @@ class TestPartition:
         assert code == 0
         assert [row["index"] for row in last["splits"]] == [7]
         assert last["partition_digest"] == digest
-        assert last["status"] == "complete"
+        assert last["status"] == "partial"
+        assert last["confidence"] is None
+        assert "skipped image.bin: no line count: binary or marked -diff" in last["confidence_gaps"]
         assert len(_calls(tmp_path)) == 1
 
     def test_a_wave_before_the_last_is_partial_and_names_the_groups_not_yet_run(
@@ -492,7 +532,7 @@ class TestPartition:
     ) -> None:
         """A caller that reads only ``status`` never takes the first wave of several for a finished review."""
         _range_workspace(tmp_path, files=7, lines=5)
-        spec = {"task": "Audit.", "range": "HEAD~1..HEAD"}
+        spec = {"task": "Audit.", "paths": [f"f{number}.txt" for number in range(7)]}
         _, first = _partition(split, tmp_path, spec, "--max-weight", "5")
         assert first["status"] == "partial"
         assert first["remaining"] == [{"waves": [2, 3], "groups": [4, 7]}]
@@ -565,25 +605,35 @@ class TestPartition:
         assert code == 2
         assert "changed" in str(refused["error"])
 
-    def test_untracked_files_are_reviewed_whole_or_listed_as_skipped(self, split: Path, tmp_path: Path) -> None:
-        """A new file is part of a working-tree change: a text one is grouped, a binary one is skipped, never
-        dropped."""
+    def test_against_uses_only_tracked_changes_and_paths_admit_named_files(self, split: Path, tmp_path: Path) -> None:
+        """The working-tree diff excludes unrelated files, and an explicit path can admit a new file."""
         _range_workspace(tmp_path, files=1, lines=2)
         (tmp_path / "f0.txt").write_text("line\n" * 2 + "edited\n", encoding="utf-8")
         (tmp_path / "new_module.py").write_text("x = 1\ny = 2\n", encoding="utf-8")
         (tmp_path / "blob.dat").write_bytes(b"\x00\x01" * 20)
         code, output = _partition(split, tmp_path, {"task": "Audit the diff.", "against": "HEAD"})
         assert code == 0
-        assert [item["path"] for item in output["skipped"]] == ["blob.dat"]
+        assert output["skipped"] == []
         (task,) = (str(call["task"]) for call in _calls(tmp_path))
-        assert sorted(_files_in(task)) == ["f0.txt", "new_module.py"]
+        assert _files_in(task) == ["f0.txt"]
 
-    def test_an_edit_to_an_untracked_file_between_waves_is_refused(self, split: Path, tmp_path: Path) -> None:
-        """The digest covers new files too, so a fix applied to one after wave one voids the later waves."""
-        _range_workspace(tmp_path, files=1, lines=2)
+        (tmp_path / "calls.jsonl").unlink()
+        code, output = _partition(
+            split, tmp_path, {"task": "Audit these files.", "paths": ["new_module.py", "blob.dat"]}
+        )
+        assert code == 0
+        assert [item["path"] for item in output["skipped"]] == ["blob.dat"]
+        assert output["confidence"] is None
+        assert output["splits"][0]["confidence"] == 0.9
+        assert "skipped blob.dat: binary file: no line count" in output["confidence_gaps"]
+        (task,) = (str(call["task"]) for call in _calls(tmp_path))
+        assert _files_in(task) == ["new_module.py"]
+
+    def test_an_edit_to_a_named_new_file_between_waves_is_refused(self, split: Path, tmp_path: Path) -> None:
+        """The digest covers explicitly admitted files even when Git does not track them."""
         for number in range(7):
             (tmp_path / f"new{number}.py").write_text("x = 1\n" * 5, encoding="utf-8")
-        spec = {"task": "Audit.", "against": "HEAD"}
+        spec = {"task": "Audit.", "paths": [f"new{number}.py" for number in range(7)]}
         first = _digest(split, tmp_path, spec, max_weight=5)
         (tmp_path / "new0.py").write_text("x = 2\n" * 5, encoding="utf-8")
         code, refused = _partition(split, tmp_path, spec, "--max-weight", "5", "--wave", "2", "--expect-digest", first)
@@ -625,17 +675,17 @@ class TestPartition:
         (task,) = (str(call["task"]) for call in _calls(tmp_path))
         assert _files_in(task) == ["f0.txt"]
 
-    def test_a_path_removed_from_the_index_but_kept_on_disk_is_listed_once(self, split: Path, tmp_path: Path) -> None:
-        """A tracked deletion and an untracked file of one name are one entry: the file as it is on disk."""
+    def test_a_path_removed_from_the_index_uses_its_tracked_diff(self, split: Path, tmp_path: Path) -> None:
+        """A tracked binary deletion is skipped even if unrelated text now exists at its old path."""
         _range_workspace(tmp_path, files=1, lines=2)
         _git(tmp_path, "rm", "--cached", "-q", "image.bin")
         (tmp_path / "image.bin").write_text("now text\n", encoding="utf-8")
+        (tmp_path / "f0.txt").write_text("edited\n", encoding="utf-8")
         code, output = _partition(split, tmp_path, {"task": "Audit.", "against": "HEAD"})
         assert code == 0
-        assert [item["path"] for item in output["skipped"]] == []
+        assert [item["path"] for item in output["skipped"]] == ["image.bin"]
         (task,) = (str(call["task"]) for call in _calls(tmp_path))
-        assert "image.bin" in _files_in(task)
-        assert "shows only as deleted while it still exists" in task
+        assert _files_in(task) == ["f0.txt"]
 
     def test_a_submodule_is_skipped_in_a_range_and_when_it_is_removed(self, split: Path, tmp_path: Path) -> None:
         """A submodule bump or removal shows only a pointer line, so no group claims to review its contents."""
@@ -681,12 +731,13 @@ class TestPartition:
             code, _ = _partition(split, inside, {"task": "Audit.", **spec})
             assert code == 0, source
             listed[source] = sorted(name for call in _calls(inside) for name in _files_in(call["task"]))
-        assert listed == {"range": ["a.txt"], "against": ["a.txt", "new.txt"]}
+        assert listed == {"range": ["a.txt"], "against": ["a.txt"]}
 
     def test_a_partition_file_name_that_reads_as_a_glob_hides_no_real_change(self, split: Path, tmp_path: Path) -> None:
         """The partition file's own path is excluded literally, so ``p[ab].json`` never drops the real ``pa.json``."""
         _range_workspace(tmp_path, files=1, lines=2)
         (tmp_path / "pa.json").write_text("{}\n", encoding="utf-8")
+        _git(tmp_path, "add", "--", "pa.json")
         code, output = _partition(split, tmp_path, {"task": "Audit.", "against": "HEAD"}, name="p[ab].json")
         assert code == 0
         assert output["skipped"] == []
@@ -702,14 +753,14 @@ class TestPartition:
         assert code == 0
         assert output["skipped"] == []
 
-    def test_a_file_named_twice_through_a_link_is_reviewed_once(self, split: Path, tmp_path: Path) -> None:
-        """In a ``paths`` list a link and its target are one file, so only one name reaches a group."""
+    def test_explicit_symlink_and_target_paths_both_reach_review(self, split: Path, tmp_path: Path) -> None:
+        """An in-workspace alias and its target retain their distinct names in the requested scope."""
         (tmp_path / "t.txt").write_text("a\nb\n", encoding="utf-8")
         (tmp_path / "l.txt").symlink_to("t.txt")
         code, _ = _partition(split, tmp_path, {"task": "Audit.", "paths": ["l.txt", "t.txt"]})
         assert code == 0
         (task,) = (str(call["task"]) for call in _calls(tmp_path))
-        assert _files_in(task) == ["l.txt"]
+        assert sorted(_files_in(task)) == ["l.txt", "t.txt"]
 
     def test_a_binary_file_in_a_paths_list_is_skipped(self, split: Path, tmp_path: Path) -> None:
         """A file with no line count is skipped whatever names it: here a NUL-bearing file in ``paths``."""
@@ -720,6 +771,20 @@ class TestPartition:
         assert [item["path"] for item in output["skipped"]] == ["blob.dat"]
         (task,) = (str(call["task"]) for call in _calls(tmp_path))
         assert _files_in(task) == ["keep.txt"]
+
+    def test_a_partition_with_every_file_skipped_names_its_gaps(self, split: Path, tmp_path: Path) -> None:
+        """A scope with no eligible files reports why it is blocked and starts no peer."""
+        (tmp_path / "blob.dat").write_bytes(b"\x00\n")
+        code, output = _partition(split, tmp_path, {"task": "Audit.", "paths": ["blob.dat"]})
+        assert code == 0
+        assert (output["status"], output["confidence"], output["confidence_null_reason"]) == (
+            "blocked",
+            None,
+            "incomplete",
+        )
+        assert output["confidence_gaps"] == ["skipped blob.dat: binary file: no line count"]
+        assert output["splits"] == []
+        assert not (tmp_path / "calls.jsonl").exists()
 
     def test_files_without_a_line_count_are_listed_as_skipped(self, split: Path, tmp_path: Path) -> None:
         """A binary file and a ``-diff`` lock file reach no group, and every envelope names them."""
@@ -754,6 +819,7 @@ class TestPartition:
         _range_workspace(tmp_path, files=1, lines=2)
         (tmp_path / "n\nl.txt").write_text("x\n", encoding="utf-8")
         (tmp_path / "n\\nl.txt").write_text("y\n", encoding="utf-8")
+        _git(tmp_path, "add", "--", "n\nl.txt", "n\\nl.txt")
         code, output = _partition(split, tmp_path, {"task": "Audit.", "against": "HEAD"})
         assert code == 0
         assert [item["path"] for item in output["skipped"]] == ["n\\nl.txt"]
@@ -780,14 +846,21 @@ class TestPartition:
         assert code == 0
         assert [item["path"] for item in output["skipped"]] == ["sm"]
 
-    def test_a_hard_link_and_its_target_are_one_file(self, split: Path, tmp_path: Path) -> None:
-        """Two names for one file in a ``paths`` list review it once, whatever kind of link joins them."""
-        (tmp_path / "t.txt").write_text("a\nb\n", encoding="utf-8")
-        os.link(tmp_path / "t.txt", tmp_path / "hard.txt")
-        code, _ = _partition(split, tmp_path, {"task": "Audit.", "paths": ["t.txt", "hard.txt"]})
+    def test_explicit_hardlinked_paths_keep_both_tracked_diffs(self, split: Path, tmp_path: Path) -> None:
+        """Distinct admitted Git paths still need individual review when their working-tree files share an inode."""
+        _range_workspace(tmp_path, files=2, lines=3)
+        (tmp_path / "f1.txt").write_text("different baseline\n", encoding="utf-8")
+        _git(tmp_path, "add", "f1.txt")
+        _git(tmp_path, "commit", "-q", "-m", "different baseline")
+        (tmp_path / "f0.txt").write_text("shared edit\n", encoding="utf-8")
+        (tmp_path / "f1.txt").unlink()
+        os.link(tmp_path / "f0.txt", tmp_path / "f1.txt")
+        paths = _git(tmp_path, "diff", "--name-only", "HEAD").splitlines()
+        assert paths == ["f0.txt", "f1.txt"]
+        code, _ = _partition(split, tmp_path, {"task": "Audit each path's diff.", "paths": [*paths, "./f0.txt"]})
         assert code == 0
         (task,) = (str(call["task"]) for call in _calls(tmp_path))
-        assert _files_in(task) == ["t.txt"]
+        assert sorted(_files_in(task)) == paths
 
     @pytest.mark.skipif(os.name == "nt", reason="Windows has no executable bit to change")
     def test_a_mode_only_change_on_a_hidden_flag_file_is_not_dropped(self, split: Path, tmp_path: Path) -> None:

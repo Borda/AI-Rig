@@ -18,11 +18,12 @@ from anywhere in argv before positional slicing. This keeps the allowlist-reject
 (exit 2), the target-containment guard (exit 64), and the silent ``tail_n`` fallback.
 
 Usage:
-    run_pytest_short.py [pytest_cmd] [target ...] [--tail-n N] [--log PATH]
+    run_pytest_short.py [pytest_cmd] [target ...] [--tail-n N] [--log PATH] [--env RECEIPT]
 
 Every target is containment-checked; several targets run as one pytest process (``dev_test_targets.py --run``
 passes its whole selection this way). ``--log PATH`` also writes the full, untruncated-by-tail output there.
 Logs stay inside the session's run directory, or ``.developments`` for standalone runs without a run sentinel.
+``--env RECEIPT`` runs ``pytest`` or ``python -m pytest`` with the validated provisioner interpreter.
 
 Outputs: The output tail on stdout and optionally the full bounded log at ``--log``.
 Failure: Runner failures remain distinct from pytest-reported failures.
@@ -31,7 +32,8 @@ Used by: Develop targeted verification, batch isolation, and baseline callers.
 Exit codes:
     0 — pytest passed.
     1-5 — pytest reported failure/collection error (propagated unchanged).
-    2 — pytest_cmd not in the allowlist (before pytest runs); also argparse's bad-argument exit.
+    2 — pytest_cmd not in the allowlist, environment retry refused or unable to start pytest;
+        also argparse's bad-argument exit.
     64 — target or log path rejected before pytest runs.
     124 — runner deadline expired.
     127 — executable missing; 70 — other runner or log I/O error.
@@ -98,16 +100,17 @@ def _validate_target_in_cwd(target: str) -> None:
         sys.exit(64)
 
 
-def is_allowed_pytest_cmd(cmd: str) -> bool:
+def is_allowed_pytest_cmd(cmd: str, *, provisioned: bool = False) -> bool:
     """Report whether ``cmd`` is one of the pytest launch commands this runner executes.
 
     Public so ``dev_test_targets.py`` applies the same allowlist to the command it only prints in plan mode.
+    A provisioned launch can replace only a direct pytest command.
 
     Examples:
         >>> is_allowed_pytest_cmd("uv run pytest"), is_allowed_pytest_cmd("pytest; rm -rf /")
         (True, False)
     """
-    return cmd in _PYTEST_ALLOWLIST
+    return cmd in ({"pytest", "python -m pytest"} if provisioned else _PYTEST_ALLOWLIST)
 
 
 def within_workspace(path: str) -> bool:
@@ -192,28 +195,28 @@ def _parse_tail_n(raw: str) -> int:
     return n if n >= 0 else _DEFAULT_TAIL_N
 
 
-def _extract_named_flags(args: list[str]) -> tuple[list[str], str, str]:
-    """Pull ``--tail-n VALUE`` and ``--log PATH`` out of argv.
+def _extract_named_flags(args: list[str]) -> tuple[list[str], str, str, str | None]:
+    """Pull ``--tail-n VALUE``, ``--log PATH`` and ``--env RECEIPT`` out of argv.
 
     Args:
         args: Raw argument list, flags and positionals interleaved in any order.
 
     Returns:
         Tuple of (remaining positional args in original order, raw tail_n string or ``""`` if absent, log path or
-        ``""`` if absent).
+        ``""`` if absent, receipt path or ``None`` if absent).
     """
     positional: list[str] = []
     named = {"--tail-n": "", "--log": ""}
     i = 0
     while i < len(args):
         arg = args[i]
-        if arg in named and i + 1 < len(args):
+        if arg in {"--tail-n", "--log", "--env"} and i + 1 < len(args) and args[i + 1] != "--env":
             named[arg] = args[i + 1]
             i += 2
             continue
         positional.append(arg)
         i += 1
-    return positional, named["--tail-n"], named["--log"]
+    return positional, named["--tail-n"], named["--log"], named.get("--env")
 
 
 _TIMEOUT_SECONDS = 600
@@ -309,9 +312,14 @@ def main(argv: list[str] | None = None) -> int:
             help=f"Number of trailing output lines to print (default: {_DEFAULT_TAIL_N}).",
         )
         parser.add_argument("--log", help="Also write the full combined output to this file.")
+        parser.add_argument(
+            "--env",
+            metavar="RECEIPT",
+            help="Run pytest with the interpreter of a dev_env_provision.py receipt (pytest or python -m pytest only).",
+        )
         parser.parse_args(args)  # exits 0 after printing help
 
-    positional, tail_n_raw, log_path = _extract_named_flags(args)
+    positional, tail_n_raw, log_path, env_receipt = _extract_named_flags(args)
     pytest_cmd = positional[0] if len(positional) >= 1 else "pytest"
     # Several targets are accepted so a targeted-test selection runs as one pytest process, not one per file.
     targets = positional[1:] or ["."]
@@ -329,6 +337,8 @@ def main(argv: list[str] | None = None) -> int:
 
     parts = shlex.split(pytest_cmd)
     try:
+        if env_receipt is not None:
+            return _execute_provisioned(pytest_cmd, env_receipt, targets, tail_n, log_path)
         parts[0] = _resolve(parts[0])
         return _execute(parts, targets, tail_n, log_path)
     except FileNotFoundError as exc:
@@ -339,8 +349,36 @@ def main(argv: list[str] | None = None) -> int:
         return 70
 
 
-def _execute(parts: list[str], targets: list[str], tail_n: int, log_path: str) -> int:
-    """Launch pytest, preserve its bounded log, and print the requested tail."""
+def _execute_provisioned(command: str, receipt: str, targets: list[str], tail_n: int, log_path: str) -> int:
+    """Validate the receipt and replace only a direct pytest launch."""
+    if not is_allowed_pytest_cmd(command, provisioned=True):
+        print("run-pytest-short: --env requires pytest or python -m pytest", file=sys.stderr)
+        return 2
+    # Ordinary runs do not need to load the provisioner.
+    from dev_env_provision import receipt_python, retry_pythonpath
+
+    try:
+        python = receipt_python(Path(receipt))
+    except (OSError, ValueError, KeyError, TypeError, IndexError, RuntimeError) as exc:
+        print(f"run-pytest-short: rejected --env receipt: {exc}", file=sys.stderr)
+        return 2
+    try:
+        pythonpath = retry_pythonpath(Path.cwd(), os.environ.get("PYTHONPATH"))
+    except ValueError as exc:
+        print(f"run-pytest-short: unresolved --env retry: {exc}", file=sys.stderr)
+        return 2
+    environment = {**os.environ, "PYTHONPATH": pythonpath}
+    return _execute([python, "-m", "pytest"], targets, tail_n, log_path, environment=environment)
+
+
+def _execute(
+    parts: list[str], targets: list[str], tail_n: int, log_path: str, *, environment: dict[str, str] | None = None
+) -> int:
+    """Launch pytest, preserve its bounded log, and print the requested tail.
+
+    A provisioned retry runs with the project's source roots first on ``PYTHONPATH``: the provisioner never installs the
+    project, so only the missing third-party package changes between the original run and the retry.
+    """
     # Capture combined stdout+stderr so we can tail it; mirrors `2>&1 | tail -N`.
     # Read incrementally with a byte cap so adversarial test output cannot exhaust memory
     # before tail_n truncation is applied.
@@ -350,6 +388,7 @@ def _execute(parts: list[str], targets: list[str], tail_n: int, log_path: str) -
         stderr=subprocess.STDOUT,
         text=True,
         start_new_session=os.name != "nt",
+        env=environment,
     )
     returncode, output = _capture(proc)  # 10-min hard cap; pytest_cmd callers set # timeout: 600000 in bash
     if log_path:
@@ -361,6 +400,13 @@ def _execute(parts: list[str], targets: list[str], tail_n: int, log_path: str) -
     tail = lines[-tail_n:] if tail_n > 0 else []
     if tail:
         print("\n".join(tail))
+    if environment is not None and returncode == 1:
+        # The direct runner uses this same check and imports the short runner's allowlist.
+        from dev_run_repro import failure_reported
+
+        if not failure_reported(lines[-_DEFAULT_TAIL_N:]):
+            print("run-pytest-short: provisioned Python exited 1 without a pytest failure summary", file=sys.stderr)
+            return 2
     return returncode
 
 

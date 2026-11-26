@@ -32,6 +32,11 @@ Companion to `python-code.md` §Multi-OS Executables, same scope: projects suppo
 
 - **Skips are the last resort.** Never a blanket `skipif(sys.platform == "win32")` — probe the capability and skip on `OSError`. Document each surviving skip and re-audit it.
 - Test skips are **collection-time decorators only** (`pytest.mark.skipif`, `pytest.mark.skip`, or parametrized marks). Never call `pytest.skip()` from a test or fixture body.
+- **Test the OS's equivalent before skipping.** When a location or behaviour differs by OS (uv machine config in `XDG_CONFIG_DIRS` against `ProgramData`), parametrize each OS's own form so every OS keeps the case; skip only a capability the OS lacks.
+- A fake of `subprocess.run` answers only the command under test: pass every other call (`cygpath`, `taskkill`) to the real function, or the fake's sequence is consumed by a helper and the value under test comes back empty. A fake returns what the real call returns: bytes without `text=True`.
+- A sentinel or state file a shell block reads is written with `newline="\n"`, and a path the block prints is converted back with `cygpath -w` before Python opens it.
+- No wall-clock bound under 30 s on a child process or collection: Windows runs the same work five to twenty times slower. Fix the cost before raising a bound.
+- **Cost is a defect on Windows legs (20 to 60 minutes).** A fixture or test over 10 s there is optimized: a `scope="module"` fixture runs once per xdist worker, so build an artifact once per run and share it through a lock file in the shared base temp directory, cut spawned processes, and read the CI `--durations` list after each change.
 - **Recurrent defect guard**: a test simulating another OS must supply every host-only API and constant it exercises rather than assuming the runner exports them. For absent surfaces such as `os.killpg` or `signal.SIGKILL`, install test doubles with `monkeypatch.setattr(..., raising=False)`, and have the regression first use `monkeypatch.delattr(..., raising=False)` to prove the missing-attribute case. Run the simulated branch on every host — never add an OS skip for it.
 
 ## File Layout

@@ -11,7 +11,7 @@ Before submitting a gate command, choose one test transport: free-form `--tests`
 Helper option schemas live in `--help`, not skills. In plugin, derive `PLUGIN_ROOT` from selected `SKILL.md` path and require every helper in `package-manifest.json`; never choose cache with glob/latest/mtime logic or use source-tree fallback. The list below covers common shared and code-review helpers, not the complete release roster; other workflow helpers are documented by their owning skill. Run an entry only when current package manifest contains it. Before creating or changing invocation, run relevant packaged command:
 
 - `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/create_run.py --help`
-- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gates.py --help`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gates.py --help` — `--tool-cache <dir>` gives pre-commit and uv a writable cache outside the checkout
 - `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/release_evidence.py --help` — explicit `record-demo` executes an authorized local demo and retains script/output receipts; ordinary release validation never executes it
 - `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/collect_diff.py --help`
 - `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/github_read.py --help`
@@ -29,7 +29,9 @@ Helper option schemas live in `--help`, not skills. In plugin, derive `PLUGIN_RO
 - `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/final_handoff.py --help`
 - `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/validate-artifacts.py --help` — `--all-errors` reports every failed check group with a repair hint in one pass
 - `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/test_targets.py --help` — changed-file pytest targets (codemap-py test impact, else name/import heuristics) and the sandbox-safe flag decision for loop and reproduction runs, never a final gate
-- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/remediation_finalize.py --help` — code-remediate, code-review, and audit (`--skill code-review` also derives canonical review action content in existing notes/handoff tables and runs the review validator): derives copied metadata, workplan sections, and handoff fields, then renders, writes, validates, and optionally promotes in one call; audit retains its authored findings and substantive evidence while deriving copied gates, confidence, and digest bindings
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/gate_env_provision.py --help` — `plan|apply` builds a disposable task-local environment for declared dependencies; see `native-skill-contract.md` §Project Dependency Preparation
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/benchmark_claims.py --help` — `host|compare` records the host class and compares an author's benchmark claim base against head; verdicts `reproduced`, `not-reproduced`, `hardware-unavailable`, `no-benchmark`
+- `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/remediation_finalize.py --help` — `start --run <run> [--checkpoint allocated|source-collected|selection|plan|implementation|gates-run]` writes the `run-state.json` stub of an unfinished run; code-remediate, code-review, and audit (`--skill code-review` also derives canonical review action content in existing notes/handoff tables and runs the review validator): derives copied metadata, workplan sections, and handoff fields, then renders, writes, validates, and optionally promotes in one call; audit retains its authored findings and substantive evidence while deriving copied gates, confidence, and digest bindings
 - `PLUGIN_ROOT/bin/python PLUGIN_ROOT/skills/code-review/validate_artifacts.py --help`
 - `PLUGIN_ROOT/bin/python PLUGIN_ROOT/skills/code-review/review_prepare.py --help` — deterministic native-wave preparation and assembly; inspect selected subcommand help
 - `PLUGIN_ROOT/bin/python PLUGIN_ROOT/skills/code-review/review_context.py --help` — audited frozen-context delivery to a native reviewer

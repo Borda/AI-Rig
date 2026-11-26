@@ -113,8 +113,10 @@ jobs:
     timeout-minutes: 60
     env:
       PYTHONFAULTHANDLER: "1"
-      # Coverage tracing added 10-13% to measured runs and is informational, so one Python (3.14) reports it.
-      COVERAGE: ${{ matrix.python-version == '3.14' }}
+      # Coverage tracing added 10-13% to measured runs and is informational, so only the fast Ubuntu leg on Python
+      # 3.14 reports it; macOS and Windows run every test untraced, so their OS-specific branches are not measured.
+      # Coverage already uses sys.monitoring on 3.14, so no cheaper tracer exists. Re-enable an OS by widening this.
+      COVERAGE: ${{ matrix.python-version == '3.14' && matrix.os == 'ubuntu-latest' }}
       PYTEST_ARGS: >-
         -n 4
         -W error::DeprecationWarning --durations=30
@@ -209,7 +211,7 @@ jobs:
       # Coverage is informational only: an upload failure never fails the job, and codecov.yml
       # marks every status as informational so coverage changes never block a merge.
       - name: 📊 Upload coverage to Codecov
-        if: ${{ !cancelled() && matrix.python-version == '3.14' }}
+        if: ${{ !cancelled() && matrix.python-version == '3.14' && matrix.os == 'ubuntu-latest' }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

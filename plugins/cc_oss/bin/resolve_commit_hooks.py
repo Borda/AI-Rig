@@ -49,12 +49,18 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 _PLUMBING_TIMEOUT = 30
+#: Seconds a ``--commit-merge`` commit may take, hooks included. With the ``MERGE_HEAD`` check before it, the call
+#: ends within :data:`MERGE_COMMIT_WORST_CASE`, under the 600 s ceiling of the Bash call that runs it.
+MERGE_COMMIT_BUDGET = 540
+#: Upper bound of one ``--commit-merge`` call: the ``MERGE_HEAD`` check plus the commit budget.
+MERGE_COMMIT_WORST_CASE = _PLUMBING_TIMEOUT + MERGE_COMMIT_BUDGET
 _POLICY_FILE = "resolve-hooks-policy.json"
 _POLICY_VERSION = 1
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -112,6 +118,50 @@ class HookDecision:
     inspection: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class CallBudget:
+    """A wall-clock budget shared by every process one commit starts.
+
+    The Bash call that runs a commit helper has a fixed timeout. A per-process timeout alone cannot stay under it: an
+    approved-hook commit runs up to two commit attempts plus the plumbing between them, so its worst case is several
+    timeouts long, and the Bash call can be killed between two steps. Every process started under one budget gets
+    whichever is smaller, its own cap or the time the budget has left, so the whole call ends within the budget.
+
+    Attributes:
+        expires: ``time.monotonic()`` value at which the budget is spent.
+    """
+
+    expires: float
+
+    @classmethod
+    def starting_now(cls, seconds: float) -> CallBudget:
+        """Return a budget of ``seconds`` counted from now."""
+        return cls(time.monotonic() + seconds)
+
+    def remaining(self) -> float:
+        """Return the seconds left, or raise :class:`subprocess.TimeoutExpired` when the budget is spent."""
+        left = self.expires - time.monotonic()
+        if left <= 0:
+            raise subprocess.TimeoutExpired("git", 0)
+        return left
+
+    def cap(self, limit: float) -> float:
+        """Return the timeout for the next process: ``limit`` or the time left, whichever is smaller.
+
+        Examples:
+            >>> CallBudget.starting_now(600).cap(30)
+            30
+            >>> CallBudget.starting_now(5).cap(30) <= 5
+            True
+        """
+        return min(limit, self.remaining())
+
+
+def _timeout(budget: CallBudget | None, limit: float = _PLUMBING_TIMEOUT) -> float:
+    """Return ``limit`` alone, or capped by ``budget`` when the call runs under one."""
+    return limit if budget is None else budget.cap(limit)
+
+
 def _merge_in_progress(git: str) -> bool:
     """Tell whether a merge is pending (``MERGE_HEAD`` exists), i.e. the index may hold base-side staged content."""
     done = subprocess.run(  # noqa: S603
@@ -120,10 +170,10 @@ def _merge_in_progress(git: str) -> bool:
     return done.returncode == 0
 
 
-def _git_output(git: str, *args: str) -> bytes:
+def _git_output(git: str, *args: str, budget: CallBudget | None = None) -> bytes:
     """Read bounded Git plumbing output without executing external diff commands."""
     return subprocess.run(  # noqa: S603
-        [git, *args], check=True, capture_output=True, timeout=_PLUMBING_TIMEOUT
+        [git, *args], check=True, capture_output=True, timeout=_timeout(budget)
     ).stdout
 
 
@@ -139,23 +189,24 @@ def _file_record(path: Path, label: str) -> dict[str, str | int]:
     }
 
 
-def inspect_repository_hooks(git: str) -> dict[str, object]:
+def inspect_repository_hooks(git: str, budget: CallBudget | None = None) -> dict[str, object]:
     """Display and fingerprint active hooks and conventional repository hook configuration.
 
     The fingerprint includes contents, executable modes and configured hook location. It is portable between resolve
     worktrees whose relative hook paths and contents agree; an absolute hook location remains absolute in the report.
-    The displayed hook scripts define executable commands, including any dynamic dispatch they perform.
+    The displayed hook scripts define executable commands, including any dynamic dispatch they perform. ``budget`` caps
+    each git call when the inspection runs inside a commit (see :class:`CallBudget`).
     """
-    hooks_path = os.fsdecode(_git_output(git, "rev-parse", "--git-path", "hooks")).strip()
+    hooks_path = os.fsdecode(_git_output(git, "rev-parse", "--git-path", "hooks", budget=budget)).strip()
     config = subprocess.run(  # noqa: S603
         [git, "config", "--show-origin", "--get-all", "core.hooksPath"],
         check=False,
         capture_output=True,
-        timeout=_PLUMBING_TIMEOUT,
+        timeout=_timeout(budget),
     )
     if config.returncode not in (0, 1):
         raise RuntimeError("cannot inspect core.hooksPath configuration")
-    root = Path(os.fsdecode(_git_output(git, "rev-parse", "--show-toplevel")).strip())
+    root = Path(os.fsdecode(_git_output(git, "rev-parse", "--show-toplevel", budget=budget)).strip())
     hook_directory = Path(hooks_path)
     files: dict[str, dict[str, str | int]] = {}
     locations = [(hook_directory, "active-hooks"), (root / ".husky", ".husky"), (root / ".githooks", ".githooks")]
@@ -380,10 +431,11 @@ def _decide_again(git: str, decision_file: Path, base: str | None, head: str | N
     return decide_hooks(git, base, head or None)
 
 
-def _working_files(git: str) -> dict[str, tuple[int, str] | None]:
+def _working_files(git: str, budget: CallBudget | None = None) -> dict[str, tuple[int, str] | None]:
     """Snapshot dirty tracked and nonignored untracked files, including deletions and symlinks."""
-    raw = _git_output(git, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", "HEAD")
-    raw += _git_output(git, "ls-files", "--others", "--exclude-standard", "-z")
+    diff = ("diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", "HEAD")
+    raw = _git_output(git, *diff, budget=budget)
+    raw += _git_output(git, "ls-files", "--others", "--exclude-standard", "-z", budget=budget)
     state: dict[str, tuple[int, str] | None] = {}
     for name in raw.split(b"\0"):
         if not name:
@@ -399,45 +451,62 @@ def _working_files(git: str) -> dict[str, tuple[int, str] | None]:
     return state
 
 
-def commit_with_hooks(git: str, args: list[str], files: list[str] | None, timeout: int) -> int:
-    """Run a commit with hooks disabled, or approved hooks with one scoped formatter recovery."""
+def commit_with_hooks(git: str, args: list[str], files: list[str] | None, timeout: float) -> int:
+    """Run a commit with hooks disabled, or approved hooks with one scoped formatter recovery.
+
+    Args:
+        git: Git executable.
+        args: Git arguments of the commit.
+        files: Files the commit selects (the paths a formatter hook may rewrite); ``None`` reads the staged list.
+        timeout: Seconds for the whole call: both commit attempts and every git call between them share it, so the
+            call ends within ``timeout`` whatever the hooks do (see :class:`CallBudget`).
+
+    Returns:
+        The commit's exit code; ``1`` when the approval no longer matches or a hook stepped outside the selection.
+
+    Raises:
+        subprocess.TimeoutExpired: When the budget is spent, including before a retry could start.
+    """
+    if timeout <= 0:
+        raise subprocess.TimeoutExpired("git", 0)
     approval = os.environ.get("RESOLVE_APPROVED_HOOKS", "")
     if not approval:
+        # one process: it gets the whole budget
         with tempfile.TemporaryDirectory(prefix="resolve-no-hooks-") as empty:
             return subprocess.run(  # noqa: S603
                 [git, "-c", f"core.hooksPath={empty}", *args], check=False, timeout=timeout
             ).returncode
     try:
-        return _commit_approved(git, args, files, timeout, approval)
+        return _commit_approved(git, args, files, CallBudget.starting_now(timeout), approval)
     except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
         print(f"resolve hooks: {exc} — no further commit attempted", file=sys.stderr)
         return 1
 
 
-def _index_entries(git: str) -> dict[str, bytes]:
+def _index_entries(git: str, budget: CallBudget | None = None) -> dict[str, bytes]:
     """Capture staged object identities so hooks cannot widen a recovery commit through index-only changes."""
     return {
         os.fsdecode(entry.split(b"\t", 1)[1]): entry.split(b"\t", 1)[0]
-        for entry in _git_output(git, "ls-files", "--stage", "-z").split(b"\0")
+        for entry in _git_output(git, "ls-files", "--stage", "-z", budget=budget).split(b"\0")
         if entry
     }
 
 
-def _commit_approved(git: str, args: list[str], files: list[str] | None, timeout: int, approval: str) -> int:
-    """Validate the displayed approval and recover only a formatter's selected-file edits."""
-    if inspect_repository_hooks(git)["sha256"] != approval:
+def _commit_approved(git: str, args: list[str], files: list[str] | None, budget: CallBudget, approval: str) -> int:
+    """Validate the displayed approval and recover only a formatter's selected-file edits, all within ``budget``."""
+    if inspect_repository_hooks(git, budget)["sha256"] != approval:
         raise RuntimeError("hook commands/configuration changed or approval is invalid; show them and ask again")
     selected = files
     if selected is None:
-        raw = _git_output(git, "diff", "--cached", "--name-only", "--no-renames", "-z")
+        raw = _git_output(git, "diff", "--cached", "--name-only", "--no-renames", "-z", budget=budget)
         selected = [os.fsdecode(name) for name in raw.split(b"\0") if name]
-    before = _working_files(git)
-    staged_before = _index_entries(git)
-    result = subprocess.run([git, *args], check=False, timeout=timeout)  # noqa: S603
+    before = _working_files(git, budget)
+    staged_before = _index_entries(git, budget)
+    result = subprocess.run([git, *args], check=False, timeout=budget.remaining())  # noqa: S603
     if result.returncode == 0:
         return 0
-    after = _working_files(git)
-    staged_after = _index_entries(git)
+    after = _working_files(git, budget)
+    staged_after = _index_entries(git, budget)
     index_changes = {
         name for name in staged_before.keys() | staged_after.keys() if staged_before.get(name) != staged_after.get(name)
     }
@@ -449,13 +518,13 @@ def _commit_approved(git: str, args: list[str], files: list[str] | None, timeout
         return result.returncode
     if changed - {Path(name).as_posix() for name in selected}:
         raise RuntimeError("hook changed paths outside the selected files; inspect the tree before continuing")
-    if inspect_repository_hooks(git)["sha256"] != approval:
+    if inspect_repository_hooks(git, budget)["sha256"] != approval:
         raise RuntimeError("hook commands/configuration changed during execution; show them and ask again")
     subprocess.run(  # noqa: S603
-        [git, "--literal-pathspecs", "add", "--", *sorted(changed)], check=True, timeout=_PLUMBING_TIMEOUT
+        [git, "--literal-pathspecs", "add", "--", *sorted(changed)], check=True, timeout=_timeout(budget)
     )
     print("resolve hooks: restaged hook-modified selected files; retrying commit once", file=sys.stderr)
-    retry = subprocess.run([git, *args], check=False, timeout=timeout)  # noqa: S603
+    retry = subprocess.run([git, *args], check=False, timeout=budget.remaining())  # noqa: S603
     if retry.returncode:
         print("resolve hooks: second commit attempt failed; inspect hook output and working tree", file=sys.stderr)
     return retry.returncode
@@ -508,7 +577,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.commit_merge:
             _git_output("git", "rev-parse", "--verify", "MERGE_HEAD")
-            return commit_with_hooks("git", ["commit", "--no-edit"], None, 600)
+            return commit_with_hooks("git", ["commit", "--no-edit"], None, MERGE_COMMIT_BUDGET)
         if args.decide:
             _print_decision(decide_hooks("git", args.base, args.head), args.approved_file)
         elif args.refresh_approval:

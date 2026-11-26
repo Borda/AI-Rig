@@ -131,7 +131,8 @@ def _analyzed_run(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> tuple[
     """
     report_dir, _, cwd = profile_run
     timings = tmp_path / "timings.jsonl"
-    row = {"ts": "2030-01-01T00:00:01Z", "tool": "Bash", "duration_ms": 200, "session_id": "s1", "args": "command=ls"}
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    row = {"ts": stamp, "tool": "Bash", "duration_ms": 200, "session_id": "s1", "args": "command=ls"}
     timings.write_text(json.dumps(row) + "\n", encoding="utf-8")
     invocations = tmp_path / "invocations.jsonl"
     invocations.write_text("\n", encoding="utf-8")

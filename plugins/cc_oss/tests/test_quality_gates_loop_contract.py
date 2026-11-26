@@ -1,4 +1,4 @@
-"""Guard the adversarial loop's Codex quota stop in the oss quality-gate rules.
+"""Guard the adversarial loop's reviewer route and Codex quota stop in the oss quality-gate rules.
 
 A ``foundry:challenger`` round runs its own Codex cross-check. When that call stops on a quota fault, the challenger's
 reply says so, and every later Codex call of the loop would fail the same way. Both oss rule files, the complete one and
@@ -14,6 +14,17 @@ from pathlib import Path
 import pytest
 
 _RULES = Path(__file__).resolve().parents[1] / "rules"
+
+
+@pytest.mark.parametrize("name", ["quality-gates.md", "quality-gates-delta.md"])
+def test_loop_rounds_require_the_dual_engine_reviewer_with_foundry(name: str) -> None:
+    """Require full challenger coverage each round and reserve direct bridge review for standalone installs."""
+    lines = (_RULES / name).read_text(encoding="utf-8").splitlines()
+    route = next(line for line in lines if line.startswith("For permitted independent review"))
+
+    assert "`foundry:challenger --codex-full` for every loop round" in route
+    assert "subject to the Codex quota stop below" in route
+    assert "`bridge:review` only on installs without `foundry`" in route
 
 
 def _quota_rule(name: str) -> list[str]:

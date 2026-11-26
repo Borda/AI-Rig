@@ -88,6 +88,14 @@ python "$PLUGIN_ROOT/bin/dev_load_shared.py" runner-detection.md  # timeout: 500
 
 Sets `$TEST_CMD` (full suite) and `$PYTEST_CMD` (pytest flags). Run at skill start.
 
+If a targeted Python test fails to import a declared package, load and follow the shared recovery instructions before interpreting the failure.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" env-provision.md
+```
+
 **Optional `--plan <path>`**: `$ARGUMENTS` contains `--plan <path>` (any position) → read plan file first. Extract `Affected files`, `Risks`, `Suggested approach` — informs Step 1 scope analysis. Skip redundant codebase exploration for already-classified files. Store plan path as `PLAN_FILE`. The extraction block also records the plan's hash (`.plans/` is gitignored, so edits leave no diff); Final Report re-checks it.
 
 ```bash
@@ -490,6 +498,8 @@ echo "BASELINE OK: scoped tests pass before source edits"
 ```
 
 Any `! BLOCKED` result → stop before source edits or the implementation teammate spawn, and do not revert pre-existing failures.
+
+If the baseline selector fails to import a declared package, follow the shared recovery to rerun the same selector command with `--env "$ENV_RECEIPT"` and apply the baseline exit and `--check-record` checks above to the retry before editing.
 
 **Test-run policy** — inside the Step 4 refactor loop and the Step 5 review loop, tests run targeted only, never widened to the full suite. The full suite runs at the final gate once the loops are clean, and again after any fix to a full-suite failure (§Final gate).
 

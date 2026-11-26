@@ -31,6 +31,11 @@ describe("blueprint normalization", () => {
   it("keeps intra-line whitespace and quotes unchanged", () => {
     expect(normalizeCommand("echo  'a  b'").text).toBe("echo  'a  b'")
   })
+
+  it("preserves a comment marker attached to an escaped space", () => {
+    const literal = "echo word\\ #literal && echo next"
+    expect(splitFragments(normalizeCommand(literal).text)).toEqual(["echo word\\ #literal", "echo next"])
+  })
 })
 
 describe("blueprint lookup", () => {
@@ -45,6 +50,18 @@ describe("blueprint lookup", () => {
     expect(blueprintSafe("git status --porcelain\ngit diff --stat", manifest)).toBe(true)
     expect(blueprintSafe("git status --porcelain && git push", manifest)).toBe(false)
     expect(blueprintSafe("git status --porcelain\tgit diff", manifest)).toBe(false)
+  })
+
+  it.each(["|", "||", ";", "\n", "&"])("does not prove a directory change joined by %j", (operator) => {
+    const directory = process.cwd().replaceAll("\\", "/")
+    const cd = `cd "${directory}"`
+    const entries = Object.fromEntries(
+      [cd, "git status"].map((fragment) => [sha256(fragment), { kind: "command", src: "test" } as const]),
+    )
+    const blueprint = { ...manifest, entries }
+    expect(blueprintSafe(`${cd} && git status`, blueprint)).toBe(true)
+    expect(blueprintSafe(`${cd} && git status`, blueprint, () => false)).toBe(false)
+    expect(blueprintSafe(`${cd} ${operator} git status`, blueprint)).toBe(false)
   })
 
   it("fails closed on an empty, unsafe or unshipped command", () => {

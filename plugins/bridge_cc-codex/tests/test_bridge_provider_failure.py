@@ -86,7 +86,7 @@ def _failed(message: str) -> list[dict[str, Any]]:
 
 def _answer(core: dict[str, object]) -> dict[str, Any]:
     """Return the item record that carries the model's final structured answer."""
-    return {"type": "item.completed", "item": {"text": json.dumps(core)}}
+    return {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(core)}}
 
 
 COMPLETED = {"type": "turn.completed", "usage": {"input_tokens": 3, "output_tokens": 2}}

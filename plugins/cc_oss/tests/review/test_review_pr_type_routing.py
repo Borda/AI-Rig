@@ -22,7 +22,7 @@ _REVIEW = Path(__file__).resolve().parents[2] / "skills" / "review"
 _STEP0_BLOCK = next(
     block
     for block in re.findall(r"```bash\n(.*?)```", read_skill_source(_REVIEW / "SKILL.md"), re.DOTALL)
-    if "_TEST_CI_COUNT=" in block
+    if "_TEST_CI_PATTERN=" in block
 )
 _SCOPE_BLOCK = next(
     block
@@ -64,6 +64,12 @@ def _run(block: str, tmp_path: Path, changed: list[str]) -> tuple[subprocess.Com
     [
         pytest.param([".github/workflows/ci.yml"], "CODE", id="actions-only-is-not-tests-ci"),
         pytest.param(["tests/test_x.py", ".github/workflows/ci.yml"], "CODE", id="tests-plus-actions-is-code"),
+        pytest.param(
+            ["tests/README.md", ".github/workflows/ci.yml"], "CODE", id="overlapping-docs-do-not-hide-actions"
+        ),
+        pytest.param(["tests/README.md", "src/main.js"], "CODE", id="overlapping-docs-do-not-hide-other-code"),
+        pytest.param(["tests/README.md", "tests/test_x.py"], "TESTS_CI", id="overlapping-docs-and-tests"),
+        pytest.param(["src/Makefile-helper.js"], "CODE", id="makefile-name-must-match-a-path-component"),
         pytest.param([".pre-commit-config.yaml"], "CODE", id="yaml-config-is-code"),
         pytest.param(["tests/test_x.py", "tox.ini"], "TESTS_CI", id="tests-and-tox-stay-tests-ci"),
         pytest.param(["requirements.txt"], "CODE", id="requirements-manifest-is-code"),

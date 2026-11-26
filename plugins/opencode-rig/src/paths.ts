@@ -37,7 +37,9 @@ export function resolveGitCommonDir(cwd: string): string | undefined {
   if (isBareRepository(cwd) !== false) return undefined
   const value = git(cwd, ["rev-parse", "--git-common-dir"])
   if (value === undefined) return undefined
-  const absolute = isAbsolute(value) ? value : resolve(cwd, value)
+  // Git prints an absolute path with forward slashes on Windows but a relative one as `.git`; resolve both the same
+  // way so two checkouts of one repository compare equal.
+  const absolute = resolve(cwd, value)
   return existsSync(absolute) ? absolute : undefined
 }
 

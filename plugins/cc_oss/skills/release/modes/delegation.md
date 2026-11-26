@@ -15,13 +15,13 @@ In `prepare` and `audit` modes, delegate gather/explore/validate to subagent via
    WAIVED_FILE=$(mktemp ".temp/release-waived-$BRANCH-$DATE-XXXXXXXX") || exit 1  # one atomic, distinct ledger per invocation; preserve earlier runs
    echo "$WAIVED_FILE" > "${TMPDIR:-/tmp}/release-waived-${CSID}"  # persist for downstream reload (Check 41) — see modes/classify-truth-check.md "Waived changes ledger"
    ```
-2. Assert variables before spawning:
+2. Before spawning the gather agent, read `modes/classify-truth-check.md` and execute its **Resolve the published baseline** block for this invocation. Bind this invocation's `BASELINE_FILE` literal again in the handoff block below.
    ```bash
    PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
    # reload every asserted var — fresh shell (Check 41)
    IFS= read -r SKILL_DIR < "${TMPDIR:-/tmp}/release-setup-${CSID}/SKILL_DIR" 2>/dev/null || SKILL_DIR=""
-   IFS= read -r LAST_TAG < "${TMPDIR:-/tmp}/release-setup-${CSID}/LAST_TAG" 2>/dev/null || LAST_TAG=""
+   IFS= read -r BASELINE_REF 2>/dev/null < "${BASELINE_FILE:-}" || BASELINE_REF=""
    IFS= read -r REPO_ROOT < "${TMPDIR:-/tmp}/release-setup-${CSID}/REPO_ROOT" 2>/dev/null || REPO_ROOT=""
    IFS= read -r BRANCH < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH" 2>/dev/null || BRANCH=""
    IFS= read -r DATE < "${TMPDIR:-/tmp}/release-setup-${CSID}/DATE" 2>/dev/null || DATE=""
@@ -31,17 +31,18 @@ In `prepare` and `audit` modes, delegate gather/explore/validate to subagent via
    IFS= read -r WAIVED_FILE < "${TMPDIR:-/tmp}/release-waived-${CSID}" 2>/dev/null || WAIVED_FILE=""
    GATHER_FILE=".temp/release-gather-$BRANCH-$DATE.md"
    [ -n "$GATHER_FILE" ] && [ -n "$WAIVED_FILE" ] && [ -n "$REPO_ROOT" ] && [ -n "$RANGE" ] || { echo "Error: GATHER_FILE, WAIVED_FILE, REPO_ROOT, or RANGE is empty — verify Shared setup and Gather changes completed"; exit 1; }  # timeout: 5000
-   # LAST_TAG empty is valid (first-ever release, no prior tag) — gather-prompt.md's baseline check handles it, never asserted here
    OSS_BIN="$PLUGIN_ROOT/bin"  # resolved here, passed absolute: the gather subagent's shell has no CLAUDE_PLUGIN_ROOT
-   echo "REPO_ROOT=$REPO_ROOT RANGE=$RANGE GATHER_FILE=$GATHER_FILE WAIVED_FILE=$WAIVED_FILE LAST_TAG=$LAST_TAG OSS_BIN=$OSS_BIN SHIPPED_TAGS=$SHIPPED_TAGS SHIPPED_FILE=$SHIPPED_FILE"  # literal values for the template substitution below
+   echo "REPO_ROOT=$REPO_ROOT RANGE=$RANGE GATHER_FILE=$GATHER_FILE WAIVED_FILE=$WAIVED_FILE BASELINE_REF=$BASELINE_REF OSS_BIN=$OSS_BIN SHIPPED_TAGS=$SHIPPED_TAGS SHIPPED_FILE=$SHIPPED_FILE"  # literal values for the template substitution below
    cat "$SKILL_DIR/templates/gather-prompt.md"  # timeout: 5000
    ```
 
 > **Agent budget** — spawn thresholds per `claude-config.md` §Agent/Skill Spawn Discipline. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
-Template (loaded above). Substitute `<REPO_ROOT>`, `<RANGE>`, `<GATHER_FILE>`, `<WAIVED_FILE>`, `<LAST_TAG>`, `<OSS_BIN>`, `<SHIPPED_TAGS>`, `<SHIPPED_FILE>` with literal values (`<LAST_TAG>` and `<SHIPPED_TAGS>` may substitute to an empty string — the template's own fallback covers that). Spawn:
+Template (loaded above). Bind both of its baseline spellings, `<LAST_TAG>` and `$LAST_TAG`, to the printed `BASELINE_REF` literal. If it is blank, tell the agent the published baseline is unresolved and to qualify old-side claims. Substitute `<REPO_ROOT>`, `<RANGE>`, `<GATHER_FILE>`, `<WAIVED_FILE>`, `<OSS_BIN>`, `<SHIPPED_TAGS>`, `<SHIPPED_FILE>` with their printed values. `<SHIPPED_TAGS>` may be blank. Spawn:
 
 In the substituted prompt's gather phase, include SKILL.md's Gather changes PR-discovery commands from `TRUNK=` through the final `$PRS` print, with `RANGE` bound to the literal release range, plus the coverage-gap/body-fetch obligation immediately following that block; require execution before classification.
+
+Include the **Same-release feature+fix dedup** and **Breaking vs Deprecated vs Removed** rules from `modes/classify-truth-check.md` in the substituted gather prompt's classification and Truth check phases. Bind `$BASELINE_REF` in those rules to the same printed commit ID as `<LAST_TAG>`. A Breaking claim requires evidence that the affected behavior was published. A Removed claim also requires a caller-visible warning or notice at that commit. Apply these conditions to every final category, including the template's instruction to keep a Removed claim after checking the old name.
 
 > loads: gather-prompt.md `Agent(subagent_type="foundry:sw-engineer", name="gather-changes", description="Gather release range evidence", prompt=<substituted gather-prompt.md content>)`
 

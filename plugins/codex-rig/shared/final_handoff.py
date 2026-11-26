@@ -105,7 +105,7 @@ _MAX_DESTINATION_PARENS = 32
 #: Identifiers of the verification gates, in the order a handoff must report them.
 GATE_IDS = ("lint", "format", "types", "tests", "review")
 #: Allowed result statuses for a verification gate.
-GATE_STATUSES = {"pass", "fail", "missing-command", "not-applicable", "timeout"}
+GATE_STATUSES = {"pass", "fail", "missing-command", "not-applicable", "timeout", "refused"}
 #: Allowed closure statuses for a confidence gap listed in a handoff.
 GAP_STATUSES = {"closed", "unresolved", "deferred"}
 #: Required column headings of the challenge-resolve handoff table, with one column per severity tier.

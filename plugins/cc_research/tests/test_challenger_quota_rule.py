@@ -1,4 +1,4 @@
-"""Check the review-loop rule that reacts to a challenger whose Codex cross-check stopped on quota."""
+"""Check the review loop's challenger route and its response to a Codex quota stop."""
 
 from pathlib import Path
 
@@ -9,6 +9,17 @@ _RULES = [
     pytest.param(_PLUGIN / "rules/quality-gates.md", id="full-rule"),
     pytest.param(_PLUGIN / "rules/quality-gates-delta.md", id="delta-rule"),
 ]
+
+
+@pytest.mark.parametrize("path", _RULES)
+def test_loop_rounds_require_the_dual_engine_reviewer_with_foundry(path: Path) -> None:
+    """Require full challenger coverage each round and reserve direct bridge review for standalone installs."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    route = next(line for line in lines if line.startswith("For permitted independent review"))
+
+    assert "`foundry:challenger --codex-full` for every loop round" in route
+    assert "subject to the Codex quota stop below" in route
+    assert "`bridge:review` only on installs without `foundry`" in route
 
 
 def _quota_lead(path: Path) -> tuple[list[str], int]:

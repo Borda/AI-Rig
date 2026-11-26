@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from _oss_shell_plugin import render_shell
 from _skill_source import read_skill_source
-from _text_io import bash_path
+from _text_io import bash_path, native_path
 
 _REVIEW = Path(__file__).resolve().parents[2] / "skills/review"
 _PLUGIN = _REVIEW.parents[1]
@@ -65,6 +65,7 @@ def snapshot(tmp_path: Path) -> Path:
     (snap / "pr-meta.json").write_text(
         json.dumps(
             {
+                "number": 7,
                 "headRefOid": _SHA,
                 "baseRefOid": "b" * 40,
                 "baseRefName": "main",
@@ -84,6 +85,79 @@ def snapshot(tmp_path: Path) -> Path:
     (tmp_path / "oss-review-snap-dir-safety").write_text(bash_path(snap) + "\n", encoding="utf-8", newline="\n")
     (tmp_path / "oss-review-pr-labels-safety").write_text("\n", encoding="utf-8", newline="\n")
     return snap
+
+
+@_skip_no_bash
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("reviewed", "match"),
+    [pytest.param(_SHA, "true", id="same-head"), pytest.param("c" * 64, "false", id="moved-head")],
+)
+def test_saved_report_compares_the_recorded_header_commit(
+    snapshot: Path, tmp_path: Path, reviewed: str, match: str
+) -> None:
+    """A saved report without its optional SHA sidecar still identifies the revision actually reviewed."""
+    report = tmp_path / ".reports/review/pr-7/run-001/review-report.md"
+    report.parent.mkdir(parents=True)
+    report.write_text(
+        f"---\nTitle: Review\nPR: #7\nCommit SHA:  {reviewed}\nGate: PASS\nOutcome: APPROVE\nSummary: Ready.\n---\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    result = _run(tmp_path, _block("modes/preflight.md", 'echo "SHA_MATCH=true"'))
+    assert result.returncode == 0, result.stderr
+    assert f"PRIOR_SHA={reviewed} HEAD_SHA={_SHA}" in result.stdout
+    assert f"SHA_MATCH={match}" in result.stdout
+
+
+@_skip_no_bash
+@pytest.mark.parametrize(
+    ("failed", "expected"),
+    [
+        pytest.param("", [], id="all-sources-complete"),
+        pytest.param("review-bodies", ["review-bodies"], id="missing-review-bodies"),
+        pytest.param("inline-comments", ["inline-comments"], id="missing-inline-comments"),
+        pytest.param("general-comments", ["general-comments"], id="missing-general-comments"),
+    ],
+)
+def test_fresh_conversation_collects_all_pages_or_names_the_missing_source(
+    snapshot: Path, tmp_path: Path, failed: str, expected: list[str]
+) -> None:
+    """Keep both pages from each endpoint and disclose failures even after a partial response."""
+    stub = """
+gh() {
+  case "$*" in
+    'api --hostname github.com repos/owner/project/pulls/7/reviews --paginate') source=review-bodies ;;
+    'api --hostname github.com repos/owner/project/pulls/7/comments --paginate') source=inline-comments ;;
+    'api --hostname github.com repos/owner/project/issues/7/comments --paginate') source=general-comments ;;
+    *) return 99 ;;
+  esac
+  printf '[{"id":1},{"id":2}]\\n'
+  [ "$source" != "$FAILED_CONVERSATION" ] || return 1
+  printf '[{"id":3,"user":{"login":"review-author"}}]\\n'
+}
+"""
+    script = stub + _block("modes/preflight.md", "for _SOURCE in review-bodies")
+    result = _run(tmp_path, script, FAILED_CONVERSATION=failed)
+    assert result.returncode == 0, result.stdout + result.stderr
+    coverage = (snapshot / "conversation-coverage.txt").read_text(encoding="utf-8").splitlines()
+    assert [line.split()[0] for line in coverage] == expected
+    data = {
+        path.stem.removeprefix("conversation-"): json.loads(raw) if (raw := path.read_text(encoding="utf-8")) else None
+        for path in snapshot.glob("conversation-*.json")
+    }
+    rows = [{"id": 1}, {"id": 2}, {"id": 3, "user": {"login": "review-author"}}]
+    assert data == {
+        source: None if source == failed else rows
+        for source in ("review-bodies", "inline-comments", "general-comments")
+    }
+    claim_input = snapshot / "pr-comments.json"
+    authors = (
+        [item.get("author", {}).get("login") for item in json.loads(claim_input.read_text())["comments"]]
+        if claim_input.exists()
+        else []
+    )
+    assert authors == ([] if failed == "general-comments" else [None, None, "review-author"])
 
 
 @_skip_no_bash
@@ -107,7 +181,7 @@ git() {
 """
     result = _run(
         tmp_path,
-        stub + _block("SKILL.md", 'SNAP_DIR="${TMPDIR:-/tmp}/oss-review-snap-'),
+        stub + _block("SKILL.md", "SNAP_DIR=$(mktemp -d"),
         FAILURE=failure,
         META=(snapshot / "pr-meta.json").read_text(),
         HEAD_SHA={"moved-head": "c" * 40}.get(failure, _SHA),
@@ -233,13 +307,24 @@ def test_revert_scan_preserves_spaces_and_globs(snapshot: Path, tmp_path: Path) 
     assert (tmp_path / "git-args").read_text().splitlines()[-2:] == ["pkg/a b.py", "pkg/[draft].py"]
 
 
+_LEGACY_REPORT = "---\nTitle: Review\nPR: #7\nGate: PASS\nOutcome: APPROVE\nSummary: Ready\n---\n"
+
+
 @_skip_no_bash
 @pytest.mark.parametrize(
     ("content", "expected"),
     [
         pytest.param("Please APPROVE this plan\n", "false", id="ordinary-mention"),
-        pytest.param("Outcome: APPROVE\n", "true", id="outcome-header"),
-        pytest.param("Gate: REVIEW_V1_BLOCK\n", "true", id="gate-header"),
+        pytest.param("Outcome: APPROVE\n", "", id="outcome-header-only"),
+        pytest.param("Gate: REVIEW_V1_BLOCK\n", "", id="gate-header-only"),
+        pytest.param(_LEGACY_REPORT, "true", id="valid-archived-pass"),
+        pytest.param(
+            _LEGACY_REPORT.replace("Gate: PASS", "Gate: REJECT_SCOPE @abcdef1").replace(
+                "Outcome: APPROVE", "Outcome: N/A"
+            ),
+            "true",
+            id="valid-archived-rejection",
+        ),
     ],
 )
 def test_direct_report_requires_header(tmp_path: Path, content: str, expected: str) -> None:
@@ -249,6 +334,7 @@ def test_direct_report_requires_header(tmp_path: Path, content: str, expected: s
     text = _block("SKILL.md", "DIRECT_PATH_MODE=false\nif [[")
     script = text[text.index("DIRECT_PATH_MODE=false\nif [[") :]
     result = _run(tmp_path, script + '\nprintf "%s" "$DIRECT_PATH_MODE"', CLEAN_ARGS=bash_path(report))
+    assert result.returncode == (0 if expected else 1), result.stdout + result.stderr
     assert result.stdout.endswith(expected), result.stderr
 
 
@@ -293,17 +379,17 @@ git() { printf '%s\\n' "$HEAD_SHA"; }
 """
     result = _run(
         tmp_path,
-        stub
-        + _block("SKILL.md", 'SNAP_DIR="${TMPDIR:-/tmp}/oss-review-snap-')
-        + "\n"
-        + _block("modes/ci-status.md", "for _CHECK_SET"),
+        stub + _block("SKILL.md", "SNAP_DIR=$(mktemp -d") + "\n" + _block("modes/ci-status.md", "for _CHECK_SET"),
         META_FILE=bash_path(snapshot / "pr-meta.json"),
         CHECKS=json.dumps([{"name": "test", "bucket": bucket}]),
         CHECK_EXIT=exit_code,
         HEAD_SHA=_SHA,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert json.loads((tmp_path / "oss-review-snap-7-safety/checks.json").read_text())[0]["bucket"] == bucket
+    assert (
+        json.loads((next(tmp_path.glob("oss-review-snap-7-safety-*")) / "checks.json").read_text())[0]["bucket"]
+        == bucket
+    )
 
 
 _CI_STUB = """
@@ -603,7 +689,7 @@ def test_snapshot_block_starts_the_initial_ci_observation(
     result = _run(
         tmp_path,
         _SNAPSHOT_CI_STUB
-        + _block("SKILL.md", 'SNAP_DIR="${TMPDIR:-/tmp}/oss-review-snap-')
+        + _block("SKILL.md", "SNAP_DIR=$(mktemp -d")
         + "\n"
         + _block("modes/ci-status.md", "for _CHECK_SET"),
         META_FILE=bash_path(snapshot / "pr-meta.json"),
@@ -642,7 +728,7 @@ def test_partial_gate_record_blocks_an_unavailable_refresh(snapshot: Path, tmp_p
 @_skip_no_bash
 def test_direct_path_consolidation_skips_ci(tmp_path: Path) -> None:
     """A saved report needs neither a network read nor a PR snapshot to consolidate."""
-    (tmp_path / "oss-review-pr-tag-safety").write_text("review-report.md\n", encoding="utf-8")
+    (tmp_path / "oss-review-pr-tag-safety").write_text("review-report.md\n", encoding="utf-8", newline="\n")
     script = (
         _block("modes/post-agent.md", "BRANCH=$(git branch") + "\n" + _block("modes/ci-status.md", "for _CHECK_SET")
     )
@@ -715,7 +801,7 @@ git() { case "$1" in ls-remote) printf '%040d\\trefs/pull/7/head\\n' 1 ;; *) ech
 """
     result = _run(
         tmp_path,
-        stub + _block("SKILL.md", 'SNAP_DIR="${TMPDIR:-/tmp}/oss-review-snap-'),
+        stub + _block("SKILL.md", "SNAP_DIR=$(mktemp -d"),
         META_FILE=bash_path(snapshot / "pr-meta.json"),
         HEAD_SHA=_SHA,
     )
@@ -762,7 +848,7 @@ git() {
     result = _run(tmp_path, stub + _block("SKILL.md", "git worktree add --detach"), PROJECT_ROOT=tmp_path.as_posix())
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / "git-calls").read_text().splitlines()[1].endswith(" " + _SHA)
-    worktree = Path((tmp_path / "oss-review-wt-safety").read_text().strip())
+    worktree = native_path((tmp_path / "oss-review-wt-safety").read_text().strip())
     assert worktree.parent == tmp_path / ".claude/worktrees"
     assert worktree.name.startswith(f"oss-review-7-{_SHA[:8]}-")
 
@@ -849,7 +935,7 @@ gh() {
 """
     result = _run(
         tmp_path,
-        stub + setup + "\n" + _block("SKILL.md", 'SNAP_DIR="${TMPDIR:-/tmp}/oss-review-snap-'),
+        stub + setup + "\n" + _block("SKILL.md", "SNAP_DIR=$(mktemp -d"),
         CHECKOUT=bash_path(checkout),
         META_FILE=bash_path(snapshot / "pr-meta.json"),
         PR_REMOTE=bash_path(remote),
@@ -858,7 +944,7 @@ gh() {
         DIFF_MODE=diff_mode,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    collected = tmp_path / "oss-review-snap-7-safety"
+    collected = native_path((tmp_path / "oss-review-snap-dir-safety").read_text().strip())
     assert (collected / "files.txt").read_text().splitlines() == ["module.py"]
     assert (collected / "pr.diff").read_text() == _git(checkout, "diff", f"{base}...{head}") + "\n"
     source = {"fork": "upstream", "base": "origin", "url": "https://github.com/owner/project.git"}[layout]
@@ -885,10 +971,32 @@ def test_direct_report_skips_ci_snapshot_reads(tmp_path: Path, direct: str, expe
 
 
 @_skip_no_bash
+@pytest.mark.parametrize(
+    "anchor",
+    [
+        pytest.param("DIRECT_PATH_MODE=false\nif [[", id="explicit-report-path"),
+        pytest.param("A separate request to show", id="reuse-bound-report"),
+        pytest.param("later lines win when the sentinel is read", id="draft-from-bound-report"),
+    ],
+)
+def test_preflight_refuses_pending_reports_on_reuse_routes(tmp_path: Path, anchor: str) -> None:
+    """Every direct or previously bound report is checked for publication state before reuse."""
+    report = tmp_path / "review-report.md"
+    report.write_text("Outcome: APPROVE\n", encoding="utf-8")
+    (tmp_path / "review-publication.pending").touch()
+    (tmp_path / "oss-review-prior-report-safety").write_text(f"{report.name}\n", encoding="utf-8", newline="\n")
+
+    result = _run(tmp_path, _block("modes/preflight.md", anchor), ARGUMENTS=report.name)
+
+    assert result.returncode == 1, result.stderr
+    assert "review publication has not passed the parent gates" in result.stdout
+
+
+@_skip_no_bash
 def test_flag_parse_clears_prior_snapshot(tmp_path: Path) -> None:
     """Starting a report reply removes a crashed PR run's snapshot, CI directory and held CI gate."""
     report = tmp_path / "report.md"
-    report.write_text("Outcome: APPROVE\n", encoding="utf-8", newline="\n")
+    report.write_text(_LEGACY_REPORT, encoding="utf-8", newline="\n")
     sentinels = [tmp_path / f"oss-review-{name}-safety" for name in ("snap-dir", "ci-dir", "ci-gate")]
     for sentinel in sentinels:
         sentinel.write_text("old-pr\n", encoding="utf-8", newline="\n")
@@ -1019,9 +1127,23 @@ def test_real_worktree_is_clean_detached_and_discoverable(
         CHECKOUT=bash_path(checkout),
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    worktree = Path((tmp_path / "oss-review-wt-safety").read_text().strip())
+    worktree = native_path((tmp_path / "oss-review-wt-safety").read_text().strip())
     assert worktree in list((checkout / ".claude/worktrees").glob("oss-*/"))
     assert _git(worktree, "rev-parse", "HEAD") == head
     assert _git(worktree, "status", "--porcelain") == ""
     assert f"HEAD {head}\ndetached\n" in _git(checkout, "worktree", "list", "--porcelain") + "\n"
     assert _git(checkout, "rev-parse", "HEAD") == base
+
+
+@_skip_no_bash
+@pytest.mark.parametrize("batch", ["review", "verify", "consolidate", "reply"])
+def test_wakeup_joins_a_batch_without_earlier_watch_files(tmp_path: Path, batch: str) -> None:
+    """Each batch's persisted watch rows are sufficient to join its completed output."""
+    (tmp_path / "oss-review-run-dir-safety").write_text(bash_path(tmp_path) + "\n", encoding="utf-8", newline="\n")
+    result_path = tmp_path / "completed.md"
+    result_path.write_text("evidence\n", encoding="utf-8")
+    watch = tmp_path / f"agent-watch-{batch}.tsv"
+    watch.write_text(f"worker\t{bash_path(result_path)}\t1800\n", encoding="utf-8", newline="\n")
+    result = _run(tmp_path, _block("modes/agent-launch.md", 'agent_watch.py" --state-dir'))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [(row["batch"], row["status"]) for row in json.loads(result.stdout)["agents"]] == [(batch, "done")]

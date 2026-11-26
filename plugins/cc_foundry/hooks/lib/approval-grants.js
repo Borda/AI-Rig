@@ -23,8 +23,10 @@
 //   approved branch's spellings. `Approve` writes the approving call's id (`question_id`), the
 //   current branch, HEAD and `expires_at` = `created_at` + 15 min; the question text, kept in
 //   `question`, is the only record of the command and must name the branch (else nothing records).
-//   A detached HEAD records nothing. One file: a later `Approve` replaces a pending token and `Hold`
-//   removes it, so the latest push answer decides. commit-guard.js spends it (`spendToken`, claim +
+//   A detached HEAD records nothing. One token per approved question (the row's file, then slots
+//   `<file>.slot-<hash>`, at most 8): a later `Approve` of the same question replaces its token, another question's
+//   token stands beside it. `Hold` cancels only a pending approval for the same question in the same session.
+//   commit-guard.js spends the token bound to the push's branch and HEAD (`spendToken`, claim +
 //   transcript proof): after its force ban and a dry-run pass, one push of this branch at this HEAD
 //   to a configured remote name — `git push [-u] [<remote>] [HEAD|<branch>][:<branch>]`, a
 //   substitution printing the current branch, `git lfs push <remote> <branch>` — run from the
@@ -64,8 +66,10 @@
 //   redirection or subshell outside quotes (`;`, `&&`, `|`, `>`, `<`, `(`), a `$` or backtick
 //   outside single quotes (variable, substitution, `$'…'`), a glob, brace, tilde, `^`, `#` or
 //   word-leading `=` outside quotes, an unterminated quote, or a file operand reading stdin (`-`,
-//   `@-`). What passes has one reading in bash and zsh (`plainCommandWords`). Latest answer wins:
-//   a later `Approve` replaces a pending token, `Hold` removes it. gh-write-guard.js spends it
+//   `@-`). What passes has one reading in bash and zsh (`plainCommandWords`). One token per approved
+//   command (as for the push token): a later `Approve` of the same question replaces its token, another command's
+//   stands beside it. `Hold` cancels only a pending approval for the same question in the same session.
+//   gh-write-guard.js spends the matching one
 //   (`spendToken`) only for a gh write whose whole Bash command, trimmed, equals `command` and whose
 //   files still digest to `files_sha256`.
 //
@@ -93,7 +97,7 @@
 //   refused. A token renamed between this copy's checks reads as unreadable, never a throw, so the
 //   claim decides; `spendToken` never throws (a guard exiting 1 would let the call through). A
 //   spend removes the scope's claims older than the token lifetime; `removeRecord` (SessionStart,
-//   `/clear`) deletes a token with its claims.
+//   `/clear`) removes only the provided session's tokens and claims under the same reservation.
 //
 // TRANSCRIPT PROOF — a token allows nothing the transcript does not show the user approving
 //   Before the rename, `spendToken` reads the spending call's `transcript_path` tail-first: the
@@ -110,10 +114,9 @@
 //   LIMITS: the self-grant guard blocks named writes to a session transcript (a redirect, a writer
 //   command, an in-place edit, a file tool), but a write it cannot name (a run-time-built path, an
 //   interpreter's own code, a path relative to an earlier `cd`, a glob outside the basename, a
-//   symlinked directory, `>|`) together with a forged record defeats it; `removeRecord` wipes the
+//   symlinked directory) together with a forged record defeats it; `removeRecord` wipes the owning session's
 //   claims, so a re-planted copy of a spent token passes again within 15 min of its answer when the
-//   session resumes on the same transcript. Directory contents a gh command uploads (`gh repo create
-//   --source`) are bound only as `directory`.
+//   session resumes on the same transcript. An explicit `gh repo create --source` cannot be approved through a token.
 //
 // RECORD — family `approval-record`, version 1
 //   <git common dir>/<row.file>, one file per scope, holding
@@ -188,7 +191,12 @@
 //   hooks/approval-guard.js or this module passes only when it reads, stages, lints or
 //   `node --check`s it (node's `-c`, never `-C`, which runs the script). Segments split at
 //   shell operators, except a backslash-escaped one (`find … \( … \) -exec … \;`); line
-//   continuations are joined. Names are matched as the shell and the filesystem resolve them:
+//   continuations are joined. Bash and zsh expand each `case` pattern they test. The guard leaves
+//   out patterns only after the whole input passes the simple case grammar, and only for a complete
+//   clause from `case` in command position through `esac`. Unsupported syntax anywhere leaves all
+//   patterns visible. Clause bodies and the words `case … in` used as operands also go through
+//   the segment checks. Names are matched as the shell
+//   and the filesystem resolve them:
 //   quotes, backslash escapes and `$'…'` decoded; NFKC + lowercase (`ſ` is `s`, as
 //   case-insensitive volumes compare); Windows trailing dots/spaces, `::$DATA` and 8.3 names;
 //   repeated `/` and `/./` collapsed before the whole-directory test (`.git//`, `.git/./`). The
@@ -289,11 +297,11 @@ const SCOPES = Object.freeze([
     options: ["Approve", "Hold"],
     recordAnswer: "Approve",
     file: "claude-push-approval.json",
-    covers: ["one non-force push of the approved branch at the approved HEAD to a configured remote"],
+    covers: ["one non-force push of the approved branch at the approved HEAD to the configured remote shown"],
     neverCovers: [
       "force push",
       "a second push",
-      "another branch or HEAD",
+      "another branch, HEAD or remote",
       "a delete, prune, --all, --tags or mirror push",
       "a URL or path destination",
       "a push from another checkout than the approved branch's, or after cd/pushd",
@@ -420,13 +428,16 @@ function recordLabel(row) {
 }
 
 /**
- * The command that deletes a scope's record, revoking it in every worktree.
+ * The command that deletes a scope's record, revoking it in every worktree. A single-use scope may hold several
+ * pending tokens (its file and its slots). Claims and the active reservation stay in place.
  *
  * @param {object} row Scope row.
  * @returns {string}
  */
 function revokeCommand(row) {
-  return `rm "$(git rev-parse --git-common-dir)/${row.file}"`;
+  return row.singleUse
+    ? `rm -f "$(git rev-parse --git-common-dir)"/${row.file}{,.slot-*}`
+    : `rm "$(git rev-parse --git-common-dir)/${row.file}"`;
 }
 
 // ── Which common dir ──────────────────────────────────────────────────────────
@@ -620,13 +631,19 @@ function gitHead(cwd, env = process.env) {
  */
 function isAncestor(cwd, ancestor, descendant, env = process.env) {
   if (!COMMIT_ID.test(String(ancestor)) || !COMMIT_ID.test(String(descendant))) return false;
+  const options = {
+    cwd: cwd || process.cwd(),
+    env: discoveryEnv(env),
+    stdio: ["ignore", "pipe", "ignore"],
+    encoding: "utf8",
+    timeout: GIT_TIMEOUT_MS,
+  };
   try {
-    execFileSync("git", ["merge-base", "--is-ancestor", ancestor, descendant], {
-      cwd: cwd || process.cwd(),
-      env: discoveryEnv(env),
-      stdio: ["ignore", "ignore", "ignore"],
-      timeout: GIT_TIMEOUT_MS,
-    });
+    const grafts = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-path", "info/grafts"], options);
+    // Git resolves the path through the common directory and honors GIT_GRAFT_FILE.
+    const graftPath = grafts.replace(/\r?\n$/, "");
+    if (!path.isAbsolute(graftPath) || fs.lstatSync(graftPath, { throwIfNoEntry: false })) return false;
+    execFileSync("git", ["--no-replace-objects", "merge-base", "--is-ancestor", ancestor, descendant], options);
     return true;
   } catch (_) {
     return false;
@@ -1023,8 +1040,8 @@ function plainCharProblem(c, quote, wordStart) {
  * the rest of a short cluster after `F`/`f` (`-Fbody.md`), the path after `@` in a `key=@path` field and the path
  * before `#` in a release asset `path#label`.
  *
- * A word that names no file costs one `stat` and binds its absence; a missed file operand would leave its content
- * unbound, so no per-subcommand table decides.
+ * Even an option-shaped word may be the separate value of an option. Bind its state too, so newly added gh flags
+ * and option values starting with `-` do not need a separate per-subcommand file-operand table.
  *
  * @param {string[]} args Words after `gh`.
  * @returns {string[]}
@@ -1033,14 +1050,15 @@ function fileCandidates(args) {
   const found = new Set();
   let operandsOnly = false;
   for (const arg of args) {
-    const values = [];
-    if (operandsOnly || !arg.startsWith("-") || arg === STDIN_OPERAND) values.push(arg);
-    else if (arg === "--") operandsOnly = true;
-    else if (arg.startsWith("--")) {
-      if (arg.includes("=")) values.push(arg.slice(arg.indexOf("=") + 1));
-    } else {
-      const at = arg.slice(1).search(/[Ff]/);
-      if (at >= 0) values.push(arg.slice(at + 2).replace(/^=/, ""));
+    const values = [arg];
+    if (!operandsOnly && arg.startsWith("-")) {
+      if (arg === "--") operandsOnly = true;
+      else if (arg.startsWith("--")) {
+        if (arg.includes("=")) values.push(arg.slice(arg.indexOf("=") + 1));
+      } else {
+        const at = arg.slice(1).search(/[Ff]/);
+        if (at >= 0) values.push(arg.slice(at + 2).replace(/^=/, ""));
+      }
     }
     for (const value of values) {
       found.add(value);
@@ -1087,12 +1105,23 @@ function fileSha256(file, budget) {
  * @returns {{full: string, stat: fs.Stats}|{state: string}}
  */
 function fileStat(cwd, candidate) {
-  const full = path.resolve(cwd, candidate);
+  // The OS must follow each symlink before resolving the next `..`, as it does for gh's open.
+  const full = fileLocation(cwd, candidate);
+  if (full === null) return { state: null };
   try {
     return { full, stat: fs.statSync(full) };
   } catch (err) {
     return { state: ABSENT_CODES.has(err.code) ? "absent" : `unreadable:${err.code || "error"}` };
   }
+}
+
+/** Resolve against the command's cwd without collapsing components before the OS opens the path. */
+function fileLocation(cwd, candidate) {
+  if (process.platform !== "win32") return path.isAbsolute(candidate) ? candidate : `${cwd}${path.sep}${candidate}`;
+  // Drive-relative names depend on ambient per-drive cwd. Win32 callers can normalize parent traversal differently.
+  if (/^[a-z]:(?![\\/])/i.test(candidate) || /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(candidate)) return null;
+  if (/^[\\/](?![\\/])/.test(candidate)) return path.win32.parse(cwd).root.slice(0, -1) + candidate;
+  return path.win32.isAbsolute(candidate) ? candidate : `${cwd}\\${candidate}`;
 }
 
 /**
@@ -1129,12 +1158,23 @@ function commandFileDigest(command, cwd) {
   if (HIDDEN_IN_COMMAND.test(text)) return { reason: HIDDEN_REASON };
   const words = plainCommandWords(text);
   if (words.reason) return words;
-  const candidates = fileCandidates(words.words.slice(1));
+  const args = words.words.slice(1);
+  const endOfOptions = args.indexOf("--");
+  const options = endOfOptions < 0 ? args : args.slice(0, endOfOptions);
+  if (options.some((arg) => /^--source(?:=|$)/.test(arg))) {
+    return {
+      reason: "the approved command names a source checkout whose Git contents cannot be bound; publish separately",
+    };
+  }
+  const candidates = fileCandidates(args);
   if (candidates.includes(STDIN_OPERAND)) {
     return { reason: "the approved command reads standard input, which the question cannot show; pass a file" };
   }
   const base = cwd || process.cwd();
   const found = candidates.map((candidate) => [candidate, fileStat(base, candidate)]);
+  if (found.some(([, entry]) => entry.state === null)) {
+    return { reason: "the approved command contains an ambiguous Windows path; use a fully qualified path" };
+  }
   // Sizes first, nothing read yet: hashing past the hook timeout would let the call through (a timed-out
   // PreToolUse hook does not block), so an oversized command is refused before its first byte.
   const bytes = found.reduce((sum, [, entry]) => sum + (entry.stat && entry.stat.isFile() ? entry.stat.size : 0), 0);
@@ -1179,9 +1219,9 @@ function ghWriteTokenFields(data, verdict, { now }) {
  * @param {boolean} requireFile Reader mode: a missing file is itself the problem.
  * @returns {string|null}
  */
-function locationProblem(dir, row, requireFile) {
-  const label = recordLabel(row);
-  const file = path.join(dir, row.file);
+function locationProblem(dir, row, requireFile, name = row.file) {
+  const label = name === row.file ? recordLabel(row) : `${recordLabel(row)} slot ${name}`;
+  const file = path.join(dir, name);
   let dirStat;
   let fileStat;
   try {
@@ -1194,14 +1234,14 @@ function locationProblem(dir, row, requireFile) {
     fileStat = fs.lstatSync(file);
   } catch (err) {
     if (err.code !== "ENOENT") return `${label} is unreadable`;
-    return requireFile ? `no ${row.file} in the git common directory` : null;
+    return requireFile ? `no ${name} in the git common directory` : null;
   }
   if (fileStat.isSymbolicLink()) return `${label} is a symbolic link`;
   if (!fileStat.isFile()) return `${label} is not a regular file`;
   if (fileStat.size > RECORD_MAX_BYTES) return `${label} is larger than a record`;
   try {
-    if (!fs.readdirSync(dir).includes(row.file)) return `the file on disk is not named exactly ${row.file}`;
-    if (realPath(file) !== path.join(realPath(dir), row.file)) {
+    if (!fs.readdirSync(dir).includes(name)) return `the file on disk is not named exactly ${name}`;
+    if (realPath(file) !== path.join(realPath(dir), name)) {
       return `${label} resolves outside the git common directory`;
     }
   } catch (_) {
@@ -1253,13 +1293,14 @@ function recordProblem(row, record, now) {
  * @param {string} dir Absolute git common dir, from `recordDirectory`.
  * @param {object} row Scope row.
  * @param {Date} now Current time, for `expires_at`.
+ * @param {string} [name] File name inside `dir`: the row's primary file, or one of its token slots (`slotNames`).
  * @returns {{ok: true, record: object, file: string, line: string}|{ok: false, reason: string, expired?: true,
  *   file?: string}} An expired record also carries `expired` and its `file`, so a spender can delete it.
  */
-function recordAt(dir, row, now) {
-  const problem = locationProblem(dir, row, true);
+function recordAt(dir, row, now, name = row.file) {
+  const problem = locationProblem(dir, row, true, name);
   if (problem) return { ok: false, reason: problem };
-  const file = path.join(dir, row.file);
+  const file = path.join(dir, name);
   let record;
   try {
     record = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -1285,23 +1326,78 @@ function recordAt(dir, row, now) {
  * @returns {boolean}
  */
 function isExpired(row, record, now) {
-  const at = row.fields.includes("expires_at") && typeof record.expires_at === "string" ? record.expires_at : "";
+  const at = row.fields.includes("expires_at") && typeof record?.expires_at === "string" ? record.expires_at : "";
   return ISO_TIMESTAMP.test(at) && Date.parse(at) <= now.getTime();
+}
+
+// A single-use scope keeps one token per approved question: the first in the row's own file, each further one in a
+// slot beside it. Two questions answered `Approve` together (or one after the other) each stand until spent, expired or
+// held; a repeated approval of the same question replaces that question's token.
+const SLOT_INFIX = ".slot-";
+const MAX_SLOTS = 8;
+
+/**
+ * Names of a row's token files in the common dir: its own file first, then its slots in name order.
+ *
+ * @param {string} dir Absolute git common dir.
+ * @param {object} row Scope row.
+ * @returns {string[]} Only the row's own file for a standing grant.
+ */
+function slotNames(dir, row) {
+  if (!row.singleUse) return [row.file];
+  let found = [];
+  try {
+    found = fs.readdirSync(dir).filter((name) => name.startsWith(`${row.file}${SLOT_INFIX}`));
+  } catch (_) {
+    // An unreadable dir is reported by the location check of the file itself.
+  }
+  return [row.file, ...found.sort()];
+}
+
+/**
+ * The slot file name that holds the token of one question.
+ *
+ * @param {object} row Scope row.
+ * @param {object} record The token's session and question text.
+ * @returns {string}
+ */
+function slotNameFor(row, record) {
+  const identity = JSON.stringify([record.session_id, record.question]);
+  return `${row.file}${SLOT_INFIX}${crypto.createHash("sha256").update(identity).digest("hex").slice(0, 16)}`;
+}
+
+/**
+ * Every token file of a row read as `recordAt` does, the row's own file first.
+ *
+ * @param {string} dir Absolute git common dir.
+ * @param {object} row Scope row.
+ * @param {Date} now Current time.
+ * @returns {Array<{name: string, status: object}>}
+ */
+function slotStatuses(dir, row, now) {
+  return slotNames(dir, row).map((name) => ({ name, status: recordAt(dir, row, now, name) }));
 }
 
 /**
  * The record of one scope as the session sees it, validated.
  *
+ * A single-use scope may hold several tokens (`slotNames`): `match` picks the valid one a call is about (its record
+ * must satisfy it); without a match the first valid token is returned, else the row's own file's problem.
+ *
  * @param {string} scopeId Scope id.
- * @param {{cwd?: string, env?: object, now?: Date}} [options] Session directory, environment, time.
+ * @param {{cwd?: string, env?: object, now?: Date, match?: function(object): boolean}} [options] Session directory,
+ *   environment, time and the token filter.
  * @returns {{ok: true, record: object, file: string, line: string}|{ok: false, reason: string}} `line` is the
  *   record line a rule records: `grant .git/<file>@<created_at>`.
  */
-function recordStatus(scopeId, { cwd, env = process.env, now = new Date() } = {}) {
+function recordStatus(scopeId, { cwd, env = process.env, now = new Date(), match } = {}) {
   const row = scopeById(scopeId);
   if (!row) return { ok: false, reason: "unknown approval scope" };
   const where = recordDirectory(cwd, env);
-  return where.reason ? { ok: false, reason: where.reason } : recordAt(where.dir, row, now);
+  if (where.reason) return { ok: false, reason: where.reason };
+  const statuses = slotStatuses(where.dir, row, now).map((entry) => entry.status);
+  const live = statuses.filter((status) => status.ok);
+  return (match && live.find((status) => match(status.record))) || live[0] || statuses[0];
 }
 
 /**
@@ -1509,6 +1605,8 @@ function transcriptRecord(line) {
  * @returns {object[]|null}
  */
 function callInputs(record, toolUseId) {
+  // Only the assistant line is the call: an `api-request-blob` line repeats it without `wireToolInputs`.
+  if (record.type !== "assistant") return null;
   const content = record.message && record.message.content;
   const block = Array.isArray(content)
     ? content.find((b) => b && b.type === "tool_use" && b.id === toolUseId && b.name === "AskUserQuestion")
@@ -1530,6 +1628,9 @@ function callInputs(record, toolUseId) {
  * @returns {{isError: boolean, answers: object, timestamp: unknown}|null}
  */
 function callAnswer(record, toolUseId) {
+  // Only the user line carries the answer: the newer `api-request-blob` line that replays the request holds the same
+  // `tool_result` block with no `toolUseResult` or timestamp, and tail-first it would shadow the real answer.
+  if (record.type !== "user") return null;
   const content = record.message && record.message.content;
   const block = Array.isArray(content)
     ? content.find((b) => b && b.type === "tool_result" && b.tool_use_id === toolUseId)
@@ -1711,8 +1812,9 @@ function evaluateAnswer(data, lookup = findToolUse) {
       continue;
     }
     if (!RECORD_BUILDERS[row.id]) continue;
-    if (row.revokeAnswer !== null && answer === row.revokeAnswer) verdicts.push({ action: "revoke", row });
-    else if (answer !== "" && !row.options.includes(answer)) {
+    if (row.revokeAnswer !== null && answer === row.revokeAnswer) {
+      verdicts.push({ action: "revoke", row, question: question.question });
+    } else if (answer !== "" && !row.options.includes(answer)) {
       // Free text typed instead of an option is not an approval: it is reported, and where the scope has a pending
       // token it lowers authority like a refusal.
       const revokes = row.revokeAnswer !== null;
@@ -1727,7 +1829,9 @@ function evaluateAnswer(data, lookup = findToolUse) {
         : { action: "write", row, question: String(question.question), answer: row.recordAnswer },
     );
   }
-  return verdicts;
+  // One answered call has one outcome whatever its question order: every revoking answer applies before any
+  // approval is recorded, so `Approve` A with `Hold` B leaves A's token standing either way round.
+  return [...verdicts.filter((v) => v.action === "revoke"), ...verdicts.filter((v) => v.action !== "revoke")];
 }
 
 /**
@@ -1768,8 +1872,8 @@ function recordedMessage(row, record, target) {
   }
   if (row.id === "push-once") {
     return (
-      `${written}One non-force push of branch ${record.branch} at ${record.head.slice(0, 12)} to a configured ` +
-      `remote may run once, until ${record.expires_at}, from ${pushOrigin(questionPushWorktree(record.question).dir)}, ` +
+      `${written}One non-force push of branch ${record.branch} at ${record.head.slice(0, 12)} to the configured ` +
+      `remote shown in the question may run once, until ${record.expires_at}, from ${pushOrigin(questionPushWorktree(record.question).dir)}, ` +
       `as the only push in its Bash command; a ` +
       `second push, a new commit or another branch needs a new ${row.header} question; ${never}`
     );
@@ -1786,31 +1890,53 @@ function recordedMessage(row, record, target) {
  * @param {object} row Scope row.
  * @param {object} data Parsed hook payload.
  * @param {object} env Environment.
- * @param {string} [cause] What the user did, when it was not the revoking option.
+ * @param {object} verdict The answer's question and optional cause. Drift and free text revoke the whole scope.
+ * @param {Date} now Current time for validating the pending tokens.
  * @returns {string|null}
  */
-function revokeRecord(row, data, env, cause = `the user answered ${row.revokeAnswer}`) {
+function revokeRecord(row, data, env, verdict, now) {
   const where = recordDirectory(data.cwd, env);
   if (where.reason) return null;
-  const target = path.join(where.dir, row.file);
+  const removed = [];
   try {
-    withTokenLock(where.dir, row, () => fs.unlinkSync(target));
+    withTokenLock(where.dir, row, () => {
+      for (const name of revocableNames(where.dir, row, data, verdict.question, now)) {
+        try {
+          fs.unlinkSync(path.join(where.dir, name));
+          removed.push(path.join(where.dir, name));
+        } catch (err) {
+          if (err.code !== "ENOENT") throw err;
+        }
+      }
+    });
   } catch (err) {
-    if (err.code === "ENOENT") return null;
     return (
-      `pending approval record ${target} not removed (${err.code || err.message}); ` +
+      `pending approval record ${path.join(where.dir, row.file)} not removed (${err.code || err.message}); ` +
       "retry Hold after active hooks finish, or remove the pending token manually."
     );
   }
-  return `pending approval record ${target} removed: ${cause} (scope ${row.id}).`;
+  if (removed.length === 0) return null;
+  const more = removed.length > 1 ? ` and ${removed.length - 1} more pending token(s) of the scope` : "";
+  const cause = verdict.cause || `the user answered ${row.revokeAnswer}`;
+  return `pending approval record ${removed[0]}${more} removed: ${cause} (scope ${row.id}).`;
+}
+
+/** Select the pending tokens this answer cancels. Hold only matches this question in the answering session. */
+function revocableNames(dir, row, data, question, now) {
+  if (question === undefined) return slotNames(dir, row);
+  return slotStatuses(dir, row, now)
+    .filter(
+      ({ status }) => status.ok && status.record.question === question && status.record.session_id === data.session_id,
+    )
+    .map(({ name }) => name);
 }
 
 /**
  * Serialize single-use record transitions, refusing after one second of contention.
  *
  * Exclusive creation arbitrates on every supported OS; rename alone does not on Windows. Never reclaim an occupied
- * reservation: its owner may still be running. A crashed owner's reservation needs lifecycle cleanup or manual removal
- * after hooks stop. Standing grants need no reservation.
+ * reservation: its owner may still be running. A crashed owner's reservation needs manual removal after hooks stop.
+ * Standing grants need no reservation.
  *
  * @param {string} dir Absolute git common dir.
  * @param {object} row Scope row.
@@ -1819,7 +1945,9 @@ function revokeRecord(row, data, env, cause = `the user answered ${row.revokeAns
  */
 function withTokenLock(dir, row, operation) {
   if (!row.singleUse) return operation();
-  const reservation = path.join(dir, `${row.file}${CLAIM_INFIX}lock`);
+  // Both push scopes compete to serve the same call, so their writers and spender share one reservation.
+  const lockRow = row.id === "push-run" ? scopeById("push-once") : row;
+  const reservation = path.join(dir, `${lockRow.file}${CLAIM_INFIX}lock`);
   const deadline = process.hrtime.bigint() + 1000000000n;
   const pause = new Int32Array(new SharedArrayBuffer(4));
   let fd;
@@ -1868,19 +1996,47 @@ function writeAnswerOnce(dir, row, record, callId, now) {
     if (err.code === "EEXIST") return null;
     throw err;
   }
-  const target = path.join(dir, row.file);
+  let target;
   try {
-    const current = recordAt(dir, row, now);
-    if (current.ok && sameRecord(current.record, record)) {
+    const held = slotStatuses(dir, row, now);
+    if (held.some(({ status }) => status.ok && sameRecord(status.record, record))) {
       fs.rmSync(temp, { force: true });
       return null;
     }
+    target = path.join(dir, slotFor(dir, row, record, held));
     fs.renameSync(temp, target);
   } catch (err) {
     fs.rmSync(temp, { force: true });
     throw err;
   }
   return target;
+}
+
+/**
+ * The token file a new record goes to, after dropping the expired slots: the file already holding the same question's
+ * token in this session, else the row's own file when it holds no valid token, else a slot named after the question.
+ * The caller reports a full scope without dropping any live token.
+ *
+ * @param {string} dir Absolute git common dir.
+ * @param {object} row Scope row.
+ * @param {object} record The record to write.
+ * @param {Array<{name: string, status: object}>} held `slotStatuses` of the row.
+ * @returns {string} A file name inside `dir`.
+ */
+function slotFor(dir, row, record, held) {
+  if (!row.singleUse) return row.file;
+  for (const { name, status } of held) {
+    if (name !== row.file && !status.ok && status.expired) fs.rmSync(path.join(dir, name), { force: true });
+  }
+  const live = held.filter(({ status }) => status.ok);
+  const same = live.find(
+    ({ status }) => status.record.question === record.question && status.record.session_id === record.session_id,
+  );
+  if (same) return same.name;
+  if (live.length >= MAX_SLOTS) {
+    throw new Error(`all ${MAX_SLOTS} pending approval slots are full; spend or revoke a token before asking again`);
+  }
+  return held[0].status.ok ? slotNameFor(row, record) : row.file;
 }
 
 /**
@@ -1899,16 +2055,18 @@ function applyVerdict(verdict, data, { now, env }) {
   const { row } = verdict;
   const refused = (reason) => `approval record ${row.file} not recorded: ${reason}.`;
   if (verdict.action === "refuse") return refused(verdict.reason);
-  if (verdict.action === "revoke") return revokeRecord(row, data, env, verdict.cause);
+  if (verdict.action === "revoke") return revokeRecord(row, data, env, verdict, now);
   const where = recordDirectory(data.cwd, env);
   if (where.reason) return refused(where.reason);
   const problem = locationProblem(where.dir, row, false);
   if (problem) return refused(problem);
   const built = RECORD_BUILDERS[row.id](data, verdict, { now, env });
   if (built.reason) return refused(built.reason);
+  if (row.singleUse && typeof data.session_id === "string" && data.session_id)
+    built.fields.session_id = data.session_id;
   const record = buildRecord(row.id, verdict.question, verdict.answer, now, built.fields);
-  const current = recordAt(where.dir, row, now);
-  if (current.ok && sameRecord(current.record, record)) return null;
+  const held = slotStatuses(where.dir, row, now);
+  if (held.some(({ status }) => status.ok && sameRecord(status.record, record))) return null;
   let target;
   try {
     target = withTokenLock(where.dir, row, () => writeAnswerOnce(where.dir, row, record, data.tool_use_id, now));
@@ -2016,15 +2174,18 @@ function claimsOf(dir, row) {
  *
  * @param {string} dir Absolute git common dir.
  * @param {object} row Scope row.
- * @param {string} questionId The approving call's id.
+ * One call can stack several questions, so an approval is the call's id together with the question text: a claim of
+ * another question of the same call spent a different approval.
+ *
+ * @param {object} approved The token (or claim) whose approval is checked: its `question_id` and `question`.
  * @param {string} ownClaim This call's claim, which may already hold the token.
  * @returns {boolean}
  */
-function answerSpentElsewhere(dir, row, questionId, ownClaim) {
+function answerSpentElsewhere(dir, row, approved, ownClaim) {
   return claimsOf(dir, row).some((claim) => {
     if (claim === ownClaim) return false;
     const record = claimRecord(claim, row);
-    return record !== null && record.question_id === questionId;
+    return record !== null && record.question_id === approved.question_id && record.question === approved.question;
   });
 }
 
@@ -2141,22 +2302,54 @@ function checkoutProblem(row, question, checkout) {
     : null;
 }
 
+/** Extract the remote from the question already stored in a push-once record. */
+function questionPushRemote(question, branch, readPush) {
+  if (HIDDEN_IN_QUESTION.test(question) || FENCE.test(question)) return null;
+  const shown = inlineCodeSpans(question)
+    .filter((span) => !span.multiline && /^git\s/.test(span.content))
+    .map((span) => readPush(span.content, branch))
+    .filter(Boolean);
+  if (shown.length !== 1 || shown[0].ambiguous) return null;
+  const ask = question.trimEnd().split("\n").at(-1).trim();
+  const prefix = `Push ${branch} to `;
+  const named = ask.startsWith(prefix) && ask.endsWith("?") ? ask.slice(prefix.length, -1) : undefined;
+  const { remote } = shown[0];
+  if (remote !== undefined && named !== undefined && remote !== named) return null;
+  return remote ?? named ?? null;
+}
+
 /**
  * Why a token (or this call's claim of it) does not allow this call, or null.
  *
- * @param {object} row Scope row.
+ * @param {object} scope Scope row, call claim, expected fields and optional shape refusal.
  * @param {object} record Token record.
- * @param {{dir: string, claim: string, expected: object, transcriptPath?: string, now: Date}} spend The spend.
+ * @param {object} spend Spend context including the transcript and any push checkout.
  * @returns {string|null}
  */
-function spendProblem(row, record, { dir, claim, expected, transcriptPath, now, checkout }) {
+function spendProblem(scope, record, { dir, transcriptPath, now, checkout, push }) {
+  const { row, claim, expected, problem } = scope;
   const field = fieldMismatch(record, expected);
+  if (field === "branch" && push) {
+    return `the current branch is not the one the ${row.id === "push-run" ? "run's " : ""}push was approved on (approval names ${record.branch})`;
+  }
+  if (field === "head" && push) return "HEAD moved since the push was approved";
+  if (field === "remote" && row.id === "push-run")
+    return "the push is not exactly the command the run's question showed";
   if (field) return `${recordLabel(row)} ${MISMATCH_REASONS[field] || `approves another ${field}`}`;
+  if (problem) return problem;
+  if (row.id === "push-once" && push) {
+    if (!record.question.includes(record.branch)) {
+      return "the approving question does not name the token's branch";
+    }
+    const remote = questionPushRemote(record.question, record.branch, push.readPush);
+    if (!remote || remote !== push.remote) return "the push's remote is not the one the approving question showed";
+  }
+  if (row.id === "push-run" && push && !isAncestor(push.cwd, record.base_head, push.head, push.env)) {
+    return "HEAD is not on the line of the PR head the run's push was approved from";
+  }
   const unproven = approvalProofProblem(row, record, { transcriptPath, now, checkout });
   if (unproven) return unproven;
-  return answerSpentElsewhere(dir, row, record.question_id, claim)
-    ? "that approval was already spent by another call"
-    : null;
+  return answerSpentElsewhere(dir, row, record, claim) ? "that approval was already spent by another call" : null;
 }
 
 /**
@@ -2185,7 +2378,17 @@ function spendToken(scopeId, options) {
 }
 
 /**
- * `spendToken` without its catch-all: may throw on a filesystem error the checks above do not absorb.
+ * Check a push's exact and run approvals together, preferring either existing claim over any pending token.
+ *
+ * @param {object} options The spending call and its resolved branch, remote, checkout and run shape.
+ * @returns {{ok: true}|{ok: false, reason: string}}
+ */
+function spendPushToken(options) {
+  return spendToken(["push-once", "push-run"], options);
+}
+
+/**
+ * Prepare proof outside the record reservation and retry if the selected record or call claim changes.
  *
  * @param {string} scopeId A single-use scope id.
  * @param {object} options See `spendToken`.
@@ -2193,34 +2396,85 @@ function spendToken(scopeId, options) {
  */
 function spendUnguarded(
   scopeId,
-  { cwd, env = process.env, now = new Date(), callId, transcriptPath, expected, checkout },
+  { cwd, env = process.env, now = new Date(), callId, transcriptPath, expected, checkout, push },
 ) {
-  const row = scopeById(scopeId);
-  if (!row || !row.singleUse) return { ok: false, reason: "unknown single-use approval scope" };
+  const ids = Array.isArray(scopeId) ? scopeId : [scopeId];
+  const rows = ids.map(scopeById);
+  if (rows.some((row) => !row || !row.singleUse)) return { ok: false, reason: "unknown single-use approval scope" };
   if (typeof callId !== "string" || callId === "") {
     return { ok: false, reason: "the payload carries no tool_use_id to spend the approval with" };
   }
   const where = recordDirectory(cwd, env);
   if (where.reason) return { ok: false, reason: where.reason };
-  const claim = claimPath(where.dir, row, callId);
-  const spend = { dir: where.dir, claim, expected: expected || {}, transcriptPath, now, checkout };
-  return withTokenLock(where.dir, row, () => {
-    const status = recordAt(where.dir, row, now);
-    if (status.ok) {
-      const problem = spendProblem(row, status.record, spend);
-      if (problem) return { ok: false, reason: problem };
-      try {
-        fs.renameSync(status.file, claim);
-        pruneClaims(where.dir, row, claim, now);
-        return { ok: true };
-      } catch (_) {
-        // A missing token or a failed rename still permits only this call's proven claim.
-      }
+  const { dir } = where;
+  const scopes = rows.map((row) => ({
+    row,
+    claim: claimPath(dir, row, callId),
+    expected: push ? push.expected[row.id] : expected || {},
+    problem: row.id === "push-run" && push ? push.runProblem : null,
+  }));
+  const spend = { dir, transcriptPath, now, checkout, push };
+  for (let attempt = 0; attempt <= MAX_SLOTS * scopes.length + 1; attempt += 1) {
+    const own = ownSpendClaim(scopes);
+    const candidate = own
+      ? { ...own, reason: spendProblem(own.scope, own.record, spend) }
+      : pendingSpend(scopes, spend);
+    const result = withTokenLock(dir, rows[0], () => finishSpend(scopes, spend, candidate, own));
+    if (result) return result;
+  }
+  return { ok: false, reason: "the approval changed while it was being checked" };
+}
+
+/** Read the record already claimed by this call, in either eligible scope. */
+function ownSpendClaim(scopes) {
+  for (const scope of scopes) {
+    const record = claimRecord(scope.claim, scope.row);
+    if (record) return { scope, record };
+  }
+  return null;
+}
+
+/** Find the first live token satisfying the full spend, without holding the reservation during proof. */
+function pendingSpend(scopes, spend) {
+  const expired = [];
+  let missing;
+  let denied;
+  for (const scope of scopes) {
+    const held = slotStatuses(spend.dir, scope.row, spend.now);
+    missing ??= held[0].status.reason;
+    let reason;
+    for (const { name, status } of held) {
+      if (spend.push && status.expired) expired.push({ scope, name });
+      if (!status.ok) continue;
+      const problem = spendProblem(scope, status.record, spend);
+      if (!problem) return { scope, name, record: status.record, expired };
+      reason ??= problem;
     }
-    const claimed = claimRecord(claim, row);
-    if (claimed !== null && spendProblem(row, claimed, spend) === null) return { ok: true };
-    return { ok: false, reason: status.ok ? `${recordLabel(row)} was spent by another call` : status.reason };
-  });
+    denied = reason || denied;
+  }
+  return { reason: denied || missing, expired };
+}
+
+/** Commit only the proved snapshot, or release the reservation so a changed snapshot can be proved. */
+function finishSpend(scopes, { dir, now }, candidate, own) {
+  const claimed = ownSpendClaim(scopes);
+  if (claimed || own) {
+    if (claimed?.scope !== own?.scope || JSON.stringify(claimed?.record) !== JSON.stringify(own?.record)) return null;
+    return candidate.reason ? { ok: false, reason: candidate.reason } : { ok: true };
+  }
+  for (const { scope, name } of candidate.expired) {
+    const status = recordAt(dir, scope.row, now, name);
+    if (status.expired) fs.rmSync(status.file, { force: true });
+  }
+  if (!candidate.record) return { ok: false, reason: candidate.reason };
+  const { scope, name, record } = candidate;
+  const { row, claim } = scope;
+  const current = recordAt(dir, row, now, name);
+  if (!current.ok || JSON.stringify(current.record) !== JSON.stringify(record)) return null;
+  if (answerSpentElsewhere(dir, row, record, claim)) return null;
+  fs.renameSync(current.file, claim);
+  pruneClaims(dir, row, claim, now);
+  return { ok: true };
 }
 
 /**
@@ -2240,21 +2494,23 @@ function holdsClaim(scopeId, { cwd, env = process.env, callId } = {}) {
 }
 
 /**
- * Delete a scope's record and the claims its spent tokens left, in the session project's common dir.
+ * Delete only the owning session's pending tokens and spent claims while holding the scope reservation.
  *
  * @param {string} scopeId Scope id.
- * @param {{cwd?: string, env?: object}} [options] Session directory and environment.
+ * @param {{cwd?: string, env?: object, sessionId?: string}} [options] Directory, environment and session to clean.
  * @returns {void}
  */
-function removeRecord(scopeId, { cwd, env = process.env } = {}) {
+function removeRecord(scopeId, { cwd, env = process.env, sessionId = env.CLAUDE_CODE_SESSION_ID } = {}) {
   const row = scopeById(scopeId);
-  const where = row ? recordDirectory(cwd, env) : { reason: "unknown approval scope" };
+  if (!row?.singleUse || typeof sessionId !== "string" || !sessionId) return;
+  const where = recordDirectory(cwd, env);
   if (where.reason) return;
-  for (const name of fs.readdirSync(where.dir)) {
-    if (name === row.file || name.startsWith(`${row.file}${CLAIM_INFIX}`)) {
-      fs.rmSync(path.join(where.dir, name), { force: true });
+  withTokenLock(where.dir, row, () => {
+    const pending = slotNames(where.dir, row).map((name) => path.join(where.dir, name));
+    for (const file of [...pending, ...claimsOf(where.dir, row)]) {
+      if (claimRecord(file, row)?.session_id === sessionId) fs.rmSync(file, { force: true });
     }
-  }
+  });
 }
 
 // ── Self-grant guard (PreToolUse) ─────────────────────────────────────────────
@@ -2264,17 +2520,24 @@ const FILE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 // `git-approval.json` is matched by name only (RECORD_SUFFIXES): as a glob target every `git-*` would reach it.
 const RECORD_NAMES = Object.freeze([...SCOPES.map((row) => row.file), "codex-git-approval.json"]);
 // Name suffixes that identify a record in any directory — Claude's, Codex's and the former name share them.
-const RECORD_SUFFIXES = Object.freeze([...new Set(SCOPES.map((row) => row.file.replace(/^claude-/, "")))]);
+const RECORD_SUFFIXES = Object.freeze([...new Set(RECORD_NAMES.map((name) => name.replace(/^(?:claude|codex)-/, "")))]);
+// Everything beneath these prefixes belongs to the record store, including its replay claims and reservation.
+const RECORD_STATE_PREFIXES = RECORD_NAMES.flatMap((name) => [
+  `${name}${CLAIM_INFIX}`,
+  `${name}${SLOT_INFIX}`,
+  `.${name}.`,
+]);
 const regexEscaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // Windows 8.3 short names of the record files (`CLAUDE~1.JSO`, `CODEX-~1.JSO`, `GIT-AP~1.JSO`).
 const SHORT_RECORD_NAME = "(?:claude|codex-|git-ap)~\\d+\\.jso";
 const RECORD_NAME = new RegExp(`${RECORD_SUFFIXES.map(regexEscaped).join("|")}|${SHORT_RECORD_NAME}`);
 const SHORT_RECORD_BASENAME = new RegExp(`^${SHORT_RECORD_NAME}$`);
 // A file-tool basename naming a record or the token state the hooks derive from one: a spent claim
-// (`<record>.spent-<id>`) and the writer's temp file (`.<record>.<pid>.<hex>.tmp`). A Bash word is tested by containment
-// (RECORD_NAME), which covers both already. Built at load from CLAIM_INFIX, so the spend section must stay above.
+// (`<record>.spent-<id>`), a token slot (`<record>.slot-<hash>`) and the writer's temp file
+// (`.<record>.<pid>.<hex>.tmp`). A Bash word is tested by containment (RECORD_NAME), which covers all three already.
+// Built at load from CLAIM_INFIX and SLOT_INFIX, so the spend and slot sections must stay above.
 const RECORD_FILE_NAME = new RegExp(
-  `(?:${RECORD_SUFFIXES.map(regexEscaped).join("|")})(?:${regexEscaped(CLAIM_INFIX)}.*|\\..*\\.tmp)?$`,
+  `(?:${RECORD_SUFFIXES.map(regexEscaped).join("|")})(?:${regexEscaped(CLAIM_INFIX)}.*|${regexEscaped(SLOT_INFIX)}.*|\\..*\\.tmp)?$`,
 );
 // The writer (hook entry and this module) and their 8.3 short names (`APPROV~1.JS`).
 const WRITER_FILES = Object.freeze([
@@ -2295,6 +2558,19 @@ const GIT_DIR_QUERY =
 const RECORD_HOME = ".git";
 // An output redirection and the word it writes: `>`, `>>`, `>|`, `&>`, `&>>`, `<>`, after an optional fd number.
 // fd duplication (`2>&1`, `>&-`) names no file.
+// The exemption lexer matches one complete simple token at a time. In quotes, keep only literal text with
+// unambiguous boundaries. Expansion markers, comments, heredocs and continuations cancel the whole exemption.
+const CASE_QUOTED_MARKER = /\$[({[]|<<|[<>]\(|\\\n/.source;
+const CASE_SINGLE_QUOTED = String.raw`'(?:(?!${CASE_QUOTED_MARKER})[^'\x00\x0d#\x60])*'`;
+const CASE_DOUBLE_QUOTED = String.raw`"(?:(?!${CASE_QUOTED_MARKER})[^"\x00\x0d#$\\\x60])*"`;
+const CASE_PLAIN_CHAR = /[A-Za-z0-9_./*?[\]+,:@%!-]/.source;
+// A named parameter must occupy a whole word. zsh also recognizes unbraced modifiers and subscripts.
+const CASE_WORD = String.raw`(?:\$[A-Za-z_]\w*|(?:${CASE_PLAIN_CHAR}|${CASE_SINGLE_QUOTED}|${CASE_DOUBLE_QUOTED})+)(?![^ \t\n;&|()<>])`;
+const CASE_CONTROL = /(?:;;&|;;|;&|&&|\|\||\|&|[;&|])(?![;&|])|[()\n]/.source;
+const CASE_REDIRECTION = String.raw`(?:<>|<&|>&|>>|>\||&>>|&>|[<>])[ \t]*${CASE_WORD}`;
+const CASE_TOKEN = new RegExp(String.raw`[ \t]+|(${CASE_REDIRECTION})|(${CASE_CONTROL})|(${CASE_WORD})`, "y");
+const CLAUSE_ENDS = new Set([";;", ";&", ";;&"]);
+const COMMAND_PREFIX_WORDS = new Set(["if", "then", "else", "elif", "while", "until", "do", "!", "time"]);
 const REDIRECT_TARGET = /(?:&>>?|>>?\|?|<>)\s*([^\s&;|<>()][^\s;&|<>()]*)/g;
 const GLOB_META = /[*?[{]/;
 // A glob character that still matches against existing files after brace expansion.
@@ -2681,30 +2957,33 @@ function bracketSource(body) {
  * Bracket syntax JavaScript lacks (`[[:alpha:]]`) becomes "any one character", the safe direction.
  *
  * @param {string} glob One path component, folded.
+ * @param {boolean} [prefix] Match prefixes of possible expansions too.
  * @returns {string}
  */
-function globSource(glob) {
-  let source = "";
+function globSource(glob, prefix = false) {
+  const atoms = [];
   for (let index = 0; index < glob.length; index++) {
     const char = glob[index];
     const close = char === "[" ? bracketEnd(glob, index) : char === "{" ? braceEnd(glob, index) : -1;
-    if (char === "*") source += "[^/]*";
-    else if (char === "?") source += "[^/]";
+    if (char === "*") atoms.push("[^/]*");
+    else if (char === "?") atoms.push("[^/]");
     else if (char === "[" && close > 0) {
       const body = glob.slice(index + 1, close);
-      source += /\[:|\\/.test(body) ? "[^/]" : bracketSource(body);
+      atoms.push(/\[:|\\/.test(body) ? "[^/]" : bracketSource(body));
       index = close;
     } else if (char === "{" && close > 0 && braceAlternatives(glob.slice(index + 1, close)).length > 1) {
-      source += `(?:${braceAlternatives(glob.slice(index + 1, close))
-        .map(globSource)
-        .join("|")})`;
+      atoms.push(
+        `(?:${braceAlternatives(glob.slice(index + 1, close))
+          .map((alternative) => globSource(alternative))
+          .join("|")})`,
+      );
       index = close;
     } else if (char === "{" && close > 0 && glob.slice(index + 1, close).includes("..")) {
-      source += "[^/]*";
+      atoms.push("[^/]*");
       index = close;
-    } else source += char.replace(/[.+^$(){}|\\[\]]/g, "\\$&"); // an unclosed `[` is a literal to the shell too
+    } else atoms.push(regexEscaped(char));
   }
-  return source;
+  return prefix ? atoms.reduceRight((tail, atom) => `(?:${atom}${tail})?`, "") : atoms.join("");
 }
 
 /**
@@ -2718,11 +2997,11 @@ function globSource(glob) {
  * @param {string} name File or directory name.
  * @returns {boolean}
  */
-function globMatches(pattern, name) {
+function globMatches(pattern, name, prefix = false) {
   const compact = pattern.replace(/\*+/g, "*");
   if ((compact.match(/[*?]/g) || []).length > MAX_GLOB_WILDCARDS) return true;
   try {
-    return new RegExp(`^${globSource(compact)}$`).test(name);
+    return new RegExp(`^${globSource(compact, prefix)}$`).test(name);
   } catch (_) {
     return true;
   }
@@ -2741,11 +3020,12 @@ function globMatches(pattern, name) {
  * @param {boolean} spelledAnywhere Whether a pattern spelling part of the name counts outside `home`.
  * @returns {boolean}
  */
-function globNames(word, name, home, spelledAnywhere) {
+function globNames(word, name, home, spelledAnywhere, prefix = false) {
   if (!GLOB_META.test(word)) return false;
   const slash = word.lastIndexOf("/");
   const base = word.slice(slash + 1);
-  if (!globMatches(base, name)) return false;
+  if (name.startsWith(".") && !/^(?:\.|\[)/.test(base)) return false;
+  if (!globMatches(base, name, prefix)) return false;
   const literal = base.replace(/\[[^\]]*\]|\{[^}]*\}|[*?]/g, "").replace(/\.[^.]*$/, "");
   if (spelledAnywhere && /[a-z0-9]/.test(literal)) return true;
   const parent = slash > 0 ? word.slice(0, slash).split("/").pop() : "";
@@ -2818,7 +3098,10 @@ function namesRecord(word) {
     const base = alternative.slice(alternative.lastIndexOf("/") + 1);
     if (!WILDCARD.test(alternative)) return RECORD_NAME.test(alternative);
     if (!WILDCARD.test(base) && RECORD_NAME.test(base)) return true;
-    return RECORD_NAMES.some((name) => globNames(alternative, name, RECORD_HOME, false));
+    return (
+      RECORD_NAMES.some((name) => globNames(alternative, name, RECORD_HOME, false)) ||
+      RECORD_STATE_PREFIXES.some((name) => globNames(alternative, name, RECORD_HOME, false, true))
+    );
   });
 }
 
@@ -2847,6 +3130,141 @@ function namesGitDir(word, includeGlobs = true) {
       base.startsWith(".") || (bracket > 0 && /^\[[^!^]/.test(base) && base.slice(1, bracket).includes("."));
     return includeGlobs && WILDCARD.test(base) && reachesDotName && globMatches(base, RECORD_HOME);
   });
+}
+
+/**
+ * Read the whole command as simple tokens before permitting any case-pattern exemption.
+ *
+ * @param {string} text Shell text.
+ * @returns {{kind: "word"|"op"|"redirect", text: string, start: number, end: number}[]|null}
+ */
+function caseClauseTokens(text) {
+  const tokens = [];
+  for (let index = 0; index < text.length;) {
+    CASE_TOKEN.lastIndex = index;
+    const match = CASE_TOKEN.exec(text);
+    if (!match) return null;
+    const [value, redirect, operator, word] = match;
+    const end = CASE_TOKEN.lastIndex;
+    if (redirect) tokens.push({ kind: "redirect", text: value, start: index, end });
+    if (operator) tokens.push({ kind: "op", text: value, start: index, end });
+    if (word) tokens.push({ kind: "word", text: value, start: index, end });
+    index = end;
+  }
+  return tokens;
+}
+
+/**
+ * Index of the closing parenthesis of a list of one or more pattern words separated by pipes, or -1.
+ *
+ * @param {{kind: string, text: string}[]} tokens Simple shell tokens.
+ * @param {number} start Index of the list's first token.
+ * @returns {number}
+ */
+function patternListEnd(tokens, start) {
+  let index = tokens[start].text === "(" ? start + 1 : start;
+  while (tokens[index]?.kind === "word") {
+    index += 1;
+    if (tokens[index]?.text === ")") return index;
+    if (tokens[index]?.text !== "|") break;
+    index += 1;
+  }
+  return -1;
+}
+
+/**
+ * Index of the keyword that ends a case header consisting of one subject followed by in, or -1.
+ *
+ * @param {{kind: string, text: string}[]} tokens Simple shell tokens.
+ * @param {number} start Index of the case keyword.
+ * @returns {number}
+ */
+function caseHeaderEnd(tokens, start) {
+  if (tokens[start + 1]?.kind !== "word") return -1;
+  let index = start + 2;
+  while (tokens[index]?.text === "\n") index += 1;
+  return tokens[index]?.text === "in" ? index : -1;
+}
+
+/**
+ * Advance the case-clause state at a token outside a pattern list, or return -1 for unsupported syntax.
+ *
+ * @param {{kind: string, text: string}[]} tokens Simple shell tokens.
+ * @param {number} index Index of the current token.
+ * @param {{depth: number, pattern: boolean, commandStart: boolean}} state Current case and command position.
+ * @returns {number}
+ */
+function caseBodyTokenEnd(tokens, index, state) {
+  const { kind, text } = tokens[index];
+  if (text === "esac" && (state.pattern || state.commandStart)) {
+    if (state.depth === 0) return -1;
+    state.depth -= 1;
+    state.pattern = false;
+  } else if (text === "case" && state.commandStart) {
+    state.depth += 1;
+    state.pattern = true;
+    return caseHeaderEnd(tokens, index);
+  } else if (CLAUSE_ENDS.has(text)) {
+    if (state.depth === 0) return -1;
+    state.pattern = true;
+  } else if (/^[()]$/.test(text)) {
+    return -1;
+  }
+  state.commandStart = kind === "op" || (state.commandStart && COMMAND_PREFIX_WORDS.has(text));
+  return index;
+}
+
+/**
+ * Find the pattern word spans in complete case clauses after the whole command passes the simple lexer.
+ *
+ * A literal case keyword in command position opens a clause. Pattern lists follow in or a clause terminator.
+ * Each list closes with a parenthesis and each clause closes with esac. An unsupported token or an incomplete
+ * clause leaves all words visible to the segment checks.
+ *
+ * @param {string} text Shell text.
+ * @returns {Array<[number, number]>}
+ */
+function casePatternSpans(text) {
+  const tokens = caseClauseTokens(text);
+  if (tokens === null) return [];
+  const spans = [];
+  const state = { depth: 0, pattern: false, commandStart: true };
+  for (let index = 0; index < tokens.length; index += 1) {
+    const { text: value, start } = tokens[index];
+    if (state.pattern && value !== "esac") {
+      if (value === "\n") continue;
+      const close = patternListEnd(tokens, index);
+      if (close < 0) return [];
+      const first = value === "(" ? tokens[index + 1].start : start;
+      spans.push([first, tokens[close - 1].end]);
+      state.pattern = false;
+      state.commandStart = true;
+      index = close;
+    } else {
+      index = caseBodyTokenEnd(tokens, index, state);
+      if (index < 0) return [];
+    }
+  }
+  return state.depth === 0 ? spans : [];
+}
+
+/**
+ * The command with the pattern list of every real `case` clause blanked, its `(` and closing `)` kept in place.
+ *
+ * A pattern such as `*.js` in the admitted grammar is a match against the case subject. All other text goes
+ * through the segment checks.
+ *
+ * @param {string} text Shell text.
+ * @returns {string}
+ */
+function withoutCasePatterns(text) {
+  let kept = "";
+  let last = 0;
+  for (const [start, end] of casePatternSpans(text)) {
+    kept += text.slice(last, start) + " ".repeat(end - start);
+    last = end;
+  }
+  return kept + text.slice(last);
 }
 
 /**
@@ -2908,7 +3326,8 @@ function targetTokens(tokens, argv0) {
   let skip = 0;
   let excludeList = false;
   keys.forEach((key, index) => {
-    if (skip > 0) skip -= 1;
+    if (key.includes(">")) kept.push(tokens[index]);
+    else if (skip > 0) skip -= 1;
     else if (excludeList && !key.startsWith("-")) return;
     else if (EXCLUSION_ASSIGNED.test(key)) excludeList = false;
     else if (takesOperand(key)) skip = 1;
@@ -2961,7 +3380,7 @@ function segmentReading(segment) {
   );
   return {
     ...command,
-    recordTarget: words.some(namesRecord) && (!writesNothing(command) || redirected.some(namesRecord)),
+    recordTarget: redirected.some(namesRecord) || (!writesNothing(command) && words.some(namesRecord)),
     transcriptTarget: redirected.some(namesTranscript) || transcriptWriteWords(command, words).some(namesTranscript),
     gitDirRedirect: redirected.some((word) => namesGitDir(word)),
     gitDirTarget: plain.some(gitDirWritten),
@@ -3147,7 +3566,8 @@ function writerSegmentSafe({ argv0, rest, assigns }) {
  * @returns {string|null}
  */
 function bashRecordProblem(command) {
-  const text = String(command || "").replace(GIT_DIR_QUERY, ".git");
+  // Check pattern eligibility before normalizing git-directory queries, which are themselves substitutions.
+  const text = withoutCasePatterns(String(command || "")).replace(GIT_DIR_QUERY, ".git");
   const segments = shellSegments(text).map(segmentReading);
   if (segments.some((s) => s.recordTarget)) {
     return (
@@ -3203,7 +3623,7 @@ function blockMessage(problem) {
   const local = SCOPES[0];
   return (
     `approval record guard — blocked: ${problem}.\n` +
-    `Approval records (${SCOPES.map((row) => row.file).join(", ")}) live in the git common dir and are ` +
+    `Approval records (${RECORD_NAMES.join(", ")}) live in the git common dir and are ` +
     "written only by the approval-guard hook from the user's own answer; ask the question instead of creating one " +
     `(local Git: the ${local.header} question, "${local.recordAnswer}").\n` +
     "Reading a record (Read tool, cat, jq, test, ls, grep), mentioning it (echo, git commit -m), the grant check " +
@@ -3231,6 +3651,7 @@ module.exports = {
   evaluateAnswer,
   filePathProblem,
   findToolUse,
+  plainCommandWords,
   gitHead,
   holdsClaim,
   isAncestor,
@@ -3248,5 +3669,6 @@ module.exports = {
   scopeById,
   selfGrantProblem,
   spendToken,
+  spendPushToken,
   writeRecord,
 };

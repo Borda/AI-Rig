@@ -58,8 +58,7 @@
 
 const path = require("path");
 
-// Loaded defensively: a guard that crashed on a missing module would exit 1, which Claude Code treats
-// as a non-blocking error. Without the module nothing is recorded, and a call naming a record is blocked.
+// Loaded defensively: a missing module would otherwise exit 1, which Claude Code treats as non-blocking.
 let grants = null;
 try {
   grants = require(path.join(__dirname, "lib", "approval-grants.js"));
@@ -67,8 +66,10 @@ try {
   // grants stays null
 }
 
-// Record names, for the degraded guard when lib/approval-grants.js cannot load.
-const FALLBACK_RECORD_NAME = /(?:git|push|gh-write)-approval\.json/i;
+// Record names and the spellings that reach them (slot, spent and lock siblings, 8.3 short names), for the
+// degraded guard when lib/approval-grants.js cannot load. A call that names none of them keeps running.
+const FALLBACK_RECORD_NAME =
+  /(?:git|push|push-run|gh-write)-approval|claude-[a-z-]*approval|\.slot-|\.spent-|approval\.json|~\d/i;
 
 /**
  * Reason to block a PreToolUse call when the module is missing, or null.
@@ -78,6 +79,8 @@ const FALLBACK_RECORD_NAME = /(?:git|push|gh-write)-approval\.json/i;
  */
 function fallbackProblem(data) {
   if (!data || data.hook_event_name !== "PreToolUse") return null;
+  // Reading a record stays allowed, as with the full guard.
+  if (["Read", "Grep", "Glob"].includes(data.tool_name)) return null;
   const input = data.tool_input || {};
   const text = [input.command, input.file_path, input.notebook_path].filter((v) => typeof v === "string").join("\n");
   return FALLBACK_RECORD_NAME.test(text)

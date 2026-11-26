@@ -31,10 +31,10 @@ def provider(monkeypatch: pytest.MonkeyPatch) -> tuple[ModuleType, dict[str, Any
     }
     calls: list[list[str]] = []
 
-    def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         """Return public JSON from the selected provider endpoint."""
         calls.append(argv)
-        return subprocess.CompletedProcess(argv, 0, json.dumps(responses[argv[1]]), "")
+        return subprocess.CompletedProcess(argv, 0, json.dumps(responses[argv[1]]).encode(), b"")
 
     monkeypatch.setattr(adapter.shutil, "which", lambda _: "codemap-py")
     monkeypatch.setattr(adapter.subprocess, "run", run)

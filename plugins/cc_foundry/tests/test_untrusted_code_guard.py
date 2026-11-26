@@ -340,7 +340,7 @@ class TestDependencyProvenance:
         )
         deps = _scan(repo, head, base)["dependencies"]
         assert "newthing" in deps["added"]  # type: ignore[operator]
-        assert deps["index_overrides"] == ["[tool.uv].sources"]  # type: ignore[comparison-overlap]
+        assert deps["index_overrides"] == ["uv-source: newthing"]  # type: ignore[comparison-overlap]
 
     def test_changed_lockfile_and_setup_py_are_reported_because_a_name_does_not_prove_a_source(self, project) -> None:
         """A lockfile-only source swap or a new ``setup.py`` declaration cannot hide behind unchanged declared names."""
@@ -604,7 +604,7 @@ class TestEnvironmentAndProfiles:
 
 def _bind(repo: Path, base: str, head: str, approval: Path, cmd: tuple[str, ...], *opts: str) -> int:
     """Record the approval the way the parent does after the user's answer."""
-    argv = ["bind", "--repo", str(repo), "--head", head, "--base", base, "--out", str(approval), *opts, "--", *cmd]
+    argv = ["record", "--repo", str(repo), "--head", head, "--base", base, "--out", str(approval), *opts, "--", *cmd]
     return guard.main(argv)
 
 
@@ -696,11 +696,22 @@ class TestApprovalBinding:
         """A run-scoped approval covers several commands; ``run`` reads head, base and tier from the record."""
         repo, base, head = project(_CLEAN)
         approval = tmp_path / "approved.txt"
-        bind = ["bind", "--repo", str(repo), "--head", head, "--base", base, "--out", str(approval), "--scope", "run"]
+        bind = ["record", "--repo", str(repo), "--head", head, "--base", base, "--out", str(approval), "--scope", "run"]
         assert guard.main([*bind, *_ENV_ONLY]) == 0
         run = ["run", "--repo", str(repo), "--approval-file", str(approval)]
         assert guard.main([*run, "--", sys.executable, "-c", "pass"]) == 0
         assert guard.main([*run, "--", sys.executable, "-c", "raise SystemExit(6)"]) == 6
+
+    def test_bind_alias_writes_the_same_approval_record_as_record(self, project, tmp_path: Path) -> None:
+        """``bind``, the former name of ``record``, still works and writes a byte-identical approval file."""
+        repo, base, head = project(_CLEAN)
+        by_name = {}
+        for name in ("record", "bind"):
+            approval = tmp_path / f"{name}.txt"
+            argv = [name, "--repo", str(repo), "--head", head, "--base", base, "--out", str(approval), "--scope", "run"]
+            assert guard.main([*argv, *_ENV_ONLY]) == 0
+            by_name[name] = approval.read_text(encoding="utf-8")
+        assert by_name["bind"] == by_name["record"]
 
     def test_an_option_that_differs_from_the_approval_record_is_refused(self, project, tmp_path: Path) -> None:
         """Passing a tier the approval was not recorded for fails the hash check instead of overriding the record."""

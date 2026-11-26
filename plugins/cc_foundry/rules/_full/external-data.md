@@ -52,9 +52,9 @@ Rules:
 
 - Check for `nextPageToken` (or `next_page_token`) in response body
 - Present and non-empty → pass as `pageToken=<value>` on next request
-- Stop when field absent or empty string — dataset complete
+- Stop only when a successfully fetched, valid page has no next token (absent, `null`, or empty string). Abort on fetch or validation failure and discard partial results.
 
-Example:
+Example for an API with `items`, `nextPageToken`, and the `pageToken` query parameter:
 
 ```bash
 next_token=""
@@ -62,9 +62,21 @@ all_items=()
 while true; do
     url="https://api.example.com/v1/items"
     [ -n "$next_token" ] && url="${url}?pageToken=${next_token}"
-    response=$(curl -s "$url")
-    all_items+=($(echo "$response" | jq -r ".items[]"))
-    next_token=$(echo "$response" | jq -r ".nextPageToken // empty")
+    page=$(set -o pipefail; curl -fsS "$url" | jq -Rsec '
+        if contains("\u0000") then error("invalid NUL byte in page") else fromjson end
+        | if type == "object" and (.items | type == "array")
+            and (.nextPageToken | type == "null" or type == "string")
+        then .
+        else error("expected one page with an items array and an optional string token")
+        end
+    ') || exit 1
+    page_items=$(jq -c '.items[]' <<< "$page") || exit 1
+    if [ -n "$page_items" ]; then
+        while IFS= read -r item; do
+            all_items+=("$item")
+        done <<< "$page_items"
+    fi
+    next_token=$(jq -r '.nextPageToken // "" | @uri' <<< "$page") || exit 1
     [ -z "$next_token" ] && break
 done
 ```

@@ -76,6 +76,7 @@ python plugins/codemap-py/scripts/codemap_py_entry.py query --compact rdeps mypa
 python plugins/codemap-py/scripts/codemap_py_entry.py doctor --json
 ```
 
+- `codemap-py context --root <worktree> --diff-file <diff> [--expect-head <sha>] [--index-dir <dir>] [--no-build] [--timeout <seconds>] [--out <file>]` gives a review structural context for its change. Indexing reads Python statically, keeps scan artifacts outside the checkout and leaves the Git index untouched. Use `--expect-head` to bind the answer to a commit. A different HEAD, unreadable Git status or uncommitted or untracked indexed Python yields `head-mismatch` and no fallback. Omit the flag to describe the working tree with its own index. Use `--no-build` for an existing index only and `--timeout` to limit each build and query in seconds. The JSON result reports the blast radius or a named cause. Where available, the low-confidence text-search fallback can only raise review depth. See [the structural context contract](shared/structural-context-contract.md).
 - **Windows uses this Python entrypoint directly** — `bin/codemap-py` is a `#!/bin/sh` launcher and does not execute there; `bin/codemap-py.cmd` is the installed-package equivalent. macOS and Linux may use either form.
 - Codex does not add the plugin's `bin/` directory to PATH; use the `$codemap-py:*` skills or resolve the installed plugin root as their runtime instructions describe.
 

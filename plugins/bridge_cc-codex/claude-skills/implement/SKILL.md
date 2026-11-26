@@ -85,6 +85,10 @@ Budget, sandbox and network:
 
 Return compact public envelope. `verdict`, `findings`, `files_touched`, `remaining`, and `blockers` must expose incomplete work and blockers; verbose evidence stays only in workspace-relative transcript referenced by `transcript_path`.
 
+<!-- policy-sibling: plugins/bridge_cc-codex/claude-skills/review/SKILL.md, plugins/bridge_cc-codex/claude-skills/advise/SKILL.md, plugins/bridge_cc-codex/claude-skills/result/SKILL.md, plugins/bridge_cc-codex/codex-skills/review/SKILL.md, plugins/bridge_cc-codex/codex-skills/advise/SKILL.md, plugins/bridge_cc-codex/codex-skills/implement/SKILL.md (confidence reporting) -->
+
+Report confidence from the envelope: `confidence` is a number only when `status=complete`, derived by the bridge as 1.00 minus the deductions in `confidence_gaps`; otherwise it is `null` and `confidence_null_reason` names the exact cause from the closed set in `rules/envelope.md` §Confidence. Report that code beside the status, carry each `confidence_gaps` line as a named gap, and never substitute a number.
+
 - Never copy transcript-only `details` into conversation.
 - Add one usage line copied from the envelope: `codex <model>/<effort> · in <input_tokens> (cached <cached_input_tokens>) · out <output_tokens> · <duration_seconds>s`; omit a counter the envelope lacks; never estimate cost.
 - If detached, return the job identifier together with that absolute workspace; direct caller to `/bridge:status`, `/bridge:result`, or `/bridge:cancel`, and pass that absolute path as `--workspace` to every one of them, even when the launch omitted `--workspace` — omitting it resolves to the current directory and can report `missing` for a job still running elsewhere.
@@ -120,6 +124,6 @@ Wall time and edit ownership:
 - Do not edit task-named paths while any implement call is in flight, detached or running as a background Bash call; re-read every `files_touched` path after it returns.
 - A detached job that ends `failed` or `stalled` may already have edited files: inspect the worktree delta and changed files before further edits.
 
-After a `stalled` status, edit the workspace only after the peer is confirmed terminated (terminal peer status or confirmed cancellation) or the original hard cutoff has passed. `stalled` and `cancel_requested` do not confirm peer termination. Portable subprocess APIs cannot guarantee peer cleanup after abrupt supervisor death, and a dead supervisor cannot enforce the hard cutoff; its peer may survive that deadline. Never signal a process identifier from a job record: it may have been reused. Then inspect the worktree delta and changed files before further edits.
+After a `stalled` status, edit the workspace only after the peer is confirmed terminated (terminal peer status or confirmed cancellation). `stalled` and `cancel_requested` do not confirm peer termination. Portable subprocess APIs cannot guarantee peer cleanup after abrupt supervisor death, and a dead supervisor cannot enforce the hard cutoff; its peer may survive that deadline. Never signal a process identifier from a job record: it may have been reused. Then inspect the worktree delta and changed files before further edits.
 
 </workflow>

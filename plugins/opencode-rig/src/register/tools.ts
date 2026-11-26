@@ -45,9 +45,17 @@ import {
   type FindingsDocument,
 } from "../findings.ts"
 import { detectGates, runGate, type GateResult, type GateSpec } from "../gates.ts"
+import { inspectionSequence } from "../inspection.ts"
+import { redact } from "../journal.ts"
 import { executeScript, INTERPRETERS, resolveScript, type ScriptInterpreter, type ScriptSource } from "../script.ts"
-import { detectRuntime, isPinnedImage, runInSandbox } from "../sandbox.ts"
-import { isReviewWorktree, readTrust, TRUST_WORDS, writeTrust } from "../trust.ts"
+import {
+  isPinnedImage,
+  runInSandbox,
+  type SandboxNextAction,
+  type SandboxOutcome,
+  type SandboxReceipt,
+} from "../sandbox.ts"
+import { isOwnWorktree, isReviewWorktree, readTrust, resolveHead, trustFor, TRUST_WORDS, writeTrust } from "../trust.ts"
 import { grantPath, readGrant, revokeGrant, writeGrant } from "../git-grant.ts"
 import { markdownSection, planTreeState } from "../plan.ts"
 import { MAX_MINI_PLAN_LINES, MAX_MINI_PLAN_PATHS, miniPlanProblems, parseMiniPlan } from "../mini-plan.ts"
@@ -447,6 +455,14 @@ interface DispatchInputTool {
 interface DoctorInputTool {
   readonly action: "report" | "clean" | "assets"
   readonly confirm?: boolean
+}
+
+interface SandboxInput {
+  worktree: string
+  argv: string[]
+  timeout_ms?: number
+  network?: boolean
+  image?: string
 }
 
 const EVIDENCE_INPUT = {
@@ -1144,6 +1160,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         }
 
         if (input.action !== "run") throw new Error(`unknown gate action: ${String(input.action)}`)
+        if (options.execution === "all-sandbox") throw new Error("all-sandbox requires rig_sandbox for gate execution")
         let run = resolveRun(paths, context.sessionID, input.run_id)
         requireInProgress(run)
         assertOwnedPathsSafe(paths, run)
@@ -1703,6 +1720,8 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
       input: SCRIPT_INPUT,
       options: { codemode: true, permission: "rig_script" },
       execute: async (raw: unknown, context: any) => {
+        if (options.execution === "all-sandbox")
+          throw new Error("all-sandbox requires rig_sandbox for script execution")
         const input = raw as {
           source: ScriptSource
           path: string
@@ -1794,6 +1813,9 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         const realWorktree = realpathSync.native(input.worktree)
         if (input.confirm !== TRUST_WORDS)
           throw new Error(`approve requires the user's literal '${TRUST_WORDS}' answer in confirm`)
+        const isProjectRoot = realWorktree === realpathSync.native(paths.projectRoot)
+        if (!sandboxPolicy(paths, options, { realWorktree, isProjectRoot }).canRecordTrust)
+          throw new Error("The active execution policy or worktree does not support host verification trust.")
 
         await ctx.permission.assert({
           sessionID: context.sessionID,
@@ -1825,94 +1847,170 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
     editor.add({
       name: "rig_sandbox",
       description:
-        "Run a forked pull request's verification in a container: the worktree is copied, the image is pinned, the network is off by default, and the receipt records image, command, exit and log. It does not run host code; without a container runtime it reports the verification as unavailable.",
+        "Run verification in a container using a copied worktree and a digest-pinned image. The receipt records the network setting, execution disposition and next action. Follow that action for each check.",
       input: SANDBOX_INPUT,
       options: { codemode: true, permission: "rig_sandbox" },
       execute: async (raw: unknown, context: any) => {
-        const input = raw as {
-          worktree: string
-          argv: string[]
-          timeout_ms?: number
-          network?: boolean
-          image?: string
-        }
-        if (!Array.isArray(input.argv) || input.argv.length === 0 || input.argv.some((arg) => typeof arg !== "string"))
-          throw new Error("argv must be a nonempty array of strings")
-        if (!isAbsolute(input.worktree)) throw new Error("worktree must be an absolute path")
-        const image = input.image?.trim() || options.sandboxImage
-        if (!image)
-          throw new Error(
-            "no sandbox image is configured; set sandboxImage to <repository>@sha256:<64 hex> (see docker image inspect --format '{{index .RepoDigests 0}}'), or ask the user to trust this commit with rig_trust",
-          )
-        if (!isPinnedImage(image))
-          throw new Error("sandbox image must be digest-pinned as <repository>@sha256:<64 hex>")
-        let realWorktree: string
-        try {
-          realWorktree = realpathSync.native(input.worktree)
-        } catch {
-          // A missing path is not a project root or review worktree; report that
-          // boundary instead of leaking a platform-specific ENOENT.
-          throw new Error("worktree must be the project root or a review worktree under <temp>/opencode/review-*")
-        }
-        if (realWorktree !== realpathSync.native(paths.projectRoot) && !isReviewWorktree(realWorktree))
-          throw new Error("worktree must be the project root or a review worktree under <temp>/opencode/review-*")
+        const input = raw as SandboxInput
+        const { image, realWorktree, isProjectRoot } = validateSandboxInput(
+          input,
+          paths.projectRoot,
+          options.sandboxImage,
+        )
         const active =
           typeof context.sessionID === "string" ? activeRun(paths.artifactRoot, context.sessionID) : undefined
         const logDirectory = active
           ? join(paths.runsRoot, safeName(active.skill), safeName(active.runId), "sandbox")
           : join(paths.artifactRoot, "sandbox")
-        await ctx.permission.assert({
-          sessionID: context.sessionID,
-          agent: context.agent,
-          source: { type: "tool", messageID: context.messageID, id: context.id },
-          action: "rig_sandbox",
-          resources: [realWorktree],
-          metadata: { image },
-        })
-
-        if (!detectRuntime()) {
-          const receiptPath = join(ensureDir(logDirectory), `unavailable-${randomUUID().slice(0, 8)}.json`)
-          const record = {
-            status: "unavailable",
-            reason: "no container runtime (docker or podman) is available",
-            worktree: resolve(input.worktree),
-            argv: input.argv,
-            image,
-            requested_at: new Date().toISOString(),
-          }
-          writeJsonAtomic(receiptPath, record)
-          return {
-            content: `No container runtime (docker or podman) is available. The verification did not run; record it as unverified.\n${json(record)}`,
-            metadata: { status: "unavailable", receipt_path: receiptPath },
-          }
+        if (image) {
+          await ctx.permission.assert({
+            sessionID: context.sessionID,
+            agent: context.agent,
+            source: { type: "tool", messageID: context.messageID, id: context.id },
+            action: "rig_sandbox",
+            resources: [realWorktree],
+            metadata: { image },
+          })
         }
 
-        const receipt = await runInSandbox({
-          worktree: input.worktree,
+        const outcome = await runInSandbox({
+          worktree: realWorktree,
           argv: input.argv,
           image,
           timeoutMs: input.timeout_ms ?? options.gateTimeoutMs,
           ...(input.network === true ? { network: true } : {}),
           logDirectory,
         })
-        const receiptPath = `${receipt.log_path}.json`
-        writeJsonAtomic(receiptPath, receipt)
-        return {
-          content: ["Sandbox verification executed.", json(receipt)].join("\n"),
-          metadata: {
-            status: receipt.status,
-            exit_code: receipt.exit_code,
-            image: receipt.image,
-            log_path: receipt.log_path,
-            receipt_path: receiptPath,
-          },
-        }
+        const { next_action } = sandboxPolicy(paths, options, { realWorktree, isProjectRoot }, outcome)
+        return sandboxReply({ ...outcome, next_action }, logDirectory)
       },
     })
   })
   registrations.push(sandbox)
 
   return registrations
+}
+
+/** Validate sandbox input before a permission assertion or an unavailable receipt. */
+function validateSandboxInput(input: SandboxInput, projectRoot: string, configuredImage: string) {
+  if (!Array.isArray(input.argv) || input.argv.some((arg) => typeof arg !== "string") || !input.argv[0]?.trim())
+    throw new Error("argv must be an array of strings starting with a command")
+  if (!isAbsolute(input.worktree)) throw new Error("worktree must be an absolute path")
+  const image = input.image?.trim() || configuredImage
+  if (image && !isPinnedImage(image))
+    throw new Error("sandbox image must be digest-pinned as <repository>@sha256:<64 hex>")
+
+  const invalidWorktree = "worktree must be the project root or a review worktree under <temp>/opencode/review-*"
+  let realWorktree: string
+  try {
+    realWorktree = realpathSync.native(input.worktree)
+  } catch {
+    throw new Error(invalidWorktree)
+  }
+  const isProjectRoot = realWorktree === realpathSync.native(projectRoot)
+  if (!isProjectRoot && !isReviewWorktree(realWorktree)) throw new Error(invalidWorktree)
+  return { image, realWorktree, isProjectRoot }
+}
+
+type SandboxTarget = { realWorktree: string; isProjectRoot: boolean }
+
+const SANDBOX_RETRY: Partial<Record<SandboxOutcome["disposition"], string>> = {
+  "not-run:image": "Set sandboxImage to a digest-pinned image (<repository>@sha256:<64 hex>) and retry.",
+  "not-run:runtime": "Make Docker or Podman reachable and retry.",
+}
+
+/** Check whether this target has a verifiable commit to bind to an approval. */
+function reviewHasCommit(target: SandboxTarget): boolean {
+  return !target.isProjectRoot && resolveHead(target.realWorktree) !== undefined
+}
+
+/** Check the same existing authority the hook recognizes for the authorized target. */
+function hasHostAuthority(paths: RigPaths, target: SandboxTarget): boolean {
+  return (
+    target.isProjectRoot ||
+    isOwnWorktree(paths.projectRoot, target.realWorktree) ||
+    trustFor(paths.artifactRoot, target.realWorktree).status === "trusted"
+  )
+}
+
+/** Decide which host trust can take effect and what each sandbox outcome authorizes next. */
+function sandboxPolicy(
+  paths: RigPaths,
+  options: RigOptions,
+  target: SandboxTarget,
+  outcome?: SandboxOutcome,
+): { canRecordTrust: boolean; next_action: SandboxNextAction } {
+  const hostEnabled = options.execution !== "all-sandbox" && options.guardrails !== "off" && options.inspection
+  const incomplete = { kind: "mark-incomplete", instruction: "Mark the check incomplete." } as const
+  if (!outcome) return { canRecordTrust: hostEnabled && reviewHasCommit(target), next_action: incomplete }
+  if (outcome.disposition.startsWith("ran-"))
+    return { canRecordTrust: false, next_action: { kind: "record-result", instruction: "Record the sandbox result." } }
+
+  const retry = SANDBOX_RETRY[outcome.disposition]
+  const incompleteWithRetry = retry ? { ...incomplete, instruction: `${incomplete.instruction} ${retry}` } : incomplete
+  const command =
+    hostEnabled && retry ? hostVerificationCommand(target.realWorktree, outcome.argv, options.guardrails) : undefined
+  if (!command) return { canRecordTrust: false, next_action: incompleteWithRetry }
+  try {
+    if (hasHostAuthority(paths, target)) {
+      return {
+        canRecordTrust: false,
+        next_action: {
+          kind: "run-on-host",
+          command,
+          instruction: "Run the command through the host shell under existing authority.",
+        },
+      }
+    }
+  } catch {
+    return {
+      canRecordTrust: false,
+      next_action: { ...incomplete, instruction: "Mark the check incomplete. Host authority could not be verified." },
+    }
+  }
+  const canRecordTrust = reviewHasCommit(target)
+  return {
+    canRecordTrust,
+    next_action: canRecordTrust
+      ? {
+          kind: "request-trust",
+          command,
+          instruction: `Ask once for the user's literal '${TRUST_WORDS}' answer. Record it with rig_trust before running the command through the host shell. If declined or unanswered, mark the check incomplete.`,
+        }
+      : incompleteWithRetry,
+  }
+}
+
+/** Return the receipt inline even when its artifact directory cannot be written. */
+function sandboxReply(receipt: SandboxReceipt, logDirectory: string) {
+  const metadata = {
+    status: receipt.status,
+    disposition: receipt.disposition,
+    next_action: receipt.next_action.kind,
+    exit_code: receipt.exit_code,
+    image: receipt.image,
+    log_path: receipt.log_path,
+  }
+  const content = json(receipt)
+  try {
+    const receiptPath = receipt.log_path
+      ? `${receipt.log_path}.json`
+      : join(ensureDir(logDirectory), `unavailable-${randomUUID().slice(0, 8)}.json`)
+    writeJsonAtomic(receiptPath, receipt)
+    return { content, metadata: { ...metadata, receipt_path: receiptPath } }
+  } catch (error) {
+    return { content, metadata: { ...metadata, receipt_error: redact(String(error)) } }
+  }
+}
+
+/** Render only literal arguments that the host verification hook can model. */
+function hostVerificationCommand(worktree: string, argv: readonly string[], mode: RigOptions["guardrails"]) {
+  // Joining an argument containing whitespace or shell syntax can change the command the hook sees.
+  if (/['`\r\n]/.test(worktree) || argv[0]?.includes("=") || !argv.every((arg) => /^[A-Za-z0-9_.,:/@+=-]+$/.test(arg)))
+    return undefined
+  const command = `cd '${worktree}' && ${argv.join(" ")}`
+  const verdict = inspectionSequence(command, worktree, mode, (directory) => directory === worktree)
+  return verdict.ok && verdict.kind === "verification" ? command : undefined
 }
 
 function selectGates(specs: readonly GateSpec[], names: readonly string[] | undefined): GateSpec[] {

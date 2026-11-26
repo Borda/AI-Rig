@@ -29,6 +29,7 @@ _BASH = shutil.which("bash")
 _PLUGIN = Path(__file__).resolve().parents[2]
 _SKILL = _PLUGIN / "skills/review/SKILL.md"
 _MODE = _PLUGIN / "skills/review/modes/fill-gaps.md"
+_POST_AGENT = _MODE.with_name("post-agent.md")
 _SESSION = "fill-gaps-test"
 #: Full PR head the snapshot reports; the prior run recorded only its prefix, so the new run must keep the prefix.
 _FULL_HEAD = "abcdef1234567890abcdef1234567890abcdef12"
@@ -155,6 +156,7 @@ def _prior(tmp_path: Path) -> Path:
         "open_concerns": [_concern(cid) for cid in ("V13", "V20", "V21")],
     }
     _write_run(run, data, [_row("V2")])
+    (run / "review-publication.published").touch()
     snap = tmp_path / "snap"
     snap.mkdir()
     (snap / "pr-meta.json").write_text(json.dumps({"headRefOid": _FULL_HEAD}), encoding="utf-8", newline="\n")
@@ -236,6 +238,10 @@ def test_valid_selection_plans_then_allocates_a_new_run(prior: Path, tmp_path: P
     assert "cost: 2 agent spawn(s) x ~120,851 tok = ~241,702 tok" in gate.stdout
     plan = json.loads((tmp_path / f"oss-review-fill-plan-{_SESSION}").read_text(encoding="utf-8"))
     assert (plan["candidates"], plan["publish_rows"]) == (["V13"], ["V1b"])
+    assert plan["prior_sha256"] == {
+        name: hashlib.sha256(prior.with_name(name).read_bytes()).hexdigest()
+        for name in ("review-validation.json", "findings.jsonl")
+    }
     assert plan["carried"] == {
         "assessments": ["Software engineer", "Performance engineer", "Challenger"],
         "candidates": ["V20", "V21", "V1b", "V2"],
@@ -373,7 +379,7 @@ def test_existing_report_guard_yields_to_fill_gaps(tmp_path: Path) -> None:
     sentinels = {"oss-review-pr-tag": "8", "oss-review-prior-resolution": "kept/resolution.jsonl"}
     result = _run(_block(_SKILL, "oss-review-prior-report-${CSID}"), tmp_path, sentinels)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.strip() == "PRIOR_REPORT="
+    assert result.stdout.splitlines() == ["PRIOR_REPORT=", "PENDING_RUN="]
     assert _sentinel(tmp_path, "oss-review-prior-resolution") == "kept/resolution.jsonl"
 
 
@@ -386,7 +392,7 @@ def _publish_fill_run(prior: Path, tmp_path: Path) -> Path:
     plan = fgs.build_plan(fgs.PlanRequest("8", prior, ["QA specialist"], ["V13", "V1b"], _FULL_HEAD))
     run = prior.parent.with_name("run-002")
     run.mkdir()
-    (run / fgs.PLAN_NAME).write_text(json.dumps(plan), encoding="utf-8", newline="\n")
+    (run / fgs.PLAN_NAME).write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8", newline="\n")
     (run / "review-report.md").write_text(
         "---\nTitle: Review\nPR: #8\nReview contract: 1\nRating scale: source-5-v2\nReadiness: blocked\n"
         "Gate: REVIEW_V1_BLOCK\nOutcome: MAJOR_REVISION\nSummary: fill-gaps run.\n---\n",
@@ -398,12 +404,15 @@ def _publish_fill_run(prior: Path, tmp_path: Path) -> Path:
     data["readiness"] = "blocked"
     data["readiness_reason"] = "three reviewers blocked; V13, V20 and V21 stay open"
     data["assessments"][1] = assessment("QA specialist", "complete")
-    data["candidates"][0]["reason"] = "re-validated: still needs native backend"
+    # V13 is re-validated, a fresh record: it carries its capability kind; carried V20 and V21 stay verbatim without it
+    data["candidates"][0].update(reason="re-validated: still needs native backend", missing_capability_kind="hardware")
     _write_run(run, data, [_row("V2"), _row("V1b")])
     return run / "review-report.md"
 
 
-def test_honest_fill_gaps_merge_passes_carry_check_and_publication_gate(prior: Path, tmp_path: Path) -> None:
+def test_honest_fill_gaps_merge_passes_carry_check_and_publication_gate(
+    prior: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A verbatim merge with recomputed aggregate labels passes both the carry check and the producer publication gate.
 
     The carry check alone proves nothing about publishability: a merge that keeps every carried record can still be
@@ -413,7 +422,21 @@ def test_honest_fill_gaps_merge_passes_carry_check_and_publication_gate(prior: P
     """
     report = _publish_fill_run(prior, tmp_path)
     assert fgs.main(["verify", "--report", str(report)]) == 0
-    assert frr.publication_verdict(report, producer=True) == ("Gate: BLOCK", "")
+    assert frr.publication_verdict(report, producer=True, fill_gaps=True) == ("Gate: BLOCK", "")
+    # Without --fill-gaps it reads as a fresh run: keyless carried candidates and the missing lineup are not exempt.
+    assert frr.publication_verdict(report, producer=True)[0] == ""
+    marker = report.with_name("review-publication.pending")
+    marker.touch()
+    _bind_parent(tmp_path, report, monkeypatch)
+    assert frr.main(["--report", str(report)]) == 1
+    assert frr.main(["--report", str(report), "--producer", "--publish", "--fill-gaps"]) == 0
+    assert not marker.exists()
+    assert report.with_name("review-publication.published").is_file()
+    assert frr.main(["--report", str(report)]) == 0
+    parked = report.with_name("review-report.refused.md")
+    parked.write_bytes(report.read_bytes())
+    assert frr.main(["--report", str(parked)]) == 1
+    assert frr.main(["--report", str(parked), "--assess"]) == 2
 
 
 def _alter_carried_candidate(run: Path) -> None:
@@ -435,6 +458,13 @@ def _drop_carried_row(run: Path) -> None:
     (run / "findings.jsonl").write_text(json.dumps(_row("V1b")) + "\n", encoding="utf-8", newline="\n")
 
 
+def _drop_carried_open_concern(run: Path) -> None:
+    """Omit one prior open concern still assigned to the new publication."""
+    data = _read_envelope(run)
+    data["open_concerns"] = [concern for concern in data["open_concerns"] if concern["candidate_id"] != "V20"]
+    _write_run(run, data, _read_rows(run))
+
+
 def _drop_published_row(run: Path) -> None:
     """Carry V1b again without publishing the findings row the fill-gaps run exists to add."""
     (run / "findings.jsonl").write_text(json.dumps(_row("V2")) + "\n", encoding="utf-8", newline="\n")
@@ -447,16 +477,87 @@ def _drop_revalidated_candidate(run: Path) -> None:
     _write_run(run, data, _read_rows(run))
 
 
+def _parent_records(tmp_path: Path, report: Path) -> dict[str, str]:
+    """Seal the original head, report directory and optional fill plan as the allocation block does."""
+    parent = tmp_path / "launch records"
+    parent.mkdir(exist_ok=True)
+    (parent / "report-dir.txt").write_text(report.parent.as_posix() + "\n", encoding="utf-8", newline="\n")
+    (parent / "head-sha.txt").write_bytes(report.with_name("head-sha.txt").read_bytes())
+    plan = report.with_name("fill-gaps.json")
+    mode = "fill-gaps" if plan.exists() else "fresh"
+    (parent / "review-mode.txt").write_text(mode + "\n", encoding="utf-8", newline="\n")
+    if plan.exists():
+        (parent / plan.name).write_bytes(plan.read_bytes())
+    return {"oss-review-run-dir": parent.as_posix(), "oss-review-report-dir": report.parent.as_posix()}
+
+
+def _bind_parent(tmp_path: Path, report: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """Bind the CLI directly to the same session allocation records as the shell recipe."""
+    sentinels = _parent_records(tmp_path, report)
+    for name, value in sentinels.items():
+        (tmp_path / f"{name}-{_SESSION}").write_text(value + "\n", encoding="utf-8")
+    monkeypatch.setenv("CSID", _SESSION)
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    return sentinels
+
+
+@pytest.mark.parametrize(
+    ("damage", "message"),
+    [
+        pytest.param("current", "incomplete-review-report", id="consolidator-repairs-altered-records"),
+        pytest.param("prior", "[gate] parent evidence: prior ", id="parent-reports-unusable-prior-evidence"),
+        pytest.param("plan", "[gate] parent evidence: fill-gaps.json", id="parent-restores-plan-copy"),
+        pytest.param("mode", "[gate] parent evidence: review-mode.txt", id="caller-cannot-omit-fill-gaps-flag"),
+    ],
+)
+def test_publish_routes_carry_refusal_to_its_evidence_owner(
+    prior: Path,
+    tmp_path: Path,
+    damage: str,
+    message: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A release-time carry refusal keeps the run pending and identifies the appropriate recovery route."""
+    report = _publish_fill_run(prior, tmp_path)
+    _bind_parent(tmp_path, report, monkeypatch)
+    marker = report.with_name("review-publication.pending")
+    marker.touch()
+    if damage == "current":
+        _alter_carried_candidate(report.parent)
+    elif damage == "prior":
+        prior.with_name("findings.jsonl").unlink()
+    elif damage == "plan":
+        report.with_name("fill-gaps.json").unlink()
+    flags = [] if damage == "mode" else ["--fill-gaps"]
+
+    assert frr.main(["--report", str(report), "--producer", "--publish", *flags]) == 1
+    assert message in capsys.readouterr().out
+    assert marker.is_file()
+
+
 @_skip_no_bash
 @pytest.mark.parametrize(
     ("mutate", "returncode", "expected"),
     [
         pytest.param(None, 0, "[carry] intact", id="carried-verbatim-plus-additions"),
-        pytest.param(_alter_carried_candidate, 1, "carried candidate 'V20' altered or dropped", id="altered-carry"),
-        pytest.param(_drop_rerun_role, 1, "re-run role 'QA specialist' has no assessment", id="dropped-role"),
-        pytest.param(_drop_carried_row, 1, "carried finding row 'f-V2' altered or dropped", id="dropped-row"),
-        pytest.param(_drop_revalidated_candidate, 1, "re-validated candidate 'V13' dropped", id="dropped-candidate"),
-        pytest.param(_drop_published_row, 1, "finding-missing candidate 'V1b' still has no", id="row-not-published"),
+        pytest.param(
+            _alter_carried_candidate, 1, "[carry] carried candidate 'V20' altered or dropped", id="altered-carry"
+        ),
+        pytest.param(_drop_rerun_role, 1, "[carry] re-run role 'QA specialist' has no assessment", id="dropped-role"),
+        pytest.param(_drop_carried_row, 1, "[carry] carried finding row 'f-V2' altered or dropped", id="dropped-row"),
+        pytest.param(
+            _drop_carried_open_concern,
+            1,
+            "[carry] carried open concern for 'V20' altered or dropped",
+            id="dropped-concern",
+        ),
+        pytest.param(
+            _drop_revalidated_candidate, 1, "[carry] re-validated candidate 'V13' dropped", id="dropped-candidate"
+        ),
+        pytest.param(
+            _drop_published_row, 1, "[carry] finding-missing candidate 'V1b' still has no", id="row-not-published"
+        ),
     ],
 )
 def test_carry_check_proves_untouched_records(prior: Path, tmp_path: Path, mutate, returncode: int, expected: str):
@@ -468,10 +569,133 @@ def test_carry_check_proves_untouched_records(prior: Path, tmp_path: Path, mutat
     """
     report = _publish_fill_run(prior, tmp_path)
     (mutate or (lambda _run: None))(report.parent)
-    sentinels = {"oss-review-report-dir": report.parent.as_posix()}
+    sentinels = _parent_records(tmp_path, report)
     result = _run(_block(_MODE, 'fill_gaps_scope.py" verify'), tmp_path, sentinels)
     assert result.returncode == returncode, result.stdout + result.stderr
     assert expected in result.stdout
+
+
+@_skip_no_bash
+def test_carry_check_routes_changed_plan_to_parent_then_accepts_original(prior: Path, tmp_path: Path) -> None:
+    """A damaged report plan must reach the parent and pass after its authoritative copy is restored."""
+    report = _publish_fill_run(prior, tmp_path)
+    plan_path = report.with_name("fill-gaps.json")
+    sentinels = _parent_records(tmp_path, report)
+    block = _block(_MODE, 'fill_gaps_scope.py" verify')
+    plan_path.write_bytes(b"\xff")
+    refused = _run(block, tmp_path, sentinels)
+    assert refused.returncode == 1
+    assert refused.stdout.strip() == "[gate] parent evidence: fill-gaps.json"
+    recovery = _run(_block(_POST_AGENT, "_REPORT_LAYOUT="), tmp_path, {})
+    assert recovery.returncode == 0, recovery.stdout + recovery.stderr
+    restored = _run(block, tmp_path, sentinels)
+    assert restored.returncode == 0, restored.stdout + restored.stderr
+    assert restored.stdout.strip() == "[carry] intact"
+
+
+@_skip_no_bash
+def test_missing_report_dir_blocks_carry_check_until_parent_restores_it(prior: Path, tmp_path: Path) -> None:
+    """A lost report directory pointer blocks publication and leaves the consolidator retry available."""
+    report = _publish_fill_run(prior, tmp_path)
+    sentinels = _parent_records(tmp_path, report)
+    recorded = _run(_block(_POST_AGENT, "_ORIGINAL_DIR"), tmp_path, sentinels)
+    assert recorded.returncode == 0, recorded.stdout + recorded.stderr
+
+    block = _block(_MODE, 'fill_gaps_scope.py" verify')
+    (tmp_path / f"oss-review-report-dir-{_SESSION}").unlink()
+    refused = _run(block, tmp_path, {})
+    assert refused.returncode == 1
+    assert refused.stdout.strip() == "! BLOCKED — report-dir sentinel missing; cannot check fill-gaps carry-over"
+
+    lines = read_skill_source(_MODE).splitlines()
+    routes = lines[lines.index("### Carry check") + 1 :]
+    fallback = next((line for line in routes if line.startswith("- Any other nonzero result")), "")
+    assert "truncation block" in fallback
+    assert "stop with `! BLOCKED — carry check could not run` and its diagnostic" in fallback
+    post_agent = read_skill_source(_POST_AGENT).splitlines()
+    recovery = next(
+        line for line in post_agent if line.startswith("**Restore report-dir sentinel and parent evidence**")
+    )
+    assert "only the exact `REPORT_DIR` allocated for this run in Step 2" in recovery
+    assert "the check stays blocked" in recovery
+
+    restored = _run(_block(_POST_AGENT, "_REPORT_LAYOUT="), tmp_path, {})
+    assert restored.returncode == 0, restored.stdout + restored.stderr
+    assert _sentinel(tmp_path, "oss-review-report-dir") == report.parent.as_posix()
+    assert _sentinel(tmp_path, "oss-review-flags").splitlines()[-1] == "FILL_GAPS_MODE=true"
+    accepted = _run(block, tmp_path, {})
+    assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+    assert accepted.stdout.strip() == "[carry] intact"
+
+
+@_skip_no_bash
+@pytest.mark.parametrize(
+    ("path", "head", "diagnostic"),
+    [
+        pytest.param(None, None, "original report-dir record unavailable", id="missing-pointer"),
+        pytest.param("outside/pr-8/run-001", _PRIOR_HEAD, "outside the review run layout", id="outside-layout"),
+        pytest.param(
+            "other/../.reports/review/pr-8/run-001", _PRIOR_HEAD, "outside the review run layout", id="parent-traversal"
+        ),
+        pytest.param(".reports/review/pr-X/run-001", _PRIOR_HEAD, "outside the review run layout", id="non-numeric-pr"),
+        pytest.param(".reports/review/pr-8/run-1", _PRIOR_HEAD, "outside the review run layout", id="short-run-index"),
+        pytest.param(".reports/review/pr-8/run-001", None, "no safe original head-sha.txt evidence", id="missing-head"),
+        pytest.param(".reports/review/pr-8/run-001", "", "no safe original head-sha.txt evidence", id="empty-head"),
+    ],
+)
+def test_report_dir_restore_refuses_unproven_paths(tmp_path: Path, path: str | None, head: str | None, diagnostic: str):
+    """The parent cannot rewrite its report sentinel from a missing or unsuitable run record."""
+    run = tmp_path / "launch"
+    run.mkdir()
+    (tmp_path / "other").mkdir()
+    _seed_report_record(tmp_path, run, path, head)
+    restored = _run(
+        _block(_POST_AGENT, "_REPORT_LAYOUT="),
+        tmp_path,
+        {"oss-review-run-dir": run.as_posix(), "oss-review-report-dir": ""},
+    )
+    assert restored.returncode == 1, restored.stdout + restored.stderr
+    assert restored.stdout.startswith("! BLOCKED")
+    assert diagnostic in restored.stdout
+    assert _sentinel(tmp_path, "oss-review-report-dir") == ""
+
+
+def _seed_report_record(tmp_path: Path, run: Path, path: str | None, head: str | None) -> None:
+    """Set up an original report-dir record and optional head sidecar for the restore block."""
+    if path is None:
+        return
+    report_dir = tmp_path / path
+    report_dir.resolve().mkdir(parents=True)
+    (run / "report-dir.txt").write_text(report_dir.as_posix() + "\n", encoding="utf-8", newline="\n")
+    if head is not None:
+        (run / "head-sha.txt").write_text(head + "\n", encoding="utf-8", newline="\n")
+
+
+def test_carry_check_reserves_consolidator_recovery_for_verified_violations() -> None:
+    """Both retry and exhausted retry routes require output from the carry verifier."""
+    lines = read_skill_source(_MODE).splitlines()
+    routes = lines[lines.index("### Carry check") + 1 :]
+    failure_routes = [line for line in routes if line.startswith("- Exit 1")]
+    assert len(failure_routes) == 1
+    failure = failure_routes[0]
+    assert "line beginning with `[carry] `" in failure
+    start = routes.index(failure)
+    retry, exhausted = routes[start + 1 : start + 3]
+    assert retry.startswith("  - ")
+    assert "re-spawn the consolidator" in retry
+    assert exhausted.startswith("  - ")
+    assert "fill-gaps run altered carried prior records" in exhausted
+
+    parent = next(line for line in routes if line.startswith("- `[gate] parent evidence: prior "))
+    assert routes.index(parent) < start
+    assert "truncation block" in parent
+    assert "stop before Step 5b" in parent
+    assert "Direct the user to run a full `/oss:review <N>`." in parent
+    assert "Before any retry" not in parent
+    assert "re-spawn budget stays available" in parent
+    template = read_skill_source(_MODE.parent.parent / "templates/consolidator-prompt.md").splitlines()
+    boundary = next(line for line in template if "Never write or repair" in line)
+    assert "The directory containing the plan's `prior_report` is read-only, including all files under it." in boundary
 
 
 def _new_sidecar_is_a_list(run: Path) -> None:
@@ -482,6 +706,14 @@ def _new_sidecar_is_a_list(run: Path) -> None:
 def _plan_is_a_list(run: Path) -> None:
     """Replace fill-gaps.json with a JSON list."""
     (run / fgs.PLAN_NAME).write_text("[]\n", encoding="utf-8", newline="\n")
+
+
+def _plan_has_malformed_names(run: Path) -> None:
+    """Make the carry plan's name selection ambiguous."""
+    path = run / fgs.PLAN_NAME
+    plan = json.loads(path.read_text(encoding="utf-8"))
+    plan["carried"]["assessments"] = 17
+    path.write_text(json.dumps(plan), encoding="utf-8", newline="\n")
 
 
 def _plan_points_prior_findings_elsewhere(run: Path) -> None:
@@ -506,34 +738,273 @@ def _new_assessments_not_a_list(run: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("mutate", "expected"),
+    ("mutate", "prefix", "expected"),
     [
-        pytest.param(_new_sidecar_is_a_list, "new review-validation.json is not a JSON object", id="sidecar-list"),
-        pytest.param(_plan_is_a_list, "prior or new sidecar unreadable (TypeError", id="plan-list"),
+        pytest.param(
+            _new_sidecar_is_a_list, "[carry] new review-validation.json", "not a JSON object", id="sidecar-list"
+        ),
+        pytest.param(
+            _plan_is_a_list, "[gate] parent evidence: prior fill-gaps.json", "not a JSON object", id="plan-list"
+        ),
+        pytest.param(
+            _plan_has_malformed_names,
+            "[gate] parent evidence: prior fill-gaps.json",
+            "assessments is not a list of nonempty strings",
+            id="malformed-carried-names",
+        ),
         pytest.param(
             _plan_points_prior_findings_elsewhere,
+            "[gate] parent evidence: prior fill-gaps.json",
             "plan prior_findings must name findings.jsonl",
             id="prior-findings-not-a-ledger",
         ),
         pytest.param(
             _plan_points_prior_validation_elsewhere,
+            "[gate] parent evidence: prior fill-gaps.json",
             "plan prior_validation must name review-validation.json",
             id="prior-validation-not-a-sidecar",
         ),
-        pytest.param(_new_assessments_not_a_list, "carried assessment 'Software engineer' altered", id="records-map"),
+        pytest.param(
+            _new_assessments_not_a_list, "[carry] ", "carried assessment 'Software engineer' altered", id="records-map"
+        ),
     ],
 )
 def test_carry_check_reports_malformed_sidecars_without_raising(
-    prior: Path, tmp_path: Path, mutate, expected: str
+    prior: Path, tmp_path: Path, mutate, prefix: str, expected: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A malformed plan or new sidecar becomes a ``[carry]`` problem line, never a traceback.
-
-    A traceback here reached the carry block as a bare exit 1 with no problem line, so the consolidator re-spawn was
-    told to fix nothing.
-    """
+    """Malformed plan and new sidecar diagnostics retain the owner of the failed input."""
     report = _publish_fill_run(prior, tmp_path)
     mutate(report.parent)
-    assert expected in "\n".join(fgs.verify_carry(report))
+    assert fgs.main(["verify", "--report", str(report)]) == 1
+    output = capsys.readouterr().out
+    assert output.startswith(prefix)
+    assert expected in output
+
+
+@pytest.mark.parametrize(
+    ("sidecar", "content", "diagnostic"),
+    [
+        pytest.param("review-validation.json", None, "FileNotFoundError", id="missing-prior-validation"),
+        pytest.param("findings.jsonl", None, "FileNotFoundError", id="missing-prior-findings"),
+        pytest.param("review-validation.json", "{", "JSONDecodeError", id="unreadable-prior-validation"),
+        pytest.param("findings.jsonl", "{", "JSONDecodeError", id="unreadable-prior-findings"),
+        pytest.param("review-validation.json", "[]", "not a JSON object", id="non-object-prior-validation"),
+        pytest.param(
+            "review-validation.json", "{}", "prior assessments is not a list", id="missing-prior-record-lists"
+        ),
+        pytest.param("findings.jsonl", "7\n", "malformed or duplicate prior records", id="malformed-prior-finding"),
+        pytest.param("findings.jsonl", "", "do not match the planned carried records", id="dropped-prior-finding"),
+    ],
+)
+def test_carry_check_prior_sidecar_refusal_blocks_publication(
+    prior: Path, tmp_path: Path, sidecar: str, content: str | None, diagnostic: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Losing authoritative sidecar evidence after planning cannot use the new publication's recovery route."""
+    report = _publish_fill_run(prior, tmp_path)
+    path = prior.with_name(sidecar)
+    _replace_sidecar(path, content)
+    assert fgs.main(["verify", "--report", str(report)]) == 1
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith(f"[gate] parent evidence: prior {sidecar} ")
+    assert diagnostic in lines[0]
+
+
+def _rewrite_carried_finding(run: Path) -> bytes:
+    """Rewrite a carried finding in the new run and return its replacement prior ledger."""
+    path = run / "findings.jsonl"
+    carried_row, published_row = path.read_bytes().splitlines()
+    row = json.loads(carried_row)
+    row["title"] = "A changed carried finding"
+    replacement = json.dumps(row).encode("utf-8") + b"\n"
+    path.write_bytes(replacement + published_row + b"\n")
+    return replacement
+
+
+def _rewrite_carried_validation(run: Path) -> bytes:
+    """Rewrite a carried candidate in the new run and return its replacement prior envelope."""
+    _alter_carried_candidate(run)
+    return (run / "review-validation.json").read_bytes()
+
+
+@pytest.mark.parametrize(
+    ("sidecar", "rewrite"),
+    [
+        pytest.param("review-validation.json", _rewrite_carried_validation, id="validation"),
+        pytest.param("findings.jsonl", _rewrite_carried_finding, id="findings"),
+    ],
+)
+def test_carry_check_refuses_a_prior_sidecar_rewritten_to_match(
+    prior: Path, tmp_path: Path, sidecar: str, rewrite, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A replacement agreeing with the new run cannot change which prior bytes the plan trusts."""
+    report = _publish_fill_run(prior, tmp_path)
+    prior.with_name(sidecar).write_bytes(rewrite(report.parent))
+
+    assert fgs.main(["verify", "--report", str(report)]) == 1
+    assert capsys.readouterr().out.strip() == f"[gate] parent evidence: prior {sidecar} changed since the plan"
+
+
+@_skip_no_bash
+@pytest.mark.parametrize(
+    ("sidecar", "rewrite"),
+    [
+        pytest.param("review-validation.json", _rewrite_carried_validation, id="validation"),
+        pytest.param("findings.jsonl", _rewrite_carried_finding, id="findings"),
+    ],
+)
+def test_refused_carry_stays_out_of_intake(
+    prior: Path,
+    tmp_path: Path,
+    sidecar: str,
+    rewrite,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The parent keeps a canonically named report out of explicit and PR-based intake after carry refusal."""
+    report = _publish_fill_run(prior, tmp_path)
+    sentinels = _parent_records(tmp_path, report)
+    prepare = _run(_block(_POST_AGENT, "_ORIGINAL_DIR"), tmp_path, sentinels)
+    assert prepare.returncode == 0, prepare.stdout + prepare.stderr
+    prior.with_name(sidecar).write_bytes(rewrite(report.parent))
+
+    assert fgs.main(["verify", "--report", str(report)]) == 1
+    assert frr.main(["--report", str(report), "--producer", "--publish", "--fill-gaps"]) == 1
+    assert frr.main(["--report", str(report)]) == 1
+    assert frr.main(["--report", str(report), "--assess"]) == 2
+    assert not frr.gate_line(report)
+    monkeypatch.chdir(tmp_path)
+    path_out = tmp_path / "intake-path"
+    assert frr.main(["--pr", "8", "--path-out", str(path_out)]) == 1
+    assert not path_out.read_bytes()
+    with pytest.raises(fgs.FillGapsBlocked, match="has not passed"):
+        fgs.build_plan(fgs.PlanRequest("8", report, ["QA specialist"], [], _FULL_HEAD))
+    assert "publication" in capsys.readouterr().out
+
+
+@_skip_no_bash
+@pytest.mark.parametrize("has_original", [True, False])
+def test_parent_restores_only_the_original_lineup(tmp_path: Path, has_original: bool) -> None:
+    """Recovery copies the launch decision with unslotted roles, or refuses without that record."""
+    report_dir = tmp_path / ".reports/review/pr-8/run-001"
+    report_dir.mkdir(parents=True)
+    (report_dir / "head-sha.txt").write_text(_PRIOR_HEAD + "\n", encoding="utf-8", newline="\n")
+    original = b"qa | spawned\ndocs+lint | promoted-unslotted: migration | roles: Documentation reviewer\n"
+    lineup = report_dir / "lineup.md"
+    spawned_only = b"qa | spawned\n"
+    lineup.write_bytes(spawned_only)
+
+    sentinels = _parent_records(tmp_path, report_dir / "review-report.md")
+    if has_original:
+        (Path(sentinels["oss-review-run-dir"]) / "lineup.launch.md").write_bytes(original)
+    result = _run(_block(_POST_AGENT, "--restore-lineup"), tmp_path, sentinels)
+
+    assert result.returncode == (0 if has_original else 1), result.stdout + result.stderr
+    assert lineup.read_bytes() == (original if has_original else spawned_only)
+
+
+@_skip_no_bash
+@pytest.mark.parametrize("defect", ["stale-head", "altered-carry", "missing-plan", "same-head-other-run", "intact"])
+def test_terminal_release_requires_the_frozen_run_and_carried_evidence(
+    prior: Path, tmp_path: Path, defect: str
+) -> None:
+    """Exercise release against intact and damaged fill-gaps publications with retained blocked evidence."""
+    report = _publish_fill_run(prior, tmp_path)
+    sentinels = _parent_records(tmp_path, report)
+    marker = report.with_name("review-publication.pending")
+    marker.touch()
+    head = "b" * 40 if defect == "stale-head" else _PRIOR_HEAD
+    header = report.read_text().replace("Gate: REVIEW_V1_BLOCK", f"Gate: REVIEW_V1_REJECT_SCOPE @{head}")
+    report.write_text(header.replace("Outcome: MAJOR_REVISION", "Outcome: REJECT"), encoding="utf-8")
+    data = _read_envelope(report.parent)
+    data.update(source_outcome="REJECT", source_rating=5)
+    _write_run(report.parent, data, _read_rows(report.parent))
+    _damage_terminal_inputs(report, sentinels, defect)
+    release = _run(_block(_POST_AGENT, "--publish-rejection"), tmp_path, sentinels)
+    assert release.returncode == (0 if defect == "intact" else 1), release.stdout + release.stderr
+    assert marker.exists() == (defect != "intact")
+
+
+@pytest.mark.parametrize("defect", ["stale-head", "altered-carry", "missing-plan", "same-head-other-run", "intact"])
+def test_terminal_helper_enforces_evidence_without_the_shell_recipe(
+    prior: Path, tmp_path: Path, defect: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Direct rejection release binds the frozen head, allocated run and fill-gaps carry state."""
+    report = _publish_fill_run(prior, tmp_path)
+    sentinels = _bind_parent(tmp_path, report, monkeypatch)
+    marker = report.with_name("review-publication.pending")
+    marker.touch()
+    head = "b" * 40 if defect == "stale-head" else _PRIOR_HEAD
+    header = report.read_text().replace("Gate: REVIEW_V1_BLOCK", f"Gate: REVIEW_V1_REJECT_SCOPE @{head}")
+    report.write_text(header.replace("Outcome: MAJOR_REVISION", "Outcome: REJECT"), encoding="utf-8")
+    data = _read_envelope(report.parent)
+    data.update(source_outcome="REJECT", source_rating=5)
+    _write_run(report.parent, data, _read_rows(report.parent))
+    _damage_terminal_inputs(report, sentinels, defect)
+
+    assert frr.main(["--report", str(report), "--publish-rejection"]) == (0 if defect == "intact" else 1)
+    assert marker.exists() == (defect != "intact")
+
+
+def _damage_terminal_inputs(report: Path, sentinels: dict[str, str], defect: str) -> None:
+    """Introduce one boundary failure without changing the other publication records."""
+    parent = Path(sentinels["oss-review-run-dir"])
+    if defect == "altered-carry":
+        _alter_carried_candidate(report.parent)
+    elif defect == "missing-plan":
+        (parent / "fill-gaps.json").unlink()
+        report.with_name("fill-gaps.json").unlink()
+    elif defect == "same-head-other-run":
+        (parent / "report-dir.txt").write_text(report.parent.with_name("run-003").as_posix() + "\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize("sidecar", ["review-validation.json", "findings.jsonl"])
+def test_carry_check_refuses_byte_changes_with_identical_records(
+    prior: Path, tmp_path: Path, sidecar: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The plan commits to the sidecar bytes, including formatting discarded by the parsers."""
+    report = _publish_fill_run(prior, tmp_path)
+    path = prior.with_name(sidecar)
+    path.write_bytes(path.read_bytes() + b"\n")
+
+    assert fgs.main(["verify", "--report", str(report)]) == 1
+    assert capsys.readouterr().out.strip() == f"[gate] parent evidence: prior {sidecar} changed since the plan"
+
+
+@pytest.mark.parametrize(
+    "plan_fields",
+    [
+        pytest.param({}, id="missing-both-digests"),
+        pytest.param({"prior_sha256": {"review-validation.json": "a" * 64}}, id="missing-findings-digest"),
+        pytest.param(
+            {"prior_sha256": {"review-validation.json": "g" * 64, "findings.jsonl": "a" * 64}},
+            id="nonhex-validation-digest",
+        ),
+    ],
+)
+def test_carry_check_requires_both_prior_sidecar_digests(
+    prior: Path, tmp_path: Path, plan_fields: dict, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unversioned plan needs two valid digests before carry verification can run."""
+    report = _publish_fill_run(prior, tmp_path)
+    plan_path = report.with_name(fgs.PLAN_NAME)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan.pop("prior_sha256", None)
+    plan.update(plan_fields)
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+    assert fgs.main(["verify", "--report", str(report)]) == 1
+    assert capsys.readouterr().out.strip() == (
+        "[gate] parent evidence: prior fill-gaps.json lacks valid SHA-256 digests for both sidecars"
+    )
+
+
+def _replace_sidecar(path: Path, content: str | None) -> None:
+    """Make evidence missing or replace it with the exact malformed input of a case."""
+    if content is None:
+        path.unlink()
+    else:
+        path.write_text(content, encoding="utf-8", newline="\n")
 
 
 def test_minting_refuses_a_ledger_over_the_size_cap(

@@ -40,7 +40,7 @@
 //        --field q=…`, the form `gh api --help` gives for a GET with parameters)
 //      * GraphQL (`gh api graphql`): a `query` field that is not a visible inline read query — a
 //        query file (`-F query=@q.graphql`), a shell value (`query="$Q"`, `$(…)`, backticks), text
-//        not opening with `query` or `{`, or any `mutation`/`subscription` word
+//        with an unreadable operation, or a document containing a mutation or subscription operation
 //      * an unknown `gh api` option, or more than one endpoint
 //   4. Everything else — reads, `gh pr checkout`, and unknown subcommands, gh aliases and
 //      extensions — passes to normal permission handling, which prompts unless an allow matches.
@@ -78,9 +78,9 @@
 //      update anywhere in the command outranks its other writes.
 //
 // LIMITS (accepted)
-//   * Text built at run time: a variable as the program (`$GH pr create`), a shell value spliced
-//     inside a visible query (`query="query { $X }"`), a script on disk, and the limits
-//     lib/shell-git.js lists for every program.
+//   * Text built at run time: a variable as the program (`$GH pr create`), a script on disk, and
+//     the limits lib/shell-git.js lists for every program. The query field must be a literal shell
+//     argument. Separate arguments may provide GraphQL variable values at run time.
 //   * gh aliases and extensions (`gh alias set`, `gh <extension>`) are not resolved; they reach
 //     the normal permission prompt, which no shipped allow entry pre-approves.
 //   * `gh api graphql --input <file>` is never approvable (item 7): the body, query and variables
@@ -252,19 +252,15 @@ const API_VALUE_LONG = new Set([
 const API_BOOL_LONG = new Set(["allow-escape-sequences", "help", "include", "paginate", "silent", "slurp", "verbose"]);
 // The one method a read may name (case ignored): under it gh sends -f/-F fields as query parameters.
 const READ_METHOD = "GET";
-// A GraphQL query the command text shows: an operation opening with `query` or a bare selection set.
-const READ_QUERY = /^\s*(?:query\b|\{)/;
-const WRITE_OPERATION = /\b(?:mutation|subscription)\b/i;
-// Shell expansions GraphQL syntax never uses: the query text arrives at run time.
-const SHELL_VALUE = /\$[({]|`/;
+// Stick to GraphQL's ignored tokens, names, strings, numbers and punctuators. Strings are opaque to the guard.
+const GRAPHQL_TOKEN =
+  /([ \t\r\n,\uFEFF]+|#[^\r\n]*)|("""(?:\\"""|(?!""")[\s\S])*"""|"(?:\\[^\r\n]|[^"\\\r\n])*")|([_A-Za-z][_0-9A-Za-z]*|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\.\.\.|[!$&():=@[\]{}|])/y;
 // Headers that make a server read another method than the one sent (`-X GET -H '…: POST'`).
 const METHOD_OVERRIDE_HEADERS = new Set(["x-http-method-override", "x-http-method", "x-method-override"]);
 // A header name holding a shell expansion: the name arrives at run time.
 const RUN_TIME_TEXT = /[$`]/;
 // REST endpoints that move a ref (`repos/o/r/git/refs/heads/x`, `…/git/refs`), where a body may carry `force`.
 const FORCE_REF_ENDPOINT = /(?:^|\/)git\/refs(?:\/|$)/i;
-// A GraphQL `force:` argument other than a literal false (`updateRef(input:{…, force: true})`).
-const GRAPHQL_FORCE = /\bforce\s*:\s*(?!false\b)/i;
 
 // The single-use approval scope this hook spends (lib/approval-grants.js SCOPES).
 const GH_WRITE_SCOPE = "gh-write-once";
@@ -339,14 +335,36 @@ function runTimeSubcommand(words) {
 
 // --- gh api ---
 
-/** `gh api` arguments sorted as gh's flag parser reads them. */
-function parseApi(args) {
+/** Record the value-taking option in a short cluster and return the last argument it used. */
+function parseApiShort(args, i, record) {
+  const arg = args[i];
+  for (let k = 1; k < arg.length; k += 1) {
+    if (API_BOOL_SHORT[arg[k]]) continue;
+    const name = API_VALUE_SHORT[arg[k]];
+    if (!name) return null;
+    const attached = arg.slice(k + 1);
+    if (attached === "") {
+      record(name, args[i + 1] ?? "", i + 1);
+      return i + 1;
+    }
+    record(name, k === 1 && attached.startsWith("=") ? attached.slice(1) : attached, i);
+    break;
+  }
+  return i;
+}
+
+/** Parse gh's API options and retain the shell proof for the word that supplied each field. */
+function parseApi(args, literals, apiIndex) {
+  args = args.filter((_, i) => i !== apiIndex);
+  literals = literals?.filter((_, i) => i !== apiIndex);
   const api = { endpoints: [], methods: [], headers: [], fields: [], input: false, unknown: null };
-  const record = (name, value) => {
+  const record = (name, value, i) => {
     if (name === "method") api.methods.push(value);
     else if (name === "header") api.headers.push(value);
     else if (name === "input") api.input = true;
-    else if (name === "raw-field" || name === "field") api.fields.push({ typed: name === "field", spec: value });
+    else if (name === "raw-field" || name === "field") {
+      api.fields.push({ typed: name === "field", spec: value, literal: literals?.[i] === true });
+    }
   };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -362,22 +380,12 @@ function parseApi(args) {
         api.unknown = api.unknown || arg;
         continue;
       }
-      if (eq >= 0) record(name, arg.slice(eq + 1));
-      else record(name, args[++i] ?? "");
+      if (eq >= 0) record(name, arg.slice(eq + 1), i);
+      else record(name, args[++i] ?? "", i);
     } else if (arg.length > 1 && arg.startsWith("-")) {
-      // A short cluster: flags without a value, then at most one that takes the rest or the next arg.
-      for (let k = 1; k < arg.length; k += 1) {
-        if (API_BOOL_SHORT[arg[k]]) continue;
-        const name = API_VALUE_SHORT[arg[k]];
-        if (!name) {
-          api.unknown = api.unknown || arg;
-          break;
-        }
-        const attached = arg.slice(k + 1);
-        if (attached === "") record(name, args[++i] ?? "");
-        else record(name, k === 1 && attached.startsWith("=") ? attached.slice(1) : attached);
-        break;
-      }
+      const end = parseApiShort(args, i, record);
+      if (end === null) api.unknown ||= arg;
+      else i = end;
     } else {
       api.endpoints.push(arg);
     }
@@ -408,14 +416,43 @@ function apiHeaderReason(api) {
   return null;
 }
 
-/** Why a GraphQL `query` field is not a visible inline read query, or null. */
-function queryReason(field) {
+/** Read the shown GraphQL document, keeping strings opaque and discarding only ignored tokens. */
+function graphqlTokens(text) {
+  const tokens = [];
+  GRAPHQL_TOKEN.lastIndex = 0;
+  while (GRAPHQL_TOKEN.lastIndex < text.length) {
+    const match = GRAPHQL_TOKEN.exec(text);
+    if (!match) return null;
+    if (!match[1]) tokens.push(match[2] === undefined ? match[3] : '""');
+  }
+  return tokens;
+}
+
+/** Classify each definition at its start, without mistaking names inside a selection set for operations. */
+function graphqlReadReason(tokens) {
+  let depth = 0;
+  let start = true;
+  let query = false;
+  for (const token of tokens) {
+    if (start) {
+      if (token === "mutation" || token === "subscription") return `a ${token}`;
+      if (token === "query" || token === "{") query = true;
+      else if (token !== "fragment") return "a query whose operation cannot be read";
+      start = false;
+    }
+    if ("{[(".includes(token)) depth += 1;
+    else if ("}])".includes(token)) depth -= 1;
+    if (depth === 0 && token === "}") start = true;
+  }
+  return query && start ? null : "a query whose read operation cannot be established";
+}
+
+/** Read the GraphQL document only when the shell and gh both receive the shown text. */
+function visibleQuery(field) {
   const value = field.spec.slice(field.spec.indexOf("=") + 1);
-  if (field.typed && value.startsWith("@")) return "a query read from a file or stdin";
-  if (SHELL_VALUE.test(value)) return "a query the command text does not show";
-  if (WRITE_OPERATION.test(value)) return "a mutation";
-  if (!READ_QUERY.test(value)) return "a query that does not open with `query` or `{`";
-  return null;
+  if (field.typed && value.startsWith("@")) return "a query the command text does not show (file or stdin)";
+  if (!field.literal) return "a query the command text does not show";
+  return graphqlTokens(value) ?? "a query whose tokens cannot be read";
 }
 
 function isQueryField(field) {
@@ -425,8 +462,7 @@ function isQueryField(field) {
 }
 
 /** Why `gh api <args>` writes or cannot be shown not to, or null for a read. */
-function apiWrite(args) {
-  const api = parseApi(args);
+function apiWrite(api) {
   if (api.unknown) return `gh api with an option this guard does not know (${api.unknown})`;
   if (api.input) return "gh api --input: a request body from a file or stdin";
   const method = apiMethodReason(api) || apiHeaderReason(api);
@@ -440,7 +476,8 @@ function apiWrite(args) {
     return null;
   }
   for (const field of api.fields.filter(isQueryField)) {
-    const reason = queryReason(field);
+    const tokens = visibleQuery(field);
+    const reason = typeof tokens === "string" ? tokens : graphqlReadReason(tokens);
     if (reason) return `gh api graphql with ${reason}`;
   }
   return null;
@@ -460,20 +497,36 @@ function isForceField(field) {
   return segments.includes("force") && field.spec.slice(eq + 1).toLowerCase() !== "false";
 }
 
+/** Find a non-false force input inside an argument list, excluding variable declarations. */
+function graphqlForceInput(tokens) {
+  let argumentsDepth = 0;
+  return tokens.some((token, i) => {
+    if (token === "(") argumentsDepth += 1;
+    if (token === ")") argumentsDepth -= 1;
+    return (
+      argumentsDepth > 0 &&
+      token.toLowerCase() === "force" &&
+      tokens[i - 1] !== "$" &&
+      tokens[i + 1] === ":" &&
+      tokens[i + 2] !== "false"
+    );
+  });
+}
+
 /** Why `gh api <args>` can force-update a ref (body shown or not), or null. */
-function apiForce(args) {
-  const api = parseApi(args);
+function apiForce(api, coarse) {
   if (api.fields.some(isForceField)) return "gh api with a force field";
   if (api.input && api.endpoints.some((endpoint) => FORCE_REF_ENDPOINT.test(endpoint))) {
     return "gh api --input to a git ref endpoint: a body the command text does not show may force the update";
   }
   if (api.endpoints[0] !== "graphql") return null;
   if (api.input) return "gh api graphql --input: a body the command text does not show may force a ref update";
+  if (coarse) return null; // A partial query from whitespace splitting cannot establish an actual force argument.
   for (const field of api.fields.filter(isQueryField)) {
-    const value = field.spec.slice(field.spec.indexOf("=") + 1);
-    if (GRAPHQL_FORCE.test(value)) return "gh api graphql with a force argument";
-    if ((field.typed && value.startsWith("@")) || SHELL_VALUE.test(value)) {
-      return "gh api graphql with a query the command text does not show: it may force a ref update";
+    const tokens = visibleQuery(field);
+    if (typeof tokens === "string") return `gh api graphql with ${tokens}: it may force a ref update`;
+    if (graphqlReadReason(tokens) !== null && graphqlForceInput(tokens)) {
+      return "gh api graphql with a force argument";
     }
   }
   return null;
@@ -483,7 +536,7 @@ function apiForce(args) {
  * Why one gh invocation force-updates remote history, or null. No approval covers it: no force to a remote,
  * the same as the git force-push ban.
  */
-function forceReason(tokens) {
+function forceReason(tokens, literals, coarse = false) {
   const args = tokens.slice(1);
   for (const unknownTakesValue of [false, true]) {
     const indexes = positionalIndexes(args, unknownTakesValue);
@@ -491,7 +544,7 @@ function forceReason(tokens) {
     const words = indexes.map((i) => args[i].toLowerCase());
     const flags = args.filter((arg, i) => !indexes.includes(i) && arg.startsWith("--")).map((a) => a.toLowerCase());
     if (words[0] === "api") {
-      const reason = apiForce(args.filter((_, i) => i !== indexes[0]));
+      const reason = apiForce(parseApi(args, literals?.slice(1), indexes[0]), coarse);
       if (reason) return reason;
     } else if (words[0] === "repo" && words[1] === "sync" && flags.some((flag) => /^--force(?:=|$)/.test(flag))) {
       return "gh repo sync --force";
@@ -509,7 +562,7 @@ function forceReason(tokens) {
 // --- invocation ---
 
 /** Why one gh invocation (words from the program word on, redirections already dropped) writes, or null. */
-function writeReason(tokens) {
+function writeReason(tokens, literals) {
   const args = tokens.slice(1);
   for (const unknownTakesValue of [false, true]) {
     const indexes = positionalIndexes(args, unknownTakesValue);
@@ -521,7 +574,7 @@ function writeReason(tokens) {
     }
     if (words[0] === "api") {
       // gh parses flags placed before `api` on `api` too: `gh -X POST api x` is a POST.
-      const reason = apiWrite(args.filter((_, i) => i !== indexes[0]));
+      const reason = apiWrite(parseApi(args, literals?.slice(1), indexes[0]));
       if (reason) return reason;
     } else {
       const write = subcommandWrite(words) || runTimeSubcommand(words);
@@ -544,18 +597,19 @@ function findWrite(command, info) {
   const coarse = coarseProgramInvocations?.(command, "gh", 0, info.deadline) || [];
   info.coarseInvocations = coarse;
   for (const tokens of coarse) {
-    const reason = forceReason(tokens);
+    const reason = forceReason(tokens, undefined, true);
     if (reason) return { reason, exact: true, force: true };
   }
   const parsed = programInvocations(command, "gh", info);
   const invocations = info.unreadable || parsed === null ? info.exactInvocations || [] : parsed;
+  const { literalArguments } = info;
   // A force update anywhere in the command outranks every other write: no approval covers it.
   for (const tokens of [...invocations, ...(info.prefixInvocations || [])]) {
-    const reason = forceReason(tokens);
+    const reason = forceReason(tokens, literalArguments.get(tokens), !literalArguments.has(tokens));
     if (reason) return { reason, exact: true, force: true };
   }
   for (const tokens of [...invocations, ...(info.unreadable || parsed === null ? coarse : [])]) {
-    const reason = writeReason(tokens);
+    const reason = writeReason(tokens, literalArguments.get(tokens));
     if (reason) return { reason, exact: true, unreadable: info.unreadable || parsed === null };
   }
   if (parsed === null || info.unreadable)

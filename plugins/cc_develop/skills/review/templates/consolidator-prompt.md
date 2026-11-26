@@ -45,6 +45,10 @@ The parent supplies these resolved literal input bindings in the compact Agent p
 - Root-cause merge: candidates sharing one root cause and one fix (e.g. a missing cleanup step that surfaces as both a wrong count and a capacity leak) → the report shows one finding that lists every symptom `file:line`; split only when the fixes differ. The surviving candidate is the highest-severity one (ties → first in report order). Each merged CONFIRMED candidate keeps its own `findings.jsonl` row, placed right after the survivor's row, carrying `merged_into: <surviving row's candidate_id>` with its own validated `severity` and `section`; it keeps its own `full_text` (where the row schema has one) as the symptom bullet the surviving finding lists. The surviving row has no `merged_into`. Report and envelope finding counts exclude `merged_into` rows — merging deduplicates the report, never discards a confirmed candidate.
 - Every finding carries an explicit inline severity: `[cosmetic]`, `[low]`, `[medium]`, `[high]`, `[critical]`. Put cosmetic findings in `### Cosmetic / Style`.
 
+**Coverage disclosure.** Use the parent's cap decisions in `cross-validation.md`. Write one `Unreviewed dimension: <unit> — <reason>` line in `### Review Confidence` for every dropped or unslotted unit. Name the promotion trigger for an unslotted promoted unit, record its required roles as missing, and mark Readiness `incomplete`. An unpromoted drop leaves Readiness unchanged. Both omissions carry the 0.85 ceiling.
+
+- If the parent's coverage record could not be recovered, name the missing evidence and recovery check in Open Concerns and mark Readiness `incomplete`. An unsupported Codex score stays unscored.
+
 ## Challenger and design comparison
 
 Map `challenger.md` sections before merging:
@@ -72,6 +76,8 @@ Intended behavior (always): the `Summary:` field opens with `Intended behavior: 
 
 The file MUST begin with the template's `---`-delimited YAML metadata block: opening `---` on line 1, all template fields in order (including `Review contract:`, `Rating scale:`, `Readiness:` and `Gate:`), closing `---`, then body. No HTML comments (`<!-- ... -->`) or prose before the block; the orchestrator reads it verbatim as the reply header. Missing `---` head breaks terminal output.
 
+After `Legend:`, write this line as its own paragraph: `Axes: Gate = CI merge gate at the reviewed source, or a premise rejection · Outcome = source judgment · Readiness = verification state; each axis is read on its own.`
+
 | Field | Value or rule |
 | -- | -- |
 | `develop-review:` | Target: file / dir / working-tree diff. |
@@ -95,11 +101,29 @@ The file MUST begin with the template's `---`-delimited YAML metadata block: ope
 
 `Change Type` means what the change DOES: `fix` corrects wrong behavior; `feat` adds capability/API; `refactor` restructures the same behavior; `perf` makes the same behavior faster; `docs` changes docs/comments only; `ci` changes the pipeline only; `chore` is deps/tooling; `test` changes tests only; `mixed` combines intents.
 
-## Codex and missing packages
+## Review confidence
 
-- For `codex.md`, put unique findings under `### Codex Co-Review`. Same file:line → keep the agent version and mark `also flagged by Codex`. Codex has fixed confidence 0.75.
-- Review agents do not execute reviewed code, examples or tests. They may run installed static analyzers and dependency audits without fixes, with caches and temporary output under `$RUN_DIR`, within existing authorization. A claim blocked by a Python package absent or installed outside the declared spec stays a Confidence gap — state the unavailable check, package and declaring spec `file:line`; never close it by installing anything, and name the targeted check that would close it under `Next steps`.
+- For `codex.md`, put unique findings under `### Codex Co-Review`. Same file:line → keep the agent version and mark `also flagged by Codex`.
+- Codex confidence uses only the numeric `confidence` field from the bridge envelope with `status: complete` for a single call or single-wave partition, using the evidence in `cross-validation.md`. Null, blocked, timed-out, or absent envelopes and other non-complete replies contribute no score. A completed reply without a numeric confidence in [0, 1] also contributes no score. A partition of several waves has no single envelope number. Use the partition lane score and qualified gap lines derived by the parent and retained in `cross-validation.md`, never one wave's reply. Verify that all expected groups have numeric scores, and the lane score equals their minimum. Use the original `splits[].confidence_gaps` rows across all waves to check the qualified lines. The lowest-scoring group with the smallest group number keeps its deductions, and every other group gets `(-0.00)`. If only the original rows and derived score were retained, qualify the lines by this rule before carrying them into **Gaps**. Treat a missing group, an unscored group, a skipped file, or insufficient or inconsistent partition evidence as an unscored lane. Before carrying any Codex lane score, check that the gap lines are well formed and that 1.00 minus their deductions equals the score. Leave the lane unscored when its gap accounting is missing or inconsistent. Use a dash for unscored lanes and exclude them from min, median and aggregate. Name an unscored Codex lane once under **Gaps** with its observed cause. Give the missing or unscored groups, any evidence or gap accounting failure, the envelope's closed-set `confidence_null_reason` code (`not-recorded` for a stored envelope without that field), or `peer-unavailable` when the bridge was absent and no envelope exists, as applicable. The scored Codex lane's gap lines (`confidence_gaps` lines from a single envelope or the qualified partition lines) are carried into **Gaps**, deduction first, as `- (-0.NN) Codex: <limit>`; the bridge applies no ceiling, so this report's ceilings still apply on top.
+- Review agents do not execute reviewed code, examples or tests. They may run installed static analyzers and dependency audits without fixes, with caches and temporary output under `$RUN_DIR`, within existing authorization.
 - Exhaust allowed static checks. A child inspection-only restriction does not prove the parent lacks an authorized runtime check; record the actual authorization/capability boundary. Feasible undone parent work means incomplete.
+
+**Confidence ceilings.** Report the minimum and median of numeric reviewer confidences under `### Review Confidence`. Use the median capped by the lowest applicable ceiling for both the `**Aggregate**` score and the `Confidence:` score. Name the binding ceiling's reason first among the header's key gaps. Apply ceilings independently, without stacking or a floor. If no reviewer supplied a numeric confidence, report the aggregate and header score as `unavailable`.
+
+| Coverage condition | Ceiling |
+| -- | -- |
+| Readiness `incomplete` | 0.70 |
+| Readiness `blocked` | 0.80 |
+| Reviewed code not executed on a code target (no authorized test or probe ran against the reviewed source) | 0.80 |
+| A unit dropped by the cap or left unslotted after promotion | 0.85 |
+
+**Gaps excluded from the score and `Confidence:` header.**
+
+- Challenger's instructed `--no-codex` skip is covered by the dedicated co-review. If that lane lacks a score, report its cause once as above.
+- The reviewer host OS is never a Confidence gap.
+- A missing or out-of-spec Python package is never a Confidence gap. State that the package is provisionable in a local ephemeral environment. For an affected claim, state the unavailable check, package and declaring spec `file:line`, and name the targeted check that would close it under `Next steps`. Name `dev_env_provision.py --repo <root> --probe-import <module>` before the targeted check. Review agents never close it by installing anything.
+- Absent hardware can leave a check unverifiable. Name exactly the absent hardware class (e.g. CUDA on a host without an NVIDIA GPU) and the specific check it prevents, nothing broader, written as `not reproducible on this host: requires <CLASS>`. Any confidence effect comes through the applicable ceiling.
+- Cite evidence that closes a gap under `### Review Confidence`. Omit `(-0.00)` closures from **Gaps**.
 
 ## Publication validation
 
@@ -110,12 +134,13 @@ Preserve a supported source judgment when unavailable tooling, runtime evidence 
 3. Write `findings.jsonl` containing every confirmed actionable candidate exactly once. Every row carries contract_version=1, validation_status=CONFIRMED and candidate_id referring to the matching CONFIRMED candidate. Preserve stable finding IDs separately. Never put unverified concerns in this collection.
 4. The report's Open Concerns names every obligation ID/owner/next_check/closure. Feasible undone checks mean incomplete; genuinely unavailable prerequisites after feasible checks mean blocked. Neither permits unconditional approval or a merge-readiness claim.
 5. Null judgment means absence of source judgment supported by returned assessment evidence, never rejection. REJECT requires documented binding conflict and an evidenced terminal ground; fixable defects mean MINOR_EDITS or MAJOR_REVISION according to evidenced impact and repair scope. INSUFFICIENT_BUT_PROMISING means substantially incomplete source implementation with a good initiative, never missing hardware/process evidence. Historical reports retain their original five-rating meanings.
+6. `APPROVE` never stands beside a CONFIRMED `critical` or `high` finding. Use `MINOR_EDITS` or `MAJOR_REVISION` for the required source change according to evidenced impact and repair scope. `APPROVE` beside `blocked` or `incomplete` readiness is valid when no source change is required. Summary and Next steps name the open verification without claiming merge readiness or unconditional approval.
 
 ## File output and return
 
 Write the consolidated report to `<REPORT_DIR_LITERAL>/review-report.md`. After `## Confidence`, append `## Source Files` using `Glob(pattern='*.md', path='$RUN_DIR')` to inventory source handovers.
 
-Return ONLY compact JSON, preserving this envelope:
+Return ONLY compact JSON, preserving this envelope. Use JSON `null` for `confidence` when the aggregate is unavailable.
 
 ```text
 {"status":"done","findings":N,"severity":{"critical":N,"high":N,"medium":N,"low":N},"file":"<REPORT_DIR_LITERAL>/review-report.md","confidence":0.N,"new_claims":["<candidate_id>"],"summary":"<one-line verdict>"}

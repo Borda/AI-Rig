@@ -284,8 +284,8 @@ def _legacy_evidence(metadata: dict[str, Any]) -> None:
 
 
 def _failed_check_for(score: float) -> str:
-    """Return the extra failed check the finalizer is told about for this score."""
-    return NOT_ACCEPTABLE if score <= 0.8 else ""
+    """Return the extra failed check for this score: none, since confidence alone never fails a review."""
+    return ""
 
 
 def _promote_two_gap_run(
@@ -355,7 +355,7 @@ class TestMultipleReportConfidenceGaps:
         """Honest gap sets promote as unavailable, render into the final report, and never feed remediation.
 
         Covers the two-gap report, a retained gh checkout failure, whole-score and zero deductions, a low score that
-        also fails the acceptability check, and a single residual-uncertainty gap.
+        keeps its band without a failed confidence check, and a single residual-uncertainty gap.
         """
         completed = _promote_two_gap_run(tmp_path, checkout_state, mutate, score, command_failure=False)
 
@@ -369,7 +369,7 @@ class TestMultipleReportConfidenceGaps:
         assert "| Status | Deduction | Gap or limitation | Closure evidence |" in final
         assert "| limit | (-0.00) | PR correctness was not assessed;" in final
         assert f"{score:.2f}" in final
-        assert score > 0.8 or NOT_ACCEPTABLE in failed
+        assert NOT_ACCEPTABLE not in failed
 
     @pytest.mark.parametrize(
         ("checkout_state", "mutate", "score", "command_failure"),

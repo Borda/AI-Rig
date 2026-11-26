@@ -82,11 +82,13 @@ from codemap_adapter import STATUS_AVAILABLE as CODEMAP_STATUS_AVAILABLE  # noqa
 from codemap_adapter import STATUS_SKIPPED as CODEMAP_STATUS_SKIPPED  # noqa: E402
 from codemap_adapter import STATUSES as CODEMAP_STATUSES  # noqa: E402
 from codemap_adapter import QueryOutcome as CodemapQueryOutcome  # noqa: E402
+from codemap_adapter import _review_source as codemap_review_source  # noqa: E402
 from codemap_adapter import change_set_gap as codemap_change_set_gap  # noqa: E402
 from codemap_adapter import gap_reasons as codemap_gap_reasons  # noqa: E402
 from codemap_adapter import provider_rejected_input as codemap_provider_rejected_input  # noqa: E402
 from codemap_adapter import read_diff_text as codemap_read_diff_text  # noqa: E402
 from codemap_adapter import reduce_status as codemap_reduce_status  # noqa: E402
+from codemap_adapter import structural_context_status as codemap_structural_context_status  # noqa: E402
 from codemap_adapter import unquote_git_path as codemap_unquote_git_path  # noqa: E402
 from collect_diff import canonical_diff_arguments, diff_sections  # noqa: E402
 from collect_pr import dirty_path_record_is_consistent  # noqa: E402
@@ -168,6 +170,7 @@ from review_execution_validation import (  # noqa: E402
     validate_local_reviewer_evidence as validate_local_reviewer_evidence,
 )
 from review_routing import ROUTING_SIGNALS, derive_mechanical_risk, literal_patch_paths, read_review_paths  # noqa: E402
+from review_status_axes import check_result_status_axes  # noqa: E402
 from review_worktree_replay import CLOSED_REQUIRED_PR_ARTIFACTS, retained_local_gate  # noqa: E402
 from run_gates import (  # noqa: E402
     _aggregate_worker_proofs,
@@ -260,6 +263,7 @@ UNAVAILABLE_METADATA_KEYS = {
     "scope",
     "risk_tier",
     "review_status",
+    "status_axes",
     "collection_failure",
     "confidence_gaps",
     "confidence_gap_closures",
@@ -281,6 +285,7 @@ CLOSED_METADATA_KEYS = {
     "scope",
     "risk_tier",
     "review_status",
+    "status_axes",
     "close_decision",
     "confidence_gaps",
     "confidence_gap_closures",
@@ -2500,19 +2505,21 @@ def _validate_confidence_recovery(result: dict[str, Any], metadata: dict[str, An
         raise SystemExit("review-invalid-remaining-limits")
 
     confidence_value = float(confidence)
+    # A result carrying status axes names every failure cause; its confidence score never fails it by itself.
+    gating = "status_axes" not in metadata
     if confidence_value <= 0.8:
-        if result["status"] == "pass":
+        if gating and result["status"] == "pass":
             raise SystemExit("review-pass-confidence-not-acceptable")
-        if "confidence-not-acceptable" not in checks_failed:
+        if gating and "confidence-not-acceptable" not in checks_failed:
             raise SystemExit("review-missing-confidence-not-acceptable-check")
         if status != "not-acceptable-failed":
             raise SystemExit("review-confidence-status-should-fail")
         if not recovery_actions or not remaining_limits:
             raise SystemExit("review-low-confidence-recovery-missing")
     elif confidence_value < 0.85:
-        if result["status"] == "pass":
+        if gating and result["status"] == "pass":
             raise SystemExit("review-pass-confidence-very-questionable")
-        if "confidence-very-questionable" not in checks_failed:
+        if gating and "confidence-very-questionable" not in checks_failed:
             raise SystemExit("review-missing-confidence-very-questionable-check")
         if status != "very-questionable":
             raise SystemExit("review-confidence-status-should-be-very-questionable")
@@ -2673,12 +2680,38 @@ def _scoped_confidence_deduction(gap: dict[str, Any]) -> int:
     return round(float(next(iter(tokens))) * 100) if tokens else 0
 
 
+def _is_listed_known_limit(out_dir: Path, scoped_gap: str, closure: dict[str, Any]) -> bool:
+    """Check a zero-deduction closure against this run's scoring registry."""
+    rationale = closure["rationale"]
+    if closure["status"] != "unresolved" or not rationale.startswith("(-0.00)") or "(known limit)" not in rationale:
+        return False
+
+    # Most validations have no candidate waiver and do not need the gap ledger modules.
+    import gap_ledger
+    import run_gap_records
+
+    gap_id, _, reason = scoped_gap.partition(": ")
+    if not reason.strip() or gap_ledger.lookup_gap_id(gap_id) != ("hardware-absent", "host"):
+        return False
+    known, _ = run_gap_records.scoring_known_limits(out_dir)
+    if known is None or gap_id not in known.limits:
+        return False
+    # The waiver rests on the current observation: its reason must state a device absence the listed limit matches.
+    limit = known.limits[gap_id]
+    fields = gap_ledger.host_class_fields(limit.host_class)
+    observation = {"id": gap_id, "hardware_class": limit.hardware_class, "host_class": fields, "reason": reason}
+    if limit.host_class != gap_ledger.current_host_class() or gap_ledger.matching_limit(observation, [limit]) is None:
+        return False
+    subject = run_gap_records.run_subject(out_dir, {}, "review")
+    return subject is not None and gap_ledger.repo_key(subject["repo"]) == gap_ledger.repo_key(known.repo)
+
+
 def _validate_consolidation_confidence(
     out_dir: Path, manifest: dict[str, Any], result: dict[str, Any], metadata: dict[str, Any]
 ) -> None:
     """Require all scoped causes, admitted evidence and complete deductions before global confidence recovery."""
     minimum = min(item["confidence"] for item in manifest["passes"])
-    labels: dict[str, int] = {}
+    labels: dict[str, tuple[int, str]] = {}
     prefixes = []
     for item in manifest["passes"]:
         for part in item["source_parts" if manifest.get("review_topology") == "source-only" else "final_parts"]:
@@ -2691,7 +2724,7 @@ def _validate_consolidation_confidence(
                     label = f"{item['role']} {part['output_path']}: {gap['gap']} ({gap['status']}) - {gap['rationale']}"
                     if label not in metadata.get("confidence_gaps", []):
                         raise SystemExit("review-consolidation-confidence-gap-dropped")
-                    labels[label] = historical
+                    labels[label] = historical, gap["gap"]
             residual = round((1 - part["confidence"]["score"]) * 100) - accounted
             if result["confidence"] > minimum and residual > 0:
                 label = (
@@ -2699,7 +2732,7 @@ def _validate_consolidation_confidence(
                 )
                 if label not in metadata.get("confidence_gaps", []):
                     raise SystemExit("review-consolidation-confidence-gap-dropped")
-                labels[label] = residual
+                labels[label] = residual, ""
     if result["confidence"] <= minimum:
         return
     recovery = metadata.get("confidence_recovery", {})
@@ -2728,18 +2761,18 @@ def _validate_consolidation_confidence(
             evidence = closure.get("evidence_path") or closure.get("evidence")
             if evidence not in references or evidence not in recovery["evidence"]:
                 raise SystemExit("review-consolidation-confidence-evidence-invalid")
-    for label in labels:
+    for label, (historical, scoped_gap) in labels.items():
         closure = closures[label]
-        reduced = deductions[label] < labels[label]
-        shared = any(
+        reduced = deductions[label] < historical
+        exempt = any(
             other != label and deduction > 0 and other in closure["rationale"]
             for other, deduction in deductions.items()
-        )
-        if closure["status"] != "closed" and reduced and not shared:
+        ) or _is_listed_known_limit(out_dir, scoped_gap, closure)
+        if closure["status"] != "closed" and reduced and not exempt:
             evidence = closure.get("evidence_path") or closure.get("evidence")
             if evidence not in references or evidence not in recovery["evidence"]:
                 raise SystemExit("review-consolidation-confidence-evidence-invalid")
-        if closure["status"] != "closed" and deductions[label] == 0 and not shared:
+        if closure["status"] != "closed" and deductions[label] == 0 and not exempt:
             raise SystemExit("review-consolidation-confidence-accounting-invalid")
     if abs(sum(deductions.values()) / 100 - (1 - result["confidence"])) > 0.000001:
         raise SystemExit("review-consolidation-confidence-accounting-invalid")
@@ -3919,9 +3952,20 @@ def _validate_codemap_recorded_status(payload: dict[str, Any], outcomes: list[An
         for outcome in outcomes
     ):
         raise SystemExit(f"{code}:answer")
-    if payload["status"] != codemap_reduce_status(payload["probe"].get("status"), outcomes):
+    if "structural_context" in payload:
+        try:
+            status, reasons = codemap_structural_context_status(payload["structural_context"], outcomes)
+        except ValueError:
+            raise SystemExit(f"{code}:structural_context") from None
+    else:
+        status = codemap_reduce_status(payload["probe"].get("status"), outcomes)
+        reasons = codemap_gap_reasons(outcomes)
+        # Older absent records had an empty list. This is also the only added reason on the legacy route.
+        if status == "absent" and payload.get("query_kind") == "standard" and payload["status_reasons"]:
+            reasons = (f"context: codemap-not-installed: {payload['probe']['detail']}",)
+    if payload["status"] != status:
         raise SystemExit(f"{code}:status")
-    if payload["status_reasons"] != list(codemap_gap_reasons(outcomes)):
+    if payload["status_reasons"] != list(reasons):
         raise SystemExit(f"{code}:status_reasons")
 
 
@@ -3939,6 +3983,35 @@ def _codemap_run_diff_text(diff_file: object, out_dir: Path) -> str | None:
     return codemap_read_diff_text(run_diff)
 
 
+def _validate_codemap_mirror_snapshot(record: dict[str, Any], snapshot: Path, code: str) -> None:
+    """Bind mirror evidence to the retained snapshot, allowing the producer's explicit source-unavailable gap."""
+    if (
+        "source_snapshot_sha256" not in record
+        and record.get("status") == "unavailable"
+        and record.get("cause") == "source-unavailable"
+    ):
+        return
+    try:
+        digest = _sha256(snapshot)
+    except OSError:
+        raise SystemExit(f"{code}:source_snapshot_sha256") from None
+    if record.get("source_snapshot_sha256") != digest:
+        raise SystemExit(f"{code}:source_snapshot_sha256")
+
+
+def _validate_codemap_review_source(record: object, out_dir: Path, has_python: bool, code: str) -> None:
+    """Match the structural context to the same checkout receipt and mirror snapshot as the producer."""
+    if not isinstance(record, dict) or not isinstance(record.get("root"), str):
+        raise SystemExit(f"{code}:structural_context")
+    source = codemap_review_source(out_dir, Path(record["root"]))
+    if source is None or record.get("expected_head") != source.head:
+        raise SystemExit(f"{code}:structural_context")
+    if has_python and record.get("status") == "not-applicable":
+        raise SystemExit(f"{code}:structural_context")
+    if source.mirror is not None:
+        _validate_codemap_mirror_snapshot(record, source.mirror / "source-snapshot.json", code)
+
+
 def _validate_codemap_primary_review(context: dict[str, Any], out_dir: Path, python_paths: list[str]) -> None:
     """Bind a current primary artifact to one standard ``diff-impact`` query over this run's own diff file.
 
@@ -3950,10 +4023,14 @@ def _validate_codemap_primary_review(context: dict[str, Any], out_dir: Path, pyt
     if context.get("query_kind") != "standard":
         raise SystemExit(f"{code}:query_kind")
     outcomes = _recorded_codemap_outcomes(context, code)
-    provider_usable = context["probe"].get("status") == CODEMAP_STATUS_AVAILABLE
-    if [outcome.subcommand for outcome in outcomes] != (["diff-impact"] if provider_usable else []):
-        raise SystemExit(f"{code}:queries")
-    diff_text = _codemap_run_diff_text(context.get("diff_file"), out_dir) if outcomes else ""
+    if "structural_context" in context:
+        _validate_codemap_review_source(context["structural_context"], out_dir, bool(python_paths), code)
+    else:
+        provider_usable = context["probe"].get("status") == CODEMAP_STATUS_AVAILABLE
+        if [outcome.subcommand for outcome in outcomes] != (["diff-impact"] if provider_usable else []):
+            raise SystemExit(f"{code}:queries")
+    needs_diff = outcomes or "structural_context" in context
+    diff_text = _codemap_run_diff_text(context.get("diff_file"), out_dir) if needs_diff else ""
     if diff_text is None:
         # A probe a non-Python review volunteered is not required, but once run it must still read this run's diff.
         raise SystemExit(f"{code}:diff_file" if python_paths else f"{code}:diff_file:volunteered-probe")
@@ -3978,6 +4055,8 @@ def _validate_codemap_follow_up(path: Path, name: str, context: dict[str, Any]) 
     if path.is_symlink() or not path.is_file():
         raise SystemExit(f"{code}:not-a-file")
     follow_up = _load_codemap_artifact(path, code)
+    if "structural_context" in follow_up:
+        raise SystemExit(f"{code}:structural_context")
     kind = follow_up.get("query_kind")
     if kind not in FOLLOW_UP_QUERY_KINDS:
         raise SystemExit(f"{code}:query_kind")
@@ -4094,6 +4173,20 @@ def _is_fresh_candidate(out_dir: Path, result_path: Path) -> bool:
     return result_path.name != "result.json" or result_path.parent.resolve() != out_dir.resolve()
 
 
+def _validate_status_axes(
+    out_dir: Path, result: dict[str, Any], metadata: dict[str, Any], *, required: bool = False
+) -> None:
+    """Require axes for new candidates and check any stored axes against the gate receipt."""
+    if "status_axes" not in metadata:
+        if required:
+            raise SystemExit("status-axes-required")
+        return
+    gates_path = out_dir / "gates.json"
+    if gates_path.is_symlink() or not gates_path.is_file():
+        raise SystemExit("status-axes-gates-evidence-missing")
+    check_result_status_axes(result, _load_json(gates_path))
+
+
 class _ReviewStep(NamedTuple):
     """One named review check and the earlier steps whose success it needs."""
 
@@ -4137,6 +4230,7 @@ def _result_context(result_path: Path) -> dict[str, Any]:
 def _terminal_review_steps(out_dir: Path, result_path: Path, context: dict[str, Any]) -> list[_ReviewStep]:
     """Check terminal reviews, requiring deduction text before candidate promotion."""
     result, metadata, scope = context["result"], context["metadata"], context["scope"]
+    fresh = _is_fresh_candidate(out_dir, result_path)
 
     def terminal() -> None:
         """Select candidate requirements without changing canonical historical readers."""
@@ -4146,15 +4240,14 @@ def _terminal_review_steps(out_dir: Path, result_path: Path, context: dict[str, 
                 result,
                 metadata,
                 scope,
-                require_deductions=_is_fresh_candidate(out_dir, result_path),
+                require_deductions=fresh,
             )
         else:
-            _validate_closed_result(
-                out_dir, result, metadata, scope, candidate=_is_fresh_candidate(out_dir, result_path)
-            )
+            _validate_closed_result(out_dir, result, metadata, scope, candidate=fresh)
 
     return [
         _ReviewStep(str(context["review_status"]), terminal),
+        _ReviewStep("status-axes", lambda: _validate_status_axes(out_dir, result, metadata, required=fresh)),
         _ReviewStep("confidence-gaps", lambda: _validate_confidence_gaps(result, metadata)),
         _ReviewStep("confidence-recovery", lambda: _validate_confidence_recovery(result, metadata)),
     ]
@@ -4166,6 +4259,7 @@ def _assessed_review_steps(
     """List the checks for an assessed review in fail-fast order with their dependencies."""
     result, metadata, scope = context["result"], context["metadata"], context["scope"]
     risk_tier, status = context["risk_tier"], context["status"]
+    fresh = _is_fresh_candidate(out_dir, result_path)
     notes_path = out_dir / "review-notes.md"
     state: dict[str, Any] = {}
 
@@ -4190,9 +4284,7 @@ def _assessed_review_steps(
 
     def decision() -> None:
         """Require the current admission contract for a fresh review before interpreting any ratings."""
-        if _is_fresh_candidate(out_dir, result_path) and (
-            result.get("schema_version") != 3 or metadata.get("finding_records_version") != 2
-        ):
+        if fresh and (result.get("schema_version") != 3 or metadata.get("finding_records_version") != 2):
             raise SystemExit("review-current-validation-required-rerun-code-review")
         _validate_review_decision(metadata, result)
         _validate_candidate_source(out_dir, metadata)
@@ -4209,7 +4301,7 @@ def _assessed_review_steps(
         steps.append(
             _ReviewStep("pr-scope", lambda: _validate_pr_review_scope(out_dir, result, metadata, notes_path), notes)
         )
-    if _is_fresh_candidate(out_dir, result_path):
+    if fresh:
         # Promoted results predating the required probe stay readable; every new candidate must carry it.
         steps.append(_ReviewStep("codemap-context", lambda: _validate_codemap_context(out_dir, metadata)))
     steps.extend(
@@ -4233,6 +4325,7 @@ def _assessed_review_steps(
                 ),
                 evidence,
             ),
+            _ReviewStep("status-axes", lambda: _validate_status_axes(out_dir, result, metadata, required=fresh)),
         )
     )
     return steps

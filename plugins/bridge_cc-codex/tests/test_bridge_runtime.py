@@ -114,7 +114,7 @@ def _outcome(
     """
     records: list[dict[str, object]] = [{"type": "thread.started", "thread_id": "session-fixed"}]
     if core is not None:
-        records.append({"type": "item.completed", "item": {"text": json.dumps(core)}})
+        records.append({"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(core)}})
         records.append({"type": "turn.completed", "usage": {"input": 3, "output": 2, "cost": 0.01}})
     if error is not None:
         records.append(
@@ -3359,7 +3359,13 @@ def test_background_dispatch_leaves_pid_ownership_to_the_supervisor(
         "status": "finished",
         "pid": 123,
     }
-    assert bridge_call.job_result(tmp_path.resolve(), started["job_id"]) == _finished_envelope()
+    # The stored envelope predates the confidence fields, so the reader returns it upgraded as not recorded.
+    assert bridge_call.job_result(tmp_path.resolve(), started["job_id"]) == {
+        **_finished_envelope(),
+        "confidence": None,
+        "confidence_gaps": [],
+        "confidence_null_reason": "not-recorded",
+    }
 
 
 def _finished_envelope() -> dict[str, object]:
@@ -4623,6 +4629,7 @@ def test_reverse_mcp_uses_a_claude_compatible_schema_and_keeps_peer_details_in_t
         "files_touched",
         "remaining",
         "blockers",
+        "confidence_gaps",
         "details",
     }
     assert envelope["status"] == "complete"

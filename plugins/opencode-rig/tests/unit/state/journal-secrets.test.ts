@@ -6,6 +6,16 @@ const joined = (separator: string, ...parts: string[]) => parts.join(separator)
 const PROJECT_KEY = joined("-", "sk", "proj", "abcdefghijklmnopqrstuv", "0123456789")
 
 describe("journal secret redaction", () => {
+  it.each(["Bearer", "BEARER", "bEaReR", "Basic", "BASIC", "bAsIc"])(
+    "redacts complete and truncated authorization values for %s",
+    (scheme) => {
+      const auth = `${scheme} dXNlcjpzZWNyZXQ=`
+      expect(redact(`prefix ${auth} suffix`)).toBe("prefix [redacted] suffix")
+      const prefix = " ".repeat(2000 - scheme.length - 4)
+      expect(redact(`${prefix}${auth}`)).toBe(`${prefix}[redacted]`)
+    },
+  )
+
   it.each([
     joined("-", "sk", "ant", "api03", "abcdefghij", "klmnopqrstuv"),
     PROJECT_KEY,

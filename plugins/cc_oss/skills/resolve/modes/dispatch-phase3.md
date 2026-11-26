@@ -360,19 +360,11 @@ while IFS= read -r _wt; do
         _WT_REMOVED=$((_WT_REMOVED + 1))
         if [ -n "$_wt_branch" ]; then
             if [ "$COMMIT_MODE" = "each" ]; then
-                # a specialist envelope's `commits` array is self-reported and could omit a commit the
-                # specialist actually made on this branch — verify from git history instead of trusting
-                # it. `git cherry <upstream> <branch>` marks with `+` any commit on <branch> whose
-                # patch-id has no equivalent yet on <upstream>; cherry-pick gives a landed commit a new
-                # sha but the same diff, so a fully-landed branch shows zero `+` lines against HEAD.
-                _CHERRY_OUT=$(git cherry HEAD "$_wt_branch")  # no 2>/dev/null — branch is kept either way; an operator diagnosing a non-zero rc needs git's own reason, not a blank one
-                _CHERRY_RC=$?
-                _UNLANDED=$(printf '%s\n' "$_CHERRY_OUT" | grep -c '^+')
-                if [ "$_CHERRY_RC" -eq 0 ] && [ "$_UNLANDED" -eq 0 ]; then
-                    git branch -D "$_wt_branch" 2>/dev/null
-                else
+                # The final report can check exact content on divergent tips. Patch equivalence misses merge resolutions.
+                if ! { git merge-base --is-ancestor "refs/heads/$_wt_branch" HEAD && git branch -d -- "$_wt_branch"; }; then
                     _KEPT_UNCONFIRMED="$_KEPT_UNCONFIRMED $_wt_branch"
-                    echo "⚠ $_wt_branch: git cherry could not confirm every commit landed (rc=$_CHERRY_RC, $_UNLANDED unmatched) — kept for recovery instead of deleted. Expected if this pick's content changed during conflict resolution (its patch-id then differs from the original); reclaim manually via 'git worktree list'/'git branch -d' once confirmed landed"
+                    printf '%s\tunconfirmed\n' "$_wt_branch" >> "$IMPL_DIR/recovery-branches.txt"  # Step 11 lists it with its cleanup command
+                    echo "⚠ $_wt_branch: kept for recovery and the final report's landed-content check"
                 fi
             else
                 # grouped/all/stage: the soft-reset collapsed the specialist's commits into a staged
@@ -380,12 +372,13 @@ while IFS= read -r _wt; do
                 # only other copy of the work, so deleting it here would be the sole recovery route
                 # gone the moment something goes wrong between here and the commit fence
                 _KEPT_UNCOMMITTED="$_KEPT_UNCOMMITTED $_wt_branch"
+                printf '%s\tuncommitted\n' "$_wt_branch" >> "$IMPL_DIR/recovery-branches.txt"  # Step 11 lists it with its cleanup command
             fi
         fi
     fi
 done < "$IMPL_DIR/specialist-worktrees.txt"
 [ "$_WT_TOTAL" -gt 0 ] && echo "→ removed $_WT_REMOVED/$_WT_TOTAL specialist worktree(s)"
-[ -n "$_KEPT_UNCONFIRMED" ] && echo "→ specialist branches kept as recovery — git cherry could not confirm every commit landed:$_KEPT_UNCONFIRMED"
+[ -n "$_KEPT_UNCONFIRMED" ] && echo "→ specialist branches kept as recovery — awaiting the final report's content check:$_KEPT_UNCONFIRMED"
 [ -n "$_KEPT_UNCOMMITTED" ] && echo "→ specialist branches kept as recovery — the staged diff is not yet committed:$_KEPT_UNCOMMITTED"
 if [ -f "$IMPL_DIR/worktrees-before.txt" ]; then
     # a worktree present now but absent from the before-Phase-2 snapshot AND never removed above
@@ -449,7 +442,10 @@ PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
-echo failed > "$IMPL_DIR/group-commit-status.txt"  # reset first, not just overwritten at the end — a fence that dies mid-way (timeout/interrupt) between this and the "ok"/"failed" write must never leave a PRIOR group's stale "ok" for the close-out fence to read; no rm, which drops the whole block from the blueprint manifest
+_FENCE_FILE=$(mktemp "$IMPL_DIR/group-fence-XXXXXXXX") || exit 1
+_ATTEMPT_ID=${_FENCE_FILE##*/}
+printf '%s\n' "$_ATTEMPT_ID" > "$IMPL_DIR/group-commit-attempt.txt" || exit 1
+echo failed > "$IMPL_DIR/group-commit-status.txt"
 IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
 IFS= read -r PR_REF < "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}" 2>/dev/null || PR_REF=""
 if [ "$PR_NUMBER" = "n/a" ]; then
@@ -491,43 +487,62 @@ for _gid in $(printf '%s\n' "$_GROUP_IDS"); do
 done
 printf '%s\n' "${_COMMITTED_IDS[@]}" > "$IMPL_DIR/group-ids.txt"  # persisted AFTER exclusion, from the array still live in this Bash call — close-out fence below (separate call) reads only ids that actually contributed
 sort -u "$IMPL_DIR/group-files.txt" -o "$IMPL_DIR/group-files.txt"
+# presence check only: git quotes unusual names in this list, so the helper derives byte-exact paths from the same records
 [ -s "$IMPL_DIR/group-files.txt" ] || { echo "! BLOCKED — group '$_TOPIC' has no resolvable files across any of its items"; exit 1; }
 # message built in Python: item subjects already carry type(scope): — topic never prepended (was "tests: test(x): …")
-_BUILD_ARGS=(--build-group --topic "$_TOPIC" --summaries-file "$IMPL_DIR/group-summaries.txt" --pr "$PR_REF" --items "${_COMMITTED_IDS[*]}")
+# Shared files split by hunk when hooks are disabled and the recorded changes can be separated.
+_BUILD_ARGS=(--impl-dir "$IMPL_DIR" --topic "$_TOPIC" --summaries-file "$IMPL_DIR/group-summaries.txt" --pr "$PR_REF" --items "${_COMMITTED_IDS[*]}" --attempt-id "$_ATTEMPT_ID")
 [ "$_GROUP_CODEX" = "true" ] && _BUILD_ARGS+=(--codex)
-_GROUP_FILES=()
-while IFS= read -r _f; do [ -n "$_f" ] && _GROUP_FILES+=("$_f"); done < "$IMPL_DIR/group-files.txt"
 export RESOLVE_APPROVED_HOOKS=""
 IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" 2>/dev/null || [ -n "$RESOLVE_APPROVED_HOOKS" ] || RESOLVE_APPROVED_HOOKS=""
-if python "$PLUGIN_ROOT/bin/commit_action_item.py" "${_BUILD_ARGS[@]}" \
-    --files "${_GROUP_FILES[@]}"; then  # timeout: 10000
+# timeout = harness maximum; the helper budget ends it first, never mid-way with the index on a group tree
+if python "$PLUGIN_ROOT/bin/resolve_group_replay.py" "${_BUILD_ARGS[@]}"; then  # timeout: 600000
     echo ok > "$IMPL_DIR/group-commit-status.txt"
 else
-    echo failed > "$IMPL_DIR/group-commit-status.txt"
+    case $? in
+        4) echo committed-blocked > "$IMPL_DIR/group-commit-status.txt" ;;
+        *) echo failed > "$IMPL_DIR/group-commit-status.txt" ;;
+    esac
 fi
 ```
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
-[ -f "$IMPL_DIR/group-commit-status.txt" ] && IFS= read -r _STATUS < "$IMPL_DIR/group-commit-status.txt" || _STATUS="failed"
-if [ "$_STATUS" != "ok" ]; then
-    echo "! BLOCKED — group commit failed; not flipping tasks for this group's items"
-else
-    # task id from item-tasks.tsv, never from memory — a compaction between Step 3e and here would drop any in-memory id map
-    while IFS= read -r item_id; do
-        case "$item_id" in ''|*[!0-9]*) continue ;; esac
-        _TID=$(awk -F'\t' -v id="$item_id" '$1==id{print $2}' "$IMPL_DIR/item-tasks.tsv")
-        [ -n "$_TID" ] || { echo "! skipping — item $item_id has no task id in item-tasks.tsv"; continue; }
-        echo "TaskUpdate target: item=$item_id task=$_TID"  # timeout: 3000
-    done < "$IMPL_DIR/group-ids.txt"
-fi
+_CLOSE_OUT=$(python "$PLUGIN_ROOT/bin/resolve_group_replay.py" --close-out "$IMPL_DIR") || _CLOSE_OUT=failed  # timeout: 135000
+IFS= read -r _STATUS <<< "$_CLOSE_OUT"
+case "$_STATUS" in
+    ok) ;;
+    committed-blocked) echo "! BLOCKED — group commit created, pending edits not replayed; not flipping the remaining tasks" ;;
+    *) echo "! BLOCKED — group commit failed; not flipping tasks for this group's items"; exit 1 ;;
+esac
+# task id from item-tasks.tsv, never from memory — a compaction between Step 3e and here would drop any in-memory id map
+while IFS= read -r item_id; do
+    case "$item_id" in ''|*[!0-9]*) continue ;; esac
+    _TID=$(awk -F'\t' -v id="$item_id" '$1==id{print $2}' "$IMPL_DIR/item-tasks.tsv")
+    [ -n "$_TID" ] || { echo "! skipping — item $item_id has no task id in item-tasks.tsv"; continue; }
+    echo "TaskUpdate target: item=$item_id task=$_TID"  # timeout: 3000
+done <<< "${_CLOSE_OUT#*$'\n'}"
 ```
 
-Commit subject format: Conventional Commits, built by `commit_action_item.py --build-group` — never `<topic>: <type(scope): …>`. One item with a typed subject → that subject verbatim. Otherwise type and scope = what the items share, else derived from the topic (`tests`→`test`, `logic`→`fix`, `misc`/`config`→`chore`; a file/specialist/custom topic becomes the scope); description = first item's, plus `(+N more)`, ≤72 chars total (word-boundary cut with `…`). Multi-item body lists every item subject. Codex co-author trailer only when the group holds a C1 item (a `c1-item-files.tsv` row); Phase 2 items never add it, including C1 candidates a quota stop sent to Phase 2. One commit per unique topic. Print `→ Committed group "<topic>" — items <ids>` after the commit fence. `! BLOCKED` from the close-out fence → group commit failed, no task flipped; investigate before re-running. Otherwise call `TaskUpdate(task_id=<printed task id>, status="completed")` per printed target line.
+**Per-group replay.** `resolve_group_replay.py` builds each group's commit in a private index using byte-exact paths from the run records. With hooks disabled, it splits shared files by replaying the group's own item commits onto HEAD. With hooks approved, it stages shared files whole so a formatter can fix adjacent lines without colliding with an unstaged hunk. Whole files come from the collapsed target. A C1 item starts from its working file and, when splitting, the helper reverse-applies later items' recorded changes. After the commit, the helper folds the committed hook rewrites into the saved target and replays pending recorded edits over them.
 
-**After loop — `COMMIT_MODE=grouped` only**: once every topic group has committed, assert the index is empty — a group's `<all files changed by items in this group>` substitution silently omitting one of that group's staged files would otherwise leave it stranded, uncommitted, invisible to any later check:
+- **Taken whole.** A shared file goes in whole when hooks are approved or the recorded edits cannot be separated. After the commit, the helper prints `GROUP_REPLAY_FALLBACK=<file> (item <id> …)` with the later items whose changes it can prove landed on that path. It records the line in `$IMPL_DIR/group-replay-fallbacks.txt` for the final report. With hooks approved, the commit message identifies the whole files and the post-commit check determines which items landed.
+- **Already landed.** A later group whose items all landed that way exits 0 with `→ group '<topic>' — items <ids> already landed in the commit of group(s) <topics>` and makes no commit of its own; its tasks close as committed.
+- **Git version.** Splitting merges three-way in the index from git 2.32; an older git splits by plain apply only, and a change that then does not apply falls back whole with that reason.
+- **Time budget.** Commit preparation and hooks share one deadline. The helper reserves separate time to verify landed edits and restore the index within the fence timeout.
+
+Exit 3 means the group's items change nothing against HEAD or appear only in the older committed-items ledger. Exit 1 means replay blocked without confirming a group commit. If HEAD could not be verified, inspect HEAD and the index before retrying. Exit 4 means the group committed and still needs reconciliation. The helper records the original HEAD, intended tree, exact message and selected files before Git runs. Close-out can recover a commit after interruption by checking its parent, message and rewrite scope. It reads only the group bound to the current fence ID. The receipt saves the commit, its tree and the recovery target as soon as attribution succeeds. If item verification was interrupted, close-out retries it from the saved tree. A settled receipt reports `ok`. An attributed or pending receipt reports `committed-blocked` and lists any items proven in the commit. The `[resolve group attempt]` message records what the group requested. Complete the task targets printed by close-out and leave unconfirmed items pending.
+
+Before the next group, the parent compares HEAD with the pre-hook target tree printed by the helper and saved in the receipt, then reconciles the index while preserving the committed hook edits. Record the reconciled index tree from `git write-tree` in `$IMPL_DIR/group-replay-target.txt`. For each later item change verified in HEAD, record its item, path and carrying group in `$IMPL_DIR/group-replay-absorbed.jsonl` (`{"item":"<id>","path":"<path>","group":"<topic>"}`). If every path is already in HEAD, the parent may instead skip the item, append its ID to `$IMPL_DIR/group-replay-committed.txt` and complete its task. Then continue with the next uncommitted group. Never rerun the group whose commit was created.
+
+Commit subject format: Conventional Commits, built by the group message builder `commit_action_item.py --build-group` uses (the replay helper calls the same builder) — never `<topic>: <type(scope): …>`. One item with a typed subject → that subject verbatim. Otherwise type and scope = what the items share, else derived from the topic (`tests`→`test`, `logic`→`fix`, `misc`/`config`→`chore`; a file/specialist/custom topic becomes the scope); description = first item's, plus `(+N more)`, ≤72 chars total (word-boundary cut with `…`). Multi-item body lists every item subject. Codex co-author trailer only when the group holds a C1 item (a `c1-item-files.tsv` row); Phase 2 items never add it, including C1 candidates a quota stop sent to Phase 2. One commit per unique topic.
+
+After a successful commit fence, print `→ Committed group "<topic>" — items <ids>`. For both `ok` and `committed-blocked`, call `TaskUpdate(task_id=<printed task id>, status="completed")` per printed target line. A failed commit emits no task targets. A committed block completes only the confirmed tasks for the current group and stops progression until reconciliation.
+
+**After loop — `COMMIT_MODE=grouped` only.** Once every topic group has committed, assert the index is empty. Inspect any staged diff against HEAD and the group records to distinguish pending item edits, merge-resolution edits, and reversions of committed hook edits. Recover the intended changes while preserving the committed formatter output.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -537,7 +552,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # said "grouped only" in prose alone, which a fence run out of its documented mode can't enforce
 case "$COMMIT_MODE" in
     grouped)
-        git diff --cached --quiet || { echo "! BLOCKED — staged files remain after every group committed: $(git diff --cached --name-only | tr '\n' ' ') — a group's file-list substitution likely omitted one; commit it separately (it belongs to whichever group's items touch it) before continuing"; exit 1; }  # timeout: 5000
+        git diff --cached --quiet || { echo "! BLOCKED — staged files remain after every group committed: $(git diff --cached --name-only | tr '\n' ' ') — inspect git diff --cached and the group records before continuing. Preserve committed hook edits when reconciling the index."; exit 1; }  # timeout: 5000
         ;;
     each|all|stage) echo "empty-index assertion skipped — COMMIT_MODE=$COMMIT_MODE, not grouped" ;;
     *) echo "! BLOCKED — COMMIT_MODE is '$COMMIT_MODE', not each/grouped/all/stage"; exit 1 ;;  # fail closed on a lost/empty/bogus sentinel — a bare *) skip here would silently drop the assertion instead of blocking, same class the merge fence's own COMMIT_MODE enumeration guards against
@@ -568,7 +583,7 @@ SUMMARIES_FILE=""
 export RESOLVE_APPROVED_HOOKS=""
 IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" 2>/dev/null || [ -n "$RESOLVE_APPROVED_HOOKS" ] || RESOLVE_APPROVED_HOOKS=""
 # Codex trailer only when a C1 item finished (a c1-item-files.tsv row, written for Git-verified C1 DONE items only); CODEX_AVAILABLE stays true after a quota stop, so keying on it credited Codex for specialist-only commits
-python "$PLUGIN_ROOT/bin/commit_all_items.py" "$PR_REF" "$N_AS_SUGGESTED" "$N_SELF_RESOLVED" "$N_REJECTED" "$SUMMARIES_FILE" $(awk -F'\t' '$1 ~ /^[0-9]+$/ && $2 != "" {found=1} END {exit !found}' "$IMPL_DIR/c1-item-files.tsv" 2>/dev/null && echo "--codex")  # timeout: 10000
+python "$PLUGIN_ROOT/bin/commit_all_items.py" "$PR_REF" "$N_AS_SUGGESTED" "$N_SELF_RESOLVED" "$N_REJECTED" "$SUMMARIES_FILE" $(awk -F'\t' '$1 ~ /^[0-9]+$/ && $2 != "" {found=1} END {exit !found}' "$IMPL_DIR/c1-item-files.tsv" 2>/dev/null && echo "--codex")  # timeout: 600000
 ```
 
 After the commit succeeds, flip only selected items with an implementation record to completed (deferred from per-item loop body where commit had not yet happened). A Phase 2 commit record or a Git-verified C1 file record is required for each id; the clean Phase 3 result proves the recorded Phase 2 work was merged before the bulk commit. A selected item absent from both ledgers remains `in_progress` for the straggler gate. Exclude ids already closed above (REJECT, `skipped-items.txt`). The persisted `selected-items.txt` is authoritative for scope; task ids still come from `item-tasks.tsv`:

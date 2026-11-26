@@ -175,6 +175,15 @@ class TestNormalize:
         """
         assert bbm.sha256_text(bbm.normalize("echo  a")) != bbm.sha256_text(bbm.normalize("echo a"))
 
+    def test_comment_delimiters_do_not_count_toward_shell_nesting(self) -> None:
+        """Discard a comment full of punctuation before judging the shell text's nesting.
+
+        Only the print command contributes syntax, so its admission cannot depend on delimiters in the comment.
+        """
+        normalized = bbm.normalize("printf '%s' value # " + "[" * 40)
+        assert normalized == "printf '%s' value"
+        assert bbm.block_entries(normalized, "fixture.md:1")[1] == 0
+
 
 class TestSharedVectors:
     """The shared fixture is the cross-language contract; Python must satisfy all of it.
@@ -192,6 +201,16 @@ class TestSharedVectors:
         compute different digests for the same command.
         """
         assert bbm.normalize(vector["input"]) == vector["expected"]
+
+    @pytest.mark.parametrize("vector", vector_params("quoted_data"))
+    def test_quoted_data_has_distinct_digest(self, vector: dict) -> None:
+        """Hash quoted data verbatim while dropping a comment after the closing delimiter."""
+        reviewed = bbm.normalize(vector["reviewed"])
+        variant = bbm.normalize(vector["variant"] + "  # note")
+
+        assert reviewed == vector["reviewed"]
+        assert variant == vector["variant"]
+        assert bbm.sha256_text(reviewed) != bbm.sha256_text(variant)
 
     @pytest.mark.parametrize("vector", vector_params("needs_bailout"))
     def test_needs_bailout(self, vector: dict) -> None:
@@ -362,7 +381,7 @@ class TestAllowlistGate:
                 'IFS= read -r D < "${TMPDIR:-/tmp}/report-dir-${CSID}"\nmv -f "$D/report.md" "$D/report.refused.md"',
                 id="mv-forced-within-state-dir",
             ),
-            pytest.param("python -\"$F\" <<'PY'\nimport sys\nprint(sys.argv[1])\nPY", id="python-quoted-heredoc"),
+            pytest.param("python - \"$F\" <<'PY'\nimport sys\nprint(sys.argv[1])\nPY", id="python-quoted-heredoc"),
             pytest.param(
                 "python -c 'import json,sys; print(json.load(sys.stdin)[\"a\"])' < f", id="python-literal-code"
             ),
@@ -392,6 +411,60 @@ class TestAllowlistGate:
         """
         assert bbm.unlisted_command(text) is None
         assert bbm.is_excluded(text) is False
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("python -c 'print(1)'\"$MORE\"", id="python-quoted-word-with-expansion"),
+            pytest.param("python -c 'print(1)'\\\n\"$MORE\"", id="python-code-word-across-shell-continuation"),
+            pytest.param("python -c 'print(1)'suffix", id="python-quoted-word-with-unquoted-text"),
+            pytest.param("python -c 'print(1)''; print(2)'", id="python-concatenated-code-fragments"),
+            pytest.param("python -\"$F\" <<'PY'\nprint(1)\nPY", id="python-dynamic-heredoc-mode"),
+            pytest.param("sh -c 'echo fixed'\"$MORE\"", id="shell-concatenated-code-word"),
+            pytest.param("trap 'echo fixed'\"$MORE\" EXIT", id="trap-concatenated-code-word"),
+            pytest.param("node --require ./helper.js -e 'console.log(1)'", id="node-preload-separate-operand"),
+            pytest.param("node -r./helper.js script.js", id="node-preload-attached-operand"),
+            pytest.param("node --require=./helper.js script.js", id="node-preload-equals-operand"),
+            pytest.param("node -e'console.log(1)'", id="node-attached-code-operand"),
+            pytest.param("curl --libcurl out.c https://example.com", id="curl-unknown-output-option"),
+            pytest.param("curl -s https://example.com --libcurl=out.c", id="curl-option-after-url"),
+            pytest.param("curl -sXPOST https://example.com", id="curl-method-in-short-cluster"),
+            pytest.param('curl "$URL"', id="curl-dynamic-option-position"),
+            pytest.param('target="reports/result"; unlink "$target"', id="unlink-literal-variable-outside-state"),
+            pytest.param('unlink ".temp/$target"', id="unlink-dynamic-path-under-state"),
+            pytest.param("unlink .temp/*", id="unlink-expanded-wildcard"),
+        ],
+    )
+    def test_unmodelled_forms_get_no_blueprint_entry(self, text: str) -> None:
+        """Withhold blueprint approval when an operand or option falls outside the program's admitted grammar.
+
+        Exercise manifest admission without executing the command text.
+        """
+        entries, dropped = bbm.block_entries(bbm.normalize(text), "fixture.md:1")
+        assert not entries
+        assert dropped >= 1
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "python -I -c 'print(1)' argument",
+            'python -c "print(1)" "${VALUE}"',
+            "node --check ./script.js",
+            "node script.js --require application-arg",
+            "curl -sSXGET --max-time=2 --url https://example.com",
+            "curl --url-query 'name=-X' -- https://example.com",
+            "unlink .temp/state/result",
+            'unlink -- "${TMPDIR:-/tmp}/lock-${CSID}"',
+        ],
+    )
+    def test_modelled_forms_get_blueprint_entry(self, text: str) -> None:
+        """Retain approval for fixed code, script mode, GETs and lexical state paths.
+
+        Options and option-looking data exercise the distinction between program flags and literal operands.
+        """
+        entries, dropped = bbm.block_entries(bbm.normalize(text), "fixture.md:1")
+        assert [record["kind"] for record in entries.values()] == ["block"]
+        assert dropped == 0
 
     @pytest.mark.parametrize(
         ("text", "offender"),

@@ -247,6 +247,17 @@ class TestSkillInstructions:
 class TestSharedContract:
     """The shared native-skill contract and global instructions own the approval rules."""
 
+    @pytest.mark.installed_plugin
+    def test_publication_preflight_is_admitted_by_shipped_github_read_policy(self, contract_raw: str) -> None:
+        """The publication step's direct read helper must be eligible for owning-command approval."""
+        execution = h2_section(contract_raw, "GitHub Read Execution")
+        instructions = GLOBAL_INSTRUCTIONS.read_text(encoding="utf-8")
+        helper = "shared/publication_preflight.py"
+
+        assert any(helper in line and "GitHub Read Execution" in line for line in contract_raw.splitlines())
+        assert any(helper in line and "shared/github_read.py" in line for line in instructions.splitlines())
+        assert any("publication_preflight.py" in line and "github_read.py" in line for line in execution.splitlines())
+
     def test_covers_known_networked_cli_families(self, contract: str) -> None:
         """A new workflow cannot narrow approval to a nested executable.
 

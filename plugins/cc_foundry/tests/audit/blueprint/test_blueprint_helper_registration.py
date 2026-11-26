@@ -39,6 +39,19 @@ def test_mutating_helper_block_requires_registration(
     assert bbm.block_entries(command, "skills/demo/SKILL.md:1") == ({}, 1)
 
 
+@pytest.mark.parametrize("helper", sorted(bbm._MUTATING_HELPERS))
+def test_every_registered_helper_is_refused_once_unregistered(monkeypatch: pytest.MonkeyPatch, helper: str) -> None:
+    """Each registration admits a helper the generator would otherwise refuse, so no entry documents a dead gate.
+
+    A listed helper whose name the mutating-helper matcher never flags passes with or without its entry: its guard text
+    would then describe a review the generator never applies.
+    """
+    command = f'python "${{CLAUDE_PLUGIN_ROOT}}/bin/{helper}"'
+    assert bbm.unlisted_command(command) is None
+    monkeypatch.delitem(bbm._MUTATING_HELPERS, helper)
+    assert bbm.unlisted_command(command) == f"mutating helper {helper}"
+
+
 def test_unregistered_mutating_helper_block_is_refused() -> None:
     """Adding reviewed helpers must not admit an unknown deleting helper."""
     command = 'python "${CLAUDE_PLUGIN_ROOT}/bin/delete_reports.py"'

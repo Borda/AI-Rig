@@ -296,7 +296,11 @@ def _resolved_question(item: dict, remediation_active: bool) -> bool:
     answer = submitted.get("answer")
     if not isinstance(answer, str) or answer not in options:
         return False
-    known = answer == "Continue" or options == ["Resume last", "Start fresh"]
+    known = (
+        answer == "Continue"
+        or options == ["Resume last", "Start fresh"]
+        or (options == ["New review", "Resume last one", "Stop"] and answer in {"New review", "Resume last one"})
+    )
     question = arguments.get("question")
     if isinstance(question, str):
         question = _question_body(question)
@@ -675,9 +679,12 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
     historical_pr = ""
     pr_reports: tuple[str, str] | None = None
     early_pr_reports: tuple[str, str] | None = None
+    report_lookup_seen = False
+    unconfirmed_remediation = ""
     checked_run = checked_scope_digest = ""
     active = False
     runs: dict[str, str] = {}
+    superseded_review = ""
     owner = ""
     remediation_pr: tuple[str, str] | None = None
     remediation_source = checkout_root
@@ -822,10 +829,13 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
         if record.get("type") == "event_msg" and kind == "task_started":
             active = data.get("turn_id") == turn
             runs.clear()
+            superseded_review = ""
             review_cwd = checkout_root
             historical_pr = ""
             pr_reports = None
             early_pr_reports = None
+            report_lookup_seen = False
+            unconfirmed_remediation = ""
             checked_run = checked_scope_digest = ""
             remediation_pr = None
             remediation_source = checkout_root
@@ -1038,6 +1048,14 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                 return {}
             question_receipts.add(receipt_id)
             pending_questions -= 1
+            if item["status"] == "completed" and item["result"]["structuredContent"]["answer"] in {
+                "Start fresh",
+                "New review",
+            }:
+                # Keep the prior run pending until a verified replacement allocation. A joined remediation
+                # stays active, and ambiguous concurrent reviews retain their separate completion obligations.
+                reviews = [run for run, skill in runs.items() if skill == "code-review"]
+                superseded_review = reviews[0] if len(reviews) == 1 else ""
             if item["status"] == "completed" and item["arguments"]["options"] == SCOPE_CHOICES:
                 if checked_run and item["arguments"]["scope_digest"] != checked_scope_digest:
                     return {}
@@ -1054,6 +1072,12 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
         queue_processes.pop(process, None)
         exit_code = item["exit_code"]
         args = _argv(item, plugin_root)
+        if args[2:3] == ["report-root"] and _coordinate(args[1], plugin_root) == _coordinate(
+            "shared/review_code_safety.py", plugin_root
+        ):
+            report_lookup_seen = True
+            if unconfirmed_remediation and exit_code != 0:
+                return {}
         collector = bool(args) and _coordinate(args[1], plugin_root) == _coordinate("shared/collect_pr.py", plugin_root)
         if collector and not {"-h", "--help"}.intersection(args[2:]):
             # A later collector attempt supersedes the previous terminal receipt, even if it fails differently.
@@ -1278,7 +1302,14 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                 if path_type(report_base).is_absolute() and not re.search(r"[\r\n]", report_base):
                     coordinate = _coordinate(report_base, cwd)
                     binding = (coordinate, args[6].lower())
-                    if not slot_receipt_seen and not historical_pr:
+                    if unconfirmed_remediation:
+                        if unconfirmed_remediation.rsplit("/", 2)[0] != coordinate or owner:
+                            return {}
+                        runs[unconfirmed_remediation] = owner = "code-remediate"
+                        remediation_pr = (unconfirmed_remediation, args[6].rsplit("/", 1)[1])
+                        pr_reports = binding
+                        unconfirmed_remediation = ""
+                    elif not slot_receipt_seen and not historical_pr:
                         if early_pr_reports is not None and early_pr_reports != binding:
                             return {}
                         early_pr_reports = binding
@@ -1291,6 +1322,8 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                         if pr_reports is not None and pr_reports != binding:
                             return {}
                         pr_reports = binding
+            if unconfirmed_remediation and args[2:3] == ["report-root"]:
+                return {}
             continue
         if helper == _coordinate("shared/create_run.py", plugin_root):
             creation: dict[str, str] = {}
@@ -1380,7 +1413,29 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                     and _report_root_matches(early_pr_reports[0], review_cwd, checkout.slot)
                 ):
                     binding = early_pr_reports
-                if not binding or _coordinate(creation["--root"], command_cwd) != binding[0]:
+                requested_root = _coordinate(creation["--root"], command_cwd)
+                # A later turn can reuse a previous root without its lookup receipt. The original writer and
+                # target plus a canonical main-checkout allocation justify recovering that missing proof only.
+                if (
+                    not binding
+                    and not report_lookup_seen
+                    and not owner
+                    and admitted_pr
+                    and skill == "code-remediate"
+                    and not promoting
+                    and creation.get("--pr-number") == review_scope.rsplit("/", 1)[1]
+                    and _slot_common(ordinary_slot) == review_cwd + "/.git"
+                    and requested_root == review_cwd + "/.git/codex-rig/reports"
+                    and run.rsplit("/", 1)[0] == requested_root + "/code-remediate"
+                    and any(
+                        requester == checkout.requester and _slot_common(slot) == _slot_common(ordinary_slot)
+                        for requester, slot in writer_claims
+                    )
+                ):
+                    if unconfirmed_remediation and unconfirmed_remediation != run:
+                        return {}
+                    unconfirmed_remediation = run
+                if not binding or requested_root != binding[0]:
                     continue
                 base, url = binding
                 number = url.rsplit("/", 1)[1]
@@ -1410,6 +1465,11 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                 if runs.get(previous) != skill:
                     return {}
                 del runs[previous]
+                if previous == superseded_review:
+                    superseded_review = run
+            elif skill == "code-review" and superseded_review:
+                runs.pop(superseded_review, None)
+                superseded_review = ""
             if skill == "code-remediate":
                 remediation_pr = (run, number) if number and "--promote-pr-run" not in creation else None
                 remediation_source = command_checkout
@@ -1484,7 +1544,7 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
             else:
                 if "--complete-run" in completion:
                     run = _coordinate(completion["--complete-run"], command_cwd)
-                    if runs.get(run) == "code-review":
+                    if runs.get(run) == "code-review" and run != superseded_review:
                         del runs[run]
         elif helper == _coordinate("shared/remediation_finalize.py", plugin_root):
             if args[2:3] != ["finalize"] or "--promote" not in args or args.count("--run") != 1:
@@ -1504,7 +1564,7 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
     # A later helper invocation cannot transfer ownership of the original workflow.
     if not active or pending_questions:
         return {}
-    if owner == "code-remediate" and (
+    if (owner == "code-remediate" or unconfirmed_remediation) and (
         terminal_block.strip("`* ").startswith(REMEDIATION_QUESTIONS)
         or len(set(REMEDIATION_MENU_OPTION.findall(terminal_block.lower()))) >= 2
     ):
@@ -1615,6 +1675,18 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                 "and resume the workflow."
             ),
         }
+    if unconfirmed_remediation and not owner:
+        return {
+            "decision": "block",
+            "reason": (
+                f"The remediation allocation reused report storage without a current confirmation. {CONTROLLING_PAUSE} "
+                "Confirm the original checkout and PR with review_code_safety.py report-root. Verify the returned "
+                "root matches the allocated run. Restore any released claims with the original invocation ID, "
+                "writer before PR target, and recheck PR state and source before dependent work. Once verified, "
+                "continue remediation. Only with existing explicit +review authorization, finish the prepared review "
+                "and return its validated result to the waiting remediation for selection, fixes, verification and delivery."
+            ),
+        }
     if checkout_state == "acquired" and not owner:
         return {
             "decision": "block",
@@ -1669,9 +1741,15 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
         next_step = (
             "Continue the read-only review. Prepare eligible dependencies and continue independent inspection despite "
             "failed tests. Use disposable source copies for autofixing hooks. Finish reviewer reconciliation and the "
-            "configured gates, promote the result, and deliver the validated tables from --complete-run. Disclose any "
-            "missed blind checkpoint and attempt normal finalization."
+            "configured gates and promote the result. For standalone delivery emit successful --complete-run stdout "
+            "verbatim, including its validated tables. Disclose any missed blind checkpoint during finalization."
         )
+        if released_slot and released_slot == ordinary_slot and PR_URL.fullmatch(review_scope):
+            next_step = (
+                "Follow checkout scheduling for the next step. For ordinary inspection, reacquire the released PR slot "
+                "with its retained locator and original owner ID. "
+                "Apply PR State Preflight and reverify the isolated source before resuming inspection. " + next_step
+            )
     return {
         "decision": "block",
         "reason": (

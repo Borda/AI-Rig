@@ -251,6 +251,30 @@ class TestMergeBlock:
         assert "BASE_REF/HEAD_REF unresolved" in result.stdout
         assert not (clone / ".git" / "MERGE_HEAD").exists()
 
+    def test_records_the_actual_pull_interval_and_merge_parent(self, tmp_path: Path, repos: tuple[Path, Path]) -> None:
+        """The final report receives the pulled commits' boundary and the exact commit selected for merging."""
+        clone, seed = repos
+        before = _git(clone, "rev-parse", "HEAD")
+        _git(clone, "push", "-q", "origin", "feature")
+        _git(seed, "fetch", "-q", "origin", "feature")
+        _git(seed, "switch", "-qc", "feature", "FETCH_HEAD")
+        _commit(seed, "remote-feature.txt")
+        _git(seed, "push", "-q", "origin", "feature")
+        after = _git(seed, "rev-parse", "HEAD")
+        env = _fresh_shell_env(tmp_path, {"base-ref": "main", "head-ref": "feature", "fork-remote": "origin"})
+
+        result = _run_block(clone, env)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert _git(clone, "rev-parse", "HEAD") == after
+        base = _git(clone, "rev-parse", "MERGE_HEAD")
+        imports = tmp_path / "resolve-remote-imports-target-update-fresh-shell"
+        assert imports.read_text(encoding="utf-8").splitlines() == [
+            f"pull-start {before} {before}",
+            f"pull-end {before} {after}",
+            f"base {after} {base}",
+        ]
+
     def test_keeps_diverged_local_target_and_merges_remote(self, repos: tuple[Path, Path]) -> None:
         """Local target commits are never rewritten; the merge still uses the fetched remote target.
 

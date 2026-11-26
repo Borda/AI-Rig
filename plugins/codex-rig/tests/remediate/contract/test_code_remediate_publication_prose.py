@@ -57,11 +57,25 @@ def test_blocked_commands_offer_agent_execution_across_workflows() -> None:
     assert "request that approval now" in contract
 
 
+def test_publication_gate_uses_a_fixed_preflight_and_a_single_retry() -> None:
+    """Bind the first offer and the post-approval check to the shipped preflight and its bounded retry."""
+    first, second = _gate_step(1), _gate_step(2)
+    assert "publication_preflight.py --routing" in first
+    assert "gh pr view" not in first
+    retry = _sentence(first, "`retry: true`")
+    terminal = _sentence(first, "`retry: false`")
+    assert "network or rate-limit" in retry
+    assert "`--retry`" in retry
+    assert "unknown-json-field" in terminal
+    assert "terminal-escape-sequences-refused" in terminal
+    assert "publication_preflight.py" in second
+
+
 def test_push_permission_is_read_before_the_offer() -> None:
     """A fork without maintainer edits, or a user without push rights, is never asked a question that cannot push."""
     step = _gate_step(1)
-    check = _sentence(step, "`maintainerCanModify`")
-    for fragment in ("`maintainer_can_modify`", "`viewerPermission`", "audited GitHub reader", "base repository"):
+    check = _sentence(step, "`viewerPermission`")
+    for fragment in ("`maintainer_can_modify`", "`viewerPermission`", "base repository"):
         assert fragment in check
     # The rule itself: push rights on the head repository suffice; maintainer edits matter only for a fork PR.
     assert (

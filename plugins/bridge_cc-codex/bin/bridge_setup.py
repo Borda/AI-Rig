@@ -62,9 +62,7 @@ CONFIGURE_TIMEOUT_SECONDS = 300
 # fault (network drop, interrupted install) cannot lock the operation forever.
 #: Seconds a recorded failed operation blocks identical retries before one fresh approved attempt is allowed.
 FAILED_OPERATION_TTL_SECONDS = 3600
-# A setup process killed while holding the mutation lock never releases it; a
-# lock this old outlives every bounded command sequence, so it is abandoned.
-#: Seconds after which an unreleased mutation lock is treated as left behind by a crashed setup process.
+#: Seconds before an unreleased marker can be reclaimed by a process holding the OS guard.
 MUTATION_LOCK_STALE_SECONDS = 3600
 #: Largest stdout or stderr slice, in bytes, kept from a host CLI command.
 MAX_CAPTURE_BYTES = 64 * 1024
@@ -207,11 +205,12 @@ def _direction(current_host: str, target: str) -> str | None:
     return f"{current_host}_to_{target}"
 
 
-def _capture(argv: list[str]) -> tuple[bool, str, str]:
+def _capture(argv: list[str], *, cwd: Path | None = None) -> tuple[bool, str, str]:
     """Run one status probe with bounded capture and discard raw output after parsing."""
     try:
         result = subprocess.run(  # noqa: S603 - argv list, no shell
             _resolved_command(argv),
+            cwd=cwd,
             stdin=subprocess.DEVNULL,
             capture_output=True,
             encoding="utf-8",
@@ -250,9 +249,9 @@ def _version(host: str) -> tuple[bool, str | None]:
     return True, reported.group()
 
 
-def _inventory(host: str) -> tuple[bool, dict[str, object] | None]:
-    """Parse only supported plugin-list JSON into a compact plugin record."""
-    ok, stdout, _ = _capture(list(CAPABILITY_MATRIX[host]["plugin_list_argv"]))
+def _inventory(host: str, workspace: Path) -> tuple[bool, dict[str, object] | None]:
+    """Read supported plugin-list JSON from the workspace whose setup is being evaluated."""
+    ok, stdout, _ = _capture(list(CAPABILITY_MATRIX[host]["plugin_list_argv"]), cwd=workspace)
     if not ok:
         return False, None
     try:
@@ -388,7 +387,9 @@ def _planned_operations(
     return _operation(host, scope, inventory)
 
 
-def _inspect(current_host: str, target: str, scope: str) -> tuple[dict[str, object] | None, str | None]:
+def _inspect(
+    current_host: str, target: str, scope: str, workspace: Path
+) -> tuple[dict[str, object] | None, str | None]:
     """Collect bounded, non-secret state for a single possible peer target."""
     hosts = [current_host] if current_host == target else [current_host, target]
     # Presence is a prerequisite for this whole branch. Check all executables
@@ -402,7 +403,7 @@ def _inspect(current_host: str, target: str, scope: str) -> tuple[dict[str, obje
         if not available or version is None:
             return None, "unsupported-version"
         versions[host] = version
-    inventory_ok, inventory = _inventory(target)
+    inventory_ok, inventory = _inventory(target, workspace)
     authentication_ok, authenticated = _authenticated(target)
     if not inventory_ok or not authentication_ok or inventory is None:
         return None, "unsupported-capability"
@@ -463,7 +464,7 @@ def _reinspect_approved_operation(
     approved = _decode_approval(token, key)
     if approved is None or not _approval_time_is_valid(approved, int(time.time())):
         return None
-    state, error = _inspect(current_host, target, scope)
+    state, error = _inspect(current_host, target, scope, workspace)
     if state is None or error is not None:
         return None
     operations = _planned_operations(
@@ -550,8 +551,8 @@ def _denied_result(current_host: str, target: str, requested: dict[str, str], wo
     )
 
 
-def _run_configuration(operations: list[dict[str, object]]) -> bool:
-    """Execute one previously verified marketplace command with output discarded."""
+def _run_configuration(operations: list[dict[str, object]], workspace: Path) -> bool:
+    """Execute one verified marketplace command in its approved workspace and discard output."""
     if len(operations) != 1:
         return False
     argv = operations[0]["argv"]
@@ -560,6 +561,7 @@ def _run_configuration(operations: list[dict[str, object]]) -> bool:
     try:
         result = subprocess.run(  # noqa: S603 - argv list, no shell
             _resolved_command(argv),
+            cwd=workspace,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -787,80 +789,106 @@ def _consume_approval_once(journal: Path, approval_fingerprint: str) -> str:
     return "consumed"
 
 
+@dataclass(frozen=True)
+class _MutationLock:
+    """Keep the marker's owner token and the open descriptor that serializes its lifetime."""
+
+    marker: Path
+    token: bytes
+    guard: int
+
+
+def _open_mutation_guard(path: Path) -> int:
+    """Open the persistent guard and take a nonblocking platform lock."""
+    descriptor = _open_regular_record(path, os.O_CREAT | os.O_RDWR)
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            # A newly opened descriptor starts at byte zero. The locked region may extend past EOF.
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def _close_mutation_guard(descriptor: int) -> None:
+    """Release the acquired guard and always close its descriptor."""
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+    except OSError:
+        pass  # Closing the handle also releases the lock if explicit unlock failed.
+    finally:
+        os.close(descriptor)
+
+
+def _claim_mutation_marker(marker: Path, token: bytes) -> None:
+    """Replace only an old marker while the caller holds the persistent guard."""
+    try:
+        metadata = marker.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        if not stat.S_ISREG(metadata.st_mode) or time.time() - metadata.st_mtime < MUTATION_LOCK_STALE_SECONDS:
+            raise FileExistsError(marker)
+        marker.unlink()
+    descriptor = _open_regular_record(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(token)
+    except OSError:
+        marker.unlink()
+        raise
+
+
 def _acquire_mutation_lock(
     target: str, scope: str, operation_fingerprint: str, state_fingerprint: str
-) -> tuple[Path, Path] | None:
-    """Acquire one cross-process setup lock after rejecting repeated failed work."""
+) -> tuple[_MutationLock, Path] | None:
+    """Acquire and retain the OS guard across stale recovery, mutation, and marker release."""
     try:
-        lock, journal = _state_paths(target, scope)
-        if _journal_has_failed_operation(journal, target, operation_fingerprint, state_fingerprint):
-            return None
-        try:
-            descriptor = _open_regular_record(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            if not _break_stale_mutation_lock(lock):
-                return None
-            descriptor = _open_regular_record(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        marker, journal = _state_paths(target, scope)
+        # Never remove the guard file. Contenders must lock the same inode even while a marker is replaced.
+        guard = _open_mutation_guard(marker.with_suffix(".guard"))
     except (OSError, ValueError):
         return None
-    holder = {
-        "target": target,
-        "operation_fingerprint": operation_fingerprint,
-        "pid": os.getpid(),
-        "timestamp": int(time.time()),
-    }
-    with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
-        stream.write(json.dumps(holder) + "\n")
-    return lock, journal
+    acquired = False
+    try:
+        if _journal_has_failed_operation(journal, target, operation_fingerprint, state_fingerprint):
+            return None
+        token = secrets.token_hex(16).encode("ascii") + b"\n"
+        _claim_mutation_marker(marker, token)
+        acquired = True
+        return _MutationLock(marker, token, guard), journal
+    except (OSError, ValueError):
+        return None
+    finally:
+        if not acquired:
+            _close_mutation_guard(guard)
 
 
-def _break_stale_mutation_lock(lock: Path) -> bool:
-    """Remove a mutation lock abandoned by a setup process that never released it, and report whether to retry.
-
-    A setup process killed between acquiring and releasing the lock would otherwise block every later mutation of the
-    same host setting, with no cleanup command. A lock is abandoned once it is older than
-    ``MUTATION_LOCK_STALE_SECONDS``. It is renamed to a unique name before deletion and deleted only when the renamed
-    file is still the same stale inode, so a fresh lock that a concurrent process created in between is put back rather
-    than taken over. A lock that disappeared on its own was released, so acquisition is retried as well.
-    """
+def _release_mutation_lock(lock: _MutationLock) -> None:
+    """Remove only this holder's marker before releasing the OS guard."""
     try:
-        metadata = lock.lstat()
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False
-    if not stat.S_ISREG(metadata.st_mode) or time.time() - metadata.st_mtime < MUTATION_LOCK_STALE_SECONDS:
-        return False
-    abandoned = lock.with_name(f"{lock.name}.{secrets.token_hex(8)}.stale")
-    try:
-        os.rename(lock, abandoned)
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False
-    try:
-        moved = abandoned.lstat()
-        if (moved.st_dev, moved.st_ino) == (metadata.st_dev, metadata.st_ino):
-            abandoned.unlink()
-            return True
-        os.link(abandoned, lock)
-        abandoned.unlink()
-    except OSError:
+        descriptor = _open_regular_record(lock.marker, os.O_RDONLY)
+        with os.fdopen(descriptor, "rb") as stream:
+            owns_marker = stream.read(len(lock.token) + 1) == lock.token
+        if owns_marker:
+            lock.marker.unlink()
+    except (OSError, ValueError):
         pass
-    return False
-
-
-def _release_mutation_lock(lock: Path) -> None:
-    """Release only a regular lock path after the mutation terminal state is recorded."""
-    try:
-        if lock.exists() and not lock.is_symlink() and lock.is_file():
-            lock.unlink()
-    except OSError:
-        pass
+    finally:
+        _close_mutation_guard(lock.guard)
 
 
 def _record_mutation(
-    lock: Path,
     journal: Path,
     target: str,
     state_fingerprint: str,
@@ -868,7 +896,7 @@ def _record_mutation(
     result: str,
     verification_outcome: str,
 ) -> bool:
-    """Append a credential-free result record and always release the operation lock."""
+    """Append a credential-free result while the caller holds the operation lock."""
     try:
         record = {
             "timestamp": int(time.time()),
@@ -888,8 +916,6 @@ def _record_mutation(
         return True
     except (OSError, ValueError):
         return False
-    finally:
-        _release_mutation_lock(lock)
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -1035,12 +1061,12 @@ def _launch_authentication(target: str) -> _MutationOutcome:
     return _MutationOutcome(authentication_ok, "auth-flow-launched" if authentication_ok else "failed")
 
 
-def _apply_configuration(target: str, operations: list[dict[str, object]]) -> _MutationOutcome:
+def _apply_configuration(target: str, operations: list[dict[str, object]], workspace: Path) -> _MutationOutcome:
     """Run the approved marketplace operation and re-probe the inventory it was expected to change."""
-    configured = _run_configuration(operations)
+    configured = _run_configuration(operations, workspace)
     verified = False
     if configured:
-        inventory_ok, inventory = _inventory(target)
+        inventory_ok, inventory = _inventory(target, workspace)
         verified = bool(inventory_ok and inventory and inventory["installed"] and inventory["enabled"])
     return _MutationOutcome(configured, "configuration-verified" if verified else "fresh-session-required")
 
@@ -1057,7 +1083,7 @@ def _execute_approved_mutation(
     args: argparse.Namespace,
     approval_key: bytes | None,
     approval_fingerprint: str | None,
-    lock_pair: tuple[Path, Path],
+    lock_pair: tuple[_MutationLock, Path],
     operation_fingerprint: str,
     execute: Callable[[list[dict[str, object]]], _MutationOutcome],
 ) -> _Terminal | _MutationCompletion:
@@ -1066,59 +1092,60 @@ def _execute_approved_mutation(
     The caller acquires the lock and owns its failure result, because that result is not the same shape in all three
     branches. From there the order is fixed: ``_reinspect_approved_operation`` re-verifies the signature against state
     read under the lock, ``_consume_approval_once`` spends the single-use approval, the branch's own native step runs,
-    and ``_record_mutation`` journals the result and releases the lock. Both failure exits before execution release the
-    lock explicitly. The caller must only reach this function from inside the region already gated by the approval
-    digest and state-fingerprint drift check.
+    and ``_record_mutation`` journals the result before the lock is released. The caller must already have checked the
+    approval digest and state fingerprint.
     """
     lock, journal = lock_pair
-    bound = _reinspect_approved_operation(
-        args.approve,
-        approval_key or b"",
-        resolved.workspace,
-        resolved.requested,
-        resolved.current_host,
-        resolved.target,
-        str(resolved.scope),
-    )
-    if bound is None:
-        _release_mutation_lock(lock)
-        return _Terminal(
-            resolved.result(
-                status="denied",
-                classification="state-drift",
-                remaining=["fresh-inspection"],
-                manual_next_action="Inspect again and approve the current action before mutation.",
-            ),
-            2,
+    try:
+        bound = _reinspect_approved_operation(
+            args.approve,
+            approval_key or b"",
+            resolved.workspace,
+            resolved.requested,
+            resolved.current_host,
+            resolved.target,
+            str(resolved.scope),
         )
-    state, operations, payload = bound
-    consumption = _consume_approval_once(
-        journal.with_name(f"{resolved.target}-{resolved.scope}.approvals.jsonl"), approval_fingerprint or ""
-    )
-    if consumption != "consumed":
-        _release_mutation_lock(lock)
-        return _Terminal(
-            resolved.result(
-                status="denied" if consumption == "replayed" else "blocked",
-                classification=("approval-replayed" if consumption == "replayed" else "approval-consumption-failed"),
-                remaining=["fresh-approval"],
-                manual_next_action="Inspect again; approvals are single use."
-                if consumption == "replayed"
-                else "Repair the regular user state path and inspect again.",
-            ),
-            2,
+        if bound is None:
+            return _Terminal(
+                resolved.result(
+                    status="denied",
+                    classification="state-drift",
+                    remaining=["fresh-inspection"],
+                    manual_next_action="Inspect again and approve the current action before mutation.",
+                ),
+                2,
+            )
+        state, operations, payload = bound
+        consumption = _consume_approval_once(
+            journal.with_name(f"{resolved.target}-{resolved.scope}.approvals.jsonl"), approval_fingerprint or ""
         )
-    outcome = execute(operations)
-    record_ok = _record_mutation(
-        lock,
-        journal,
-        resolved.target,
-        str(payload["state_fingerprint"]),
-        operation_fingerprint,
-        "complete" if outcome.ok else "failed",
-        outcome.verification_outcome,
-    )
-    return _MutationCompletion(outcome.ok and record_ok, outcome.verification_outcome, state, operations, payload)
+        if consumption != "consumed":
+            return _Terminal(
+                resolved.result(
+                    status="denied" if consumption == "replayed" else "blocked",
+                    classification=(
+                        "approval-replayed" if consumption == "replayed" else "approval-consumption-failed"
+                    ),
+                    remaining=["fresh-approval"],
+                    manual_next_action="Inspect again; approvals are single use."
+                    if consumption == "replayed"
+                    else "Repair the regular user state path and inspect again.",
+                ),
+                2,
+            )
+        outcome = execute(operations)
+        record_ok = _record_mutation(
+            journal,
+            resolved.target,
+            str(payload["state_fingerprint"]),
+            operation_fingerprint,
+            "complete" if outcome.ok else "failed",
+            outcome.verification_outcome,
+        )
+        return _MutationCompletion(outcome.ok and record_ok, outcome.verification_outcome, state, operations, payload)
+    finally:
+        _release_mutation_lock(lock)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1340,7 +1367,7 @@ def main(argv: list[str] | None = None) -> int:
                     2,
                 )
             )
-    state, inspection_error = _inspect(args.current_host, target, scope)
+    state, inspection_error = _inspect(args.current_host, target, scope, workspace)
     if state is None:
         missing = inspection_error == "missing-prerequisite"
         return _emit(
@@ -1562,7 +1589,7 @@ def main(argv: list[str] | None = None) -> int:
             approval_fingerprint=approval_fingerprint,
             lock_pair=lock_pair,
             operation_fingerprint=operation_fingerprint,
-            execute=lambda rebound_operations: _apply_configuration(target, rebound_operations),
+            execute=lambda rebound_operations: _apply_configuration(target, rebound_operations, workspace),
         )
         if isinstance(mutation, _Terminal):
             return _emit(mutation)

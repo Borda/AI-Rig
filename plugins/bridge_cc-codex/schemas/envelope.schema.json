@@ -8,6 +8,12 @@
       },
       "type": "array"
     },
+    "confidence_gaps": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
     "details": {
       "items": {
         "type": "string"
@@ -52,6 +58,7 @@
     "files_touched",
     "remaining",
     "blockers",
+    "confidence_gaps",
     "details"
   ],
   "title": "Bridge model-authored result",

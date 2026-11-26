@@ -23,6 +23,7 @@ from _oss_shell_plugin import render_shell
 from _resolve_source import read_resolve_source
 from _text_io import bash_block_after, bash_path, dispatch_text
 from append_resolution import build_records, parse_challenge_log
+from resolve_commit_hooks import inspect_repository_hooks
 
 _RESOLVE = Path(__file__).resolve().parents[3] / "skills/resolve"
 _PLUGIN = _RESOLVE.parents[1]
@@ -2537,22 +2538,18 @@ git() { echo "$SHA"; }
     def test_an_approved_push_the_remote_refused_is_flagged_in_the_report(self) -> None:
         """A push asked, approved and then refused by the remote has its own status, never the hand-off one.
 
-        Reusing the hand-off status reported a GitHub server error as a missing upstream, and the report did not say the
-        PR lacked the commits.
+        The attempt status identifies a server refusal, while the remote observation determines delivery.
         """
         skill = _resolve_text("SKILL.md")
         push_step = _push_step(skill)
         report = _between(skill, "## Step 11", "## Step 12")
-        template = _resolve_text("templates/resolve-report.md")
-
         remote_bullet = next(line for line in push_step.splitlines() if line.startswith("- **Rejected by the remote"))
         assert "record `rejected-remote`" in remote_bullet
         assert "`$IMPL_DIR/push-error.txt`" in remote_bullet
-        assert "A push the user approved that did not land — flag it." in report
         assert "`rejected-remote` or `rejected-non-ff`" in report
         assert "push failed" in report
-        assert "| `rejected-remote` | `✗ Push approved but failed" in template
-        assert "`rejected-remote` only, and always" in template
+        assert "printed `PUSH_ERROR` verbatim" in report
+        assert "Omit it when all run commits are verified on the remote" in report
 
     @_skip_no_bash
     @pytest.mark.parametrize(
@@ -3465,6 +3462,162 @@ class TestPerItemBlocks:
         assert not (tmp_path / "impl/group-commit-now.txt").exists()
 
     @_skip_no_fence_tools
+    @pytest.mark.parametrize("shell", _SHELLS)
+    def test_group_closeout_keeps_remaining_tasks_pending_after_commit(
+        self, tmp_path: Path, collapsed_run: Path, monkeypatch: pytest.MonkeyPatch, shell: str
+    ) -> None:
+        """A post-commit index lock blocks reconciliation while close-out confirms only this group's recorded tasks."""
+        monkeypatch.chdir(collapsed_run)
+        hooks = collapsed_run / ".git/hooks"
+        _git(collapsed_run, "config", "core.hooksPath", hooks.as_posix())
+        hook = hooks / "post-commit"
+        lock = collapsed_run / ".git/index.lock"
+        _put(hook, "#!/bin/sh\n: > .git/index.lock\n")
+        hook.chmod(0o755)
+        digest = inspect_repository_hooks("git")["sha256"]
+        _write_impl_file(tmp_path, "approved-hooks.txt", f"{digest}\n")
+        _write_impl_file(tmp_path, "group-commit-now.txt", "logic 3\n")
+        _write_impl_file(tmp_path, "item-tasks.tsv", "1\tt1\n3\tt3\n4\tt4\n")
+        _write_impl_file(tmp_path, "group-replay-committed.txt", "1\n")
+        before = _git(collapsed_run, "rev-parse", "HEAD")
+        target = _git(collapsed_run, "write-tree")
+        dispatch = _dispatch_text()
+        commit_block = _bash_block_containing(dispatch, '_GROUP_NOW="$IMPL_DIR/group-commit-now.txt"')
+        closeout_block = _bash_block_containing(dispatch, "--close-out")
+
+        committed = _run_resolve_block(commit_block, tmp_path, collapsed_run, before, shell)
+        assert committed.returncode == 0, committed.stdout + committed.stderr
+        assert "group 'logic' committed, but index reconciliation failed" in committed.stdout
+        assert f"pre-hook target {target}" in committed.stdout
+        assert "no commit created" not in committed.stdout
+        assert _read_impl_file(tmp_path, "group-commit-status.txt") == "committed-blocked\n"
+        assert _read_impl_file(tmp_path, "group-replay-committed.txt") == "1\n3\n"
+        assert _git(collapsed_run, "rev-parse", "HEAD^") == before
+
+        _write_impl_file(tmp_path, "group-ids.txt", "3\n4\n")
+        closed = _run_resolve_block(closeout_block, tmp_path, collapsed_run, before, shell)
+        assert closed.stdout.splitlines() == [
+            "! BLOCKED — group commit created, pending edits not replayed; not flipping the remaining tasks",
+            "TaskUpdate target: item=3 task=t3",
+        ]
+
+        head = _git(collapsed_run, "rev-parse", "HEAD")
+        _write_impl_file(tmp_path, "group-commit-now.txt", "logic 3\n")
+        replayed = _run_resolve_block(commit_block, tmp_path, collapsed_run, before, shell)
+        assert replayed.returncode == 0, replayed.stdout + replayed.stderr
+        assert f"already committed {head[:12]}" in replayed.stdout
+        assert _read_impl_file(tmp_path, "group-commit-status.txt") == "committed-blocked\n"
+        assert _git(collapsed_run, "rev-parse", "HEAD") == head
+
+        # Resume with the worktree's remaining direct edit and the recovered index, without running logic again.
+        lock.unlink()
+        hook.unlink()
+        _write_impl_file(tmp_path, "approved-hooks.txt", "")
+        _git(collapsed_run, "add", "a.py")
+        _write_impl_file(tmp_path, "group-replay-target.txt", _git(collapsed_run, "write-tree") + "\n")
+        _write_impl_file(tmp_path, "group-commit-now.txt", "tests 4\n")
+        _write_impl_file(tmp_path, "c1-item-files.tsv", "4\ta.py\n")
+        resumed = _run_resolve_block(commit_block, tmp_path, collapsed_run, before, shell)
+
+        assert resumed.returncode == 0, resumed.stdout + resumed.stderr
+        assert _read_impl_file(tmp_path, "group-commit-status.txt") == "ok\n"
+        assert _read_impl_file(tmp_path, "group-replay-committed.txt") == "1\n3\n4\n"
+        assert _git(collapsed_run, "diff", "--cached", "--name-only") == ""
+
+    @pytest.mark.parametrize("shell", _SHELLS)
+    @pytest.mark.parametrize(
+        ("consumed", "items"),
+        [pytest.param("tests 3", "3", id="different-topic"), pytest.param("logic 4", "4", id="different-items")],
+    )
+    def test_group_closeout_refuses_a_receipt_for_another_group(
+        self, tmp_path: Path, shell: str, consumed: str, items: str
+    ) -> None:
+        """A failed fence cannot borrow the commit evidence or close the tasks of another group."""
+        _write_impl_file(tmp_path, "group-commit-now.txt.done", consumed + "\n")
+        _write_impl_file(tmp_path, "group-commit-status.txt", "failed\n")
+        _write_impl_file(tmp_path, "group-ids.txt", items + "\n")
+        _write_impl_file(tmp_path, "item-tasks.tsv", "3\tt3\n4\tt4\n")
+        _write_impl_file(
+            tmp_path, "group-replay-receipt-logic.txt", f"commit {'a' * 40} target {'b' * 40} pending\n3\n"
+        )
+        block = _bash_block_containing(_dispatch_text(), "--close-out")
+
+        result = _run_resolve_block(block, tmp_path, tmp_path, "a" * 40, shell)
+
+        assert result.returncode == 1
+        assert "group commit failed" in result.stdout
+        assert "TaskUpdate target:" not in result.stdout
+
+    @_skip_no_fence_tools
+    @pytest.mark.parametrize("new_fence", [False, True])
+    def test_group_closeout_reports_only_the_current_fence(
+        self, tmp_path: Path, collapsed_run: Path, new_fence: bool
+    ) -> None:
+        """A settled receipt reports success after a status-write failure and is ignored after a new fence blocks."""
+        _write_impl_file(tmp_path, "group-commit-now.txt", "logic 3\n")
+        _write_impl_file(tmp_path, "item-tasks.tsv", "3\tt3\n")
+        before = _git(collapsed_run, "rev-parse", "HEAD")
+        dispatch = _dispatch_text()
+        commit = _bash_block_containing(dispatch, '_GROUP_NOW="$IMPL_DIR/group-commit-now.txt"')
+        closeout = _bash_block_containing(dispatch, 'echo "TaskUpdate target: item=$item_id task=$_TID"')
+        assert _run_resolve_block(commit, tmp_path, collapsed_run, before, _BASH).returncode == 0
+        _write_impl_file(tmp_path, "group-commit-status.txt", "failed\n")
+        if new_fence:
+            blocked = _run_resolve_block(commit, tmp_path, collapsed_run, before, _BASH)
+            assert blocked.returncode == 1
+            assert "group-commit-now.txt missing" in blocked.stdout
+
+        result = _run_resolve_block(closeout, tmp_path, collapsed_run, before, _BASH)
+
+        assert result.returncode == int(new_fence)
+        assert ("TaskUpdate target: item=3 task=t3" in result.stdout) is not new_fence
+        assert ("group commit failed" in result.stdout) is new_fence
+        assert "pending edits not replayed" not in result.stdout
+
+    def test_group_resume_instructions_preserve_the_spent_group(self) -> None:
+        """The parent reconciles the target and records already landed paths before the next uncommitted group."""
+        lines = _dispatch_text().splitlines()
+        recovery = next(line for line in lines if line.startswith("Before the next group, the parent"))
+
+        assert "`git write-tree`" in recovery
+        assert "`$IMPL_DIR/group-replay-target.txt`" in recovery
+        assert "`$IMPL_DIR/group-replay-absorbed.jsonl`" in recovery
+        assert "If every path is already in HEAD" in recovery
+        assert "skip the item, append its ID to `$IMPL_DIR/group-replay-committed.txt`" in recovery
+        assert "Never rerun the group whose commit was created." in recovery
+
+    @_skip_no_fence_tools
+    @_skip_no_fence_tools
+    def test_grouped_straggler_and_review_ledger_use_landed_receipts(self, tmp_path: Path, collapsed_run: Path) -> None:
+        """A real grouped commit closes its item in both readers and a staged direct edit stays pending."""
+        _write_impl_file(tmp_path, "group-commit-now.txt", "logic 3\n")
+        _write_impl_file(tmp_path, "selected-items.txt", "3 4\n")
+        _write_impl_file(
+            tmp_path, "action-items.jsonl", '{"id":3,"finding_id":"landed"}\n{"id":4,"finding_id":"staged"}\n'
+        )
+        _write_impl_file(tmp_path, "item-tasks.tsv", "3\tt3\n4\tt4\n")
+        report = tmp_path / "report.md"
+        _put(report, "# Review\n")
+        _seed(tmp_path, {"commit-mode": "grouped", "report-file": bash_path(report)})
+        before = _git(collapsed_run, "rev-parse", "HEAD")
+        commit = _bash_block_containing(_dispatch_text(), '_GROUP_NOW="$IMPL_DIR/group-commit-now.txt"')
+        committed = _run_resolve_block(commit, tmp_path, collapsed_run, before)
+        assert committed.returncode == 0, committed.stdout + committed.stderr
+        assert _read_impl_file(tmp_path, "group-commit-status.txt") == "ok\n"
+
+        gate = _bash_block_containing(_resolve_text("SKILL.md"), 'done < "$IMPL_DIR/straggler-check-ids.txt"')
+        checked = _run_resolve_block(gate, tmp_path, collapsed_run, before)
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+        assert "MATCH — item 3 confirmed by group replay" in checked.stdout
+        assert "NO MATCH — item 4 has no landed group receipt" in checked.stdout
+
+        ledger = _bash_block_containing(_resolve_text("modes/final-report.md"), 'bin/append_resolution.py"')
+        recorded = _run_resolve_block(ledger, tmp_path, collapsed_run, before)
+        assert recorded.returncode == 0, recorded.stdout + recorded.stderr
+        lines = (tmp_path / "resolution.jsonl").read_text(encoding="utf-8").splitlines()
+        outcomes = [(row["item_id"], row["verdict"], row["sha"]) for row in map(json.loads, lines)]
+        assert outcomes == [(3, "fixed", _git(collapsed_run, "rev-parse", "HEAD")[:12]), (4, "pending", "")]
+
     @pytest.mark.parametrize("shell", _SHELLS)
     def test_straggler_confirmation_checks_every_gate_id_in_one_run(
         self, tmp_path: Path, lineage: Lineage, shell: str

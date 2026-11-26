@@ -26,10 +26,10 @@ on the writer's enum values and list normalization rather than reparsing workflo
 
 ## Outputs
 
-It writes deterministic schema-v2 JSON, or schema v3 for every Code Review disposition. The payload has enum-validated
-status, check lists, findings, and metadata supplied by the workflow. It includes ``status``, ``checks_run``,
-``checks_failed``, finding counts, final confidence, recommendations/follow-up lists, ``artifact_path``, and digest-
-bound final-handoff metadata.
+It writes deterministic schema-v2 JSON, or schema v3 for every Code Review disposition; Code Review results also carry a
+derived ``metadata.status_axes`` block (``review_status_axes.py``). The payload has enum-validated status, check lists,
+findings, and metadata supplied by the workflow. It includes ``status``, ``checks_run``, ``checks_failed``, finding
+counts, final confidence, recommendations/follow-up lists, ``artifact_path``, and digest-bound final-handoff metadata.
 
 ## Failure
 
@@ -182,9 +182,19 @@ def validate_confidence_gap_closures(metadata: dict[str, Any], confidence_gaps: 
 
 
 def validate_confidence_recovery(
-    metadata: dict[str, Any], confidence: float, status: ResultStatus, checks_failed: list[str]
+    metadata: dict[str, Any],
+    confidence: float,
+    status: ResultStatus,
+    checks_failed: list[str],
+    *,
+    confidence_gates_status: bool = True,
 ) -> None:
-    """Validate the shared confidence-band recovery contract."""
+    """Validate the shared confidence-band recovery contract.
+
+    With ``confidence_gates_status`` false (current Code Review results, whose status axes name every failure cause),
+    the band label and its remaining limits are still required, but a low score never forces a failed status or a
+    confidence check identifier by itself.
+    """
     recovery = metadata.get("confidence_recovery")
     if not isinstance(recovery, dict):
         raise SystemExit("missing-confidence-recovery")
@@ -211,9 +221,9 @@ def validate_confidence_recovery(
         raise SystemExit("confidence-recovery-actions-required")
 
     if confidence <= 0.8:
-        if status == ResultStatus.PASS:
+        if confidence_gates_status and status == ResultStatus.PASS:
             raise SystemExit("pass-confidence-not-acceptable")
-        if "confidence-not-acceptable" not in checks_failed:
+        if confidence_gates_status and "confidence-not-acceptable" not in checks_failed:
             raise SystemExit("missing-confidence-not-acceptable-check")
         if recovery_status != RecoveryStatus.NOT_ACCEPTABLE_FAILED:
             raise SystemExit("confidence-status-should-fail")
@@ -222,9 +232,9 @@ def validate_confidence_recovery(
         return
 
     if confidence < 0.85:
-        if status == ResultStatus.PASS:
+        if confidence_gates_status and status == ResultStatus.PASS:
             raise SystemExit("pass-confidence-very-questionable")
-        if "confidence-very-questionable" not in checks_failed:
+        if confidence_gates_status and "confidence-very-questionable" not in checks_failed:
             raise SystemExit("missing-confidence-very-questionable-check")
         if recovery_status != RecoveryStatus.VERY_QUESTIONABLE:
             raise SystemExit("confidence-status-should-be-very-questionable")
@@ -244,7 +254,12 @@ def validate_confidence_recovery(
 
 
 def validate_confidence_metadata(
-    metadata: dict[str, Any], confidence: float, status: ResultStatus, checks_failed: list[str]
+    metadata: dict[str, Any],
+    confidence: float,
+    status: ResultStatus,
+    checks_failed: list[str],
+    *,
+    confidence_gates_status: bool = True,
 ) -> None:
     """Validate all confidence metadata required by the shared result contract."""
     if not metadata:
@@ -253,7 +268,9 @@ def validate_confidence_metadata(
     if confidence < 1.0 and not any(item.strip() for item in confidence_gaps):
         raise SystemExit("confidence-gaps-required")
     validate_confidence_gap_closures(metadata, confidence_gaps)
-    validate_confidence_recovery(metadata, confidence, status, checks_failed)
+    validate_confidence_recovery(
+        metadata, confidence, status, checks_failed, confidence_gates_status=confidence_gates_status
+    )
 
 
 def validate_final_handoff_metadata(metadata: dict[str, Any]) -> None:
@@ -289,8 +306,8 @@ def split_csv(raw: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
-def validate_gate_evidence(args: argparse.Namespace, checks_run: list[str], checks_failed: list[str]) -> None:
-    """Reconcile result inputs with mandatory five-gate evidence."""
+def validate_gate_evidence(args: argparse.Namespace, checks_run: list[str], checks_failed: list[str]) -> str:
+    """Reconcile result inputs with mandatory five-gate evidence and return the gate evidence status."""
     try:
         gates = json.loads(args.gates.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
@@ -311,8 +328,11 @@ def validate_gate_evidence(args: argparse.Namespace, checks_run: list[str], chec
         raise SystemExit("pass-with-failed-gates")
     if gate_status == ResultStatus.TIMEOUT and args.status != ResultStatus.TIMEOUT:
         raise SystemExit("result-status-timeout-mismatch")
+    if gates.get("checks_refused") and "source-refused" not in checks_failed:
+        raise SystemExit("result-refused-gates-unnamed")
     if args.status == ResultStatus.PASS:
         validate_pass(gates, args.gates.parent)
+    return str(gate_status)
 
 
 def validate_result_invariants(args: argparse.Namespace, checks_run: list[str], checks_failed: list[str]) -> None:
@@ -358,13 +378,19 @@ def build_payload(args: argparse.Namespace, *, measured_code_safety: dict[str, A
     checks_failed = split_csv(args.checks_failed)
     validate_result_invariants(args, checks_run, checks_failed)
     validate_artifact_path(args.out, args.artifact_path)
-    validate_gate_evidence(args, checks_run, checks_failed)
+    gate_status = validate_gate_evidence(args, checks_run, checks_failed)
     metadata = parse_metadata(args.metadata)
     status = ResultStatus(args.status)
-    validate_confidence_metadata(metadata, args.confidence, status, checks_failed)
+    review_status = metadata.get("review_status")
+    current_review = ("review_decision" in metadata and review_status is None) or review_status in {
+        "unavailable",
+        "closed",
+    }
+    validate_confidence_metadata(
+        metadata, args.confidence, status, checks_failed, confidence_gates_status=not current_review
+    )
     validate_final_handoff_metadata(metadata)
 
-    review_status = metadata.get("review_status")
     close_decision = metadata.get("close_decision")
     if review_status == "closed":
         if not isinstance(close_decision, dict):
@@ -376,10 +402,12 @@ def build_payload(args: argparse.Namespace, *, measured_code_safety: dict[str, A
         if not isinstance(handoff, dict):
             raise SystemExit("closed-review-final-handoff-mismatch")
         validate_closed_review_handoff(closed_review_handoff(args.out.parent, close_decision), handoff)
-    current_review = ("review_decision" in metadata and review_status is None) or review_status in {
-        "unavailable",
-        "closed",
-    }
+    if current_review:
+        # Imported only for Code Review, so a damaged axis table cannot break other skills' results.
+        from review_status_axes import build_status_axes
+
+        # Derived, never authored: the writer records the three axes from the gate evidence and the metadata.
+        metadata["status_axes"] = build_status_axes(gate_status, metadata)
     if current_review and (metadata.get("scope") != "pr" or review_status in {"unavailable", "closed"}):
         metadata.pop("code_safety", None)
     elif current_review:
@@ -411,6 +439,10 @@ def build_payload(args: argparse.Namespace, *, measured_code_safety: dict[str, A
     if metadata.get("review_status") not in {"unavailable", "closed"}:
         payload["recommendations"] = parse_items(args.recommendations)
         payload["follow_up"] = parse_items(args.follow_up)
+    if current_review:
+        from review_status_axes import check_result_status_axes
+
+        check_result_status_axes(payload, gate_status)
     return payload
 
 

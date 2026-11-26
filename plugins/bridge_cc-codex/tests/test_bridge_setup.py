@@ -18,7 +18,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from _bridge_link_probes import file_symlinks_supported
@@ -60,7 +60,7 @@ def _install_native_boundary(
     setup: Any,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    claude_installed: bool = False,
+    claude_installed: bool | Literal["disabled"] = False,
     claude_authenticated: bool = False,
     malformed_claude_inventory: bool = False,
     configuration_returncode: int = 0,
@@ -88,7 +88,9 @@ def _install_native_boundary(
                 return _completed(command, "not-json\n")
             installed = []
             if state["claude_installed"]:
-                installed.append({"id": "bridge@borda-ai-rig", "version": "0.3.1", "enabled": True})
+                installed.append(
+                    {"id": "bridge@borda-ai-rig", "version": "0.3.1", "enabled": state["claude_installed"] is True}
+                )
             return _completed(command, json.dumps(installed) + "\n")
         if command == ["codex", "login", "status"]:
             return _completed(command, "Logged in\n")
@@ -102,7 +104,7 @@ def _install_native_boundary(
             return _completed(command, "supported native operation\n")
         if command in (LOGIN_ARGV, ["codex", "login"]):
             return _completed(command, returncode=authentication_returncode)
-        if command == INSTALL_ARGV:
+        if command[:2] == ["claude", "plugin"] and command[2] in {"install", "enable"}:
             if configuration_returncode == 0 and inventory_after_configuration:
                 state["claude_installed"] = True
             return _completed(command, returncode=configuration_returncode)
@@ -201,7 +203,7 @@ def _with_excessive_lifetime(payload: dict[str, object]) -> None:
 
 
 def _gate_lock_creation(setup: Any, monkeypatch: pytest.MonkeyPatch, lock_path: Path) -> None:
-    """Make the first two exclusive opens of ``lock_path`` wait for each other so both callers race for the lock."""
+    """Synchronize both callers before they open the persistent lock guard."""
     real_open = setup.os.open
     lock_barrier = threading.Barrier(2)
     open_count_lock = threading.Lock()
@@ -211,7 +213,7 @@ def _gate_lock_creation(setup: Any, monkeypatch: pytest.MonkeyPatch, lock_path: 
         """Synchronize competing lock opens to exercise exclusive creation."""
         nonlocal lock_open_count
         should_wait = False
-        if Path(path) == lock_path and flags & setup.os.O_EXCL:
+        if Path(path) == lock_path.with_suffix(".guard"):
             with open_count_lock:
                 if lock_open_count < 2:
                     lock_open_count += 1
@@ -1073,7 +1075,7 @@ class TestApprovals:
     ) -> None:
         """Two callers that both read an unused approval cannot each execute the same configuration.
 
-        A barrier holds both threads at the exclusive lock creation so they truly race; exactly one may install and the
+        A barrier holds both threads before opening the guard file so they truly race; exactly one may install and the
         other must be turned away with a non-zero exit.
         """
         calls = native()
@@ -1092,6 +1094,41 @@ class TestApprovals:
 
 class TestExecution:
     """Approved plans run only their planned native command and report outcomes without overclaiming."""
+
+    @pytest.mark.parametrize("scope", ["project", "local"])
+    @pytest.mark.parametrize(
+        ("installed", "verb"),
+        [pytest.param(False, "install", id="install"), pytest.param("disabled", "enable", id="enable")],
+    )
+    def test_scoped_configuration_pins_every_cli_call_to_approved_workspace(
+        self,
+        invoke: Callable[..., dict[str, object]],
+        approve: Callable[..., dict[str, object]],
+        native: Callable[..., Calls],
+        tmp_path: Path,
+        scope: str,
+        installed: bool | Literal["disabled"],
+        verb: str,
+    ) -> None:
+        """Inspect, rebind, mutate, and verify the approved project rather than the caller's directory."""
+        workspace = (tmp_path / "approved project").resolve()
+        workspace.mkdir()
+        calls = native(claude_installed=installed, inventory_after_configuration=True)
+        args = ("--scope", scope)
+
+        plan = invoke(*args, workspace=workspace)
+        result = approve(plan["approval_digest"], *args, workspace=workspace)
+
+        assert result["classification"] == "configuration-verified"
+        inventory = ["claude", "plugin", "list", "--json"]
+        mutation = ["claude", "plugin", verb, "bridge@borda-ai-rig", "--scope", scope]
+        assert [(argv, kwargs.get("cwd")) for argv, kwargs in calls if argv[:2] == ["claude", "plugin"]] == [
+            (inventory, workspace),
+            (inventory, workspace),
+            (inventory, workspace),
+            (mutation, workspace),
+            (inventory, workspace),
+        ]
 
     def test_approved_configuration_runs_only_the_planned_argv_and_never_authenticates(
         self,
@@ -1591,3 +1628,48 @@ class TestStateAndLocks:
         assert result["state_changed"] is False
         assert outside.read_text(encoding="utf-8") == "outside\n"
         assert _installs(calls) == []
+
+    @pytest.mark.integration
+    def test_live_lock_is_exclusive_even_after_its_marker_ages(self, setup: Any, user_root: Path) -> None:
+        """A second process must wait for the live owner even when its marker has aged."""
+        owner = setup._acquire_mutation_lock("claude", "user", "operation", "state")
+        assert owner is not None
+        lock = _lock_path(user_root)
+        abandoned_at = time.time() - setup.MUTATION_LOCK_STALE_SECONDS - 60
+        os.utime(lock, (abandoned_at, abandoned_at))
+        original = lock.read_bytes()
+        child = (
+            "import sys\n"
+            "from pathlib import Path\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "import bridge_setup as setup\n"
+            "setup._user_state_root = lambda: Path(sys.argv[2])\n"
+            "claim = setup._acquire_mutation_lock('claude', 'user', 'other-operation', 'state')\n"
+            "if claim is not None:\n"
+            "    setup._release_mutation_lock(claim[0])\n"
+            "print('acquired' if claim is not None else 'blocked')\n"
+        )
+        command = [sys.executable, "-c", child, str(BIN_ROOT), str(user_root)]
+
+        try:
+            contender = subprocess.run(command, timeout=10, capture_output=True, text=True, check=True)
+            assert contender.stdout.strip() == "blocked"
+            assert lock.read_bytes() == original
+        finally:
+            setup._release_mutation_lock(owner[0])
+        next_owner = subprocess.run(command, timeout=10, capture_output=True, text=True, check=True)
+        assert next_owner.stdout.strip() == "acquired"
+        assert not lock.exists()
+
+    def test_release_preserves_a_replacement_lock_marker(self, setup: Any, user_root: Path) -> None:
+        """Releasing a holder must preserve a marker carrying another owner's token."""
+        owner = setup._acquire_mutation_lock("claude", "user", "operation", "state")
+        assert owner is not None
+        lock = _lock_path(user_root)
+        replacement = lock.with_suffix(".replacement")
+        replacement.write_bytes(b"other-owner\n")
+        replacement.replace(lock)
+
+        setup._release_mutation_lock(owner[0])
+
+        assert lock.read_bytes() == b"other-owner\n"

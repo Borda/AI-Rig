@@ -15,6 +15,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { resolveGitCommonDir } from "./paths.ts"
 import { readJsonIfExists, writeJsonAtomic } from "./util/fsx.ts"
 
+export { effectiveCommand, type EffectiveCommand } from "./blueprint.ts"
+
 export interface TrustRecord {
   readonly schema: 1
   readonly commit: string
@@ -176,24 +178,6 @@ export function trustFor(artifactRoot: string, directory: string, now: number = 
   const record = live.find((entry) => entry.commit === head)
   if (!record) return { status: "mismatched-commit", reason: `worktree HEAD ${head} has no trust record` }
   return { status: "trusted", record }
-}
-
-/** Parse one leading `cd <dir> &&|;` and return the effective directory. */
-export interface EffectiveCommand {
-  readonly directory: string
-  readonly command: string
-  readonly prefixed: boolean
-}
-
-export function effectiveCommand(command: string, projectRoot: string): EffectiveCommand | undefined {
-  const text = command.trim()
-  const match = /^cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|<>]+))\s*(?:&&|;)\s*([\s\S]+)$/.exec(text)
-  // A malformed cd prefix is not a plain command in the project root.
-  if (!match) return /^cd(?:\s|$)/.test(text) ? undefined : { directory: projectRoot, command: text, prefixed: false }
-  const target = match[1] ?? match[2] ?? match[3]
-  const rest = match[4]?.trim() ?? ""
-  if (!target || !rest || !isAbsolute(target)) return undefined
-  return { directory: resolve(target), command: rest, prefixed: true }
 }
 
 /** True when the worktree HEAD is an ancestor of the user's own HEAD. */

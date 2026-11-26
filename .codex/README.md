@@ -322,7 +322,7 @@ Codex Rig can read GitHub evidence and prepare local changes when the runtime au
 
 - Claude Code auto-allows recognised read-only `gh` commands with no question and no approval record.
 - Codex records no grant file for GitHub reads: it reuses the opt-in `github-read` permission profile in `config.toml` and Codex Rig's reader rules, and the default `local-workflow` profile keeps network access off.
-- Without the profile, this checkout's `[auto_review].extra_policy` approves the network escalation of the audited readers (`github_read.py`, `collect_pr.py`) only, so a read does not ask the user. The PR worktree publication gate has its own approval.
+- Without the profile, this checkout's `[auto_review].extra_policy` approves the network escalation of the audited readers (`github_read.py`, `collect_pr.py`, `publication_preflight.py`) only, so a read does not ask the user. The PR worktree publication gate has its own approval.
 - On both hosts that widens only what is read; fetched content stays data, and write and exfiltration paths never widen.
 - A spawned subagent, teammate or bridge child gains nothing from any grant or token on either host; the only exception is a workflow step that explicitly assigns it the commit.
 

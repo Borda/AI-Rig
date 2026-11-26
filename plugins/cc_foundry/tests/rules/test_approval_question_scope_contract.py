@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 
 import pytest
-from _markdown_text import missing
+from _markdown_text import found, missing
 
 _PLUGINS = Path(__file__).resolve().parents[3]
 _RULES = _PLUGINS / "cc_foundry" / "rules"
@@ -56,7 +56,7 @@ _QUESTION_CASES = [
         ],
         [
             "`Approve` = one push of this branch at this HEAD to this remote; token valid 15 minutes",
-            "`Hold` = skip this push.",
+            "`Hold` = skip this push",
         ],
         id="push",
     ),
@@ -71,7 +71,8 @@ _QUESTION_CASES = [
         ],
         [
             "`Approve` = run exactly this command once; token valid 15 minutes; read files re-hashed",
-            "`Hold` = skip this write.",
+            "up to eight pending approvals per scope",
+            "`Hold` = skip this write and cancel only a pending approval for this same question in this session.",
         ],
         id="github-write",
     ),
@@ -123,6 +124,48 @@ def test_github_write_question_has_one_command_span(variant: str) -> None:
     assert re.findall(r"`([^`]+)`", "\n".join(lines)) == ["gh {exact arguments}"]
     assert "no invisible or control characters" in text
     assert "with no second command span" in instructions
+
+
+@_VARIANTS
+def test_gh_write_batches_fit_the_host_and_drain_before_next_call(variant: str) -> None:
+    """Every batch stacks at most four questions and releases its tokens before asking the next batch."""
+    text = " ".join((_RULES / variant / "public-github.md").read_text(encoding="utf-8").split())
+    fragments = [
+        "at most four per call",
+        "Spend or revoke the approved tokens from that call before asking the next batch",
+    ]
+    assert missing(text, fragments) == []
+    assert found(text, ["back to back", "asked one at a time: ask, run it on `Approve`"]) == []
+
+
+def test_github_rule_previews_every_file_backed_body() -> None:
+    """The stub asks the user to review the body supplied by every supported file-backed form."""
+    line = next(
+        line
+        for line in (_RULES / "public-github.md").read_text(encoding="utf-8").splitlines()
+        if line.startswith("**gh-write approval**")
+    )
+    assert (
+        missing(line, ["every file-backed request body's full text", "`--body-file`", "`--input`", "`-F key=@file`"])
+        == []
+    )
+
+
+def test_push_rule_describes_record_paths_and_token_bounds() -> None:
+    """The push rule includes the run record, derived file classes and the scope of its decision options."""
+    rule = _RULES / "_full" / "git-commit.md"
+    line = next(
+        line for line in rule.read_text(encoding="utf-8").splitlines() if line.startswith("- **Self-grant block")
+    )
+    assert missing(line, ["`claude-push-run-approval.json`", "`<record>.slot-<hash>`", "`<record>.spent-lock`"]) == []
+    _, instructions, _ = _question("_full/", "git-commit.md", "git-push")
+    assert (
+        missing(
+            instructions,
+            ["up to eight pending approvals per scope", "cancel only a pending approval for this same question"],
+        )
+        == []
+    )
 
 
 @_VARIANTS

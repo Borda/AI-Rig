@@ -102,6 +102,11 @@ Applies when the project supports more than one OS — declared by a CI OS matri
 - Sanitized subprocess `env=` keeps `SystemRoot`, `SYSTEMROOT`, `COMSPEC`, `PATHEXT`, `TEMP`, and `TMP` on win32, or the child Python aborts before running with `_Py_HashRandomization_Init: failed to get random numbers`. Temp dirs via `os.environ.get("TMPDIR") or tempfile.gettempdir()`, never a hardcoded `/tmp`; a path shared with shell `${TMPDIR:-/tmp}` falls back to `/tmp` on POSIX.
 - A CI `run:` step invoking a `.sh` file needs an explicit `shell: bash` — the Windows default shell dot-sources it and exits zero, running nothing (false green).
 - Symlinks, file modes, and uid checks are capabilities: degrade in production code first.
+- **Subprocess output is bytes until decoded where the failure is handled.** With `text=True` or `encoding=`, native Windows reads the pipes in threads, where a decode error is printed and the captured output comes back empty, so a handler never sees it and an undecodable answer reads as success. Capture bytes and `.decode("utf-8")` inside the `try`.
+- A CLI that prints non-ASCII (arrows, bullets, quotes) calls `sys.stdout.reconfigure(encoding="utf-8", newline="\n")` first: a Windows console defaults to cp1252 and raises `UnicodeEncodeError`.
+- Files a shell block reads back (sentinels, state, watch rows) are written with `newline="\n"`: CRLF leaves a trailing `\r` in the shell variable. A path Git Bash prints is `/c/Users/...` syntax and needs `cygpath -w` before native Python opens it.
+- Per-OS configuration locations differ, not just separators: uv and pip machine config sits under `XDG_CONFIG_DIRS` on POSIX and `ProgramData` on Windows. Resolve each OS's own location; never assume the POSIX one.
+- A timeout on a local helper or `git` call catches a hang, so give it 30 s or more: process start costs about twenty times more on Windows, and a 3 s bound failed mid-plan there. A process-tree kill can race its own target: `taskkill /T /F` exits 255 when a member already ended, so verify with a second pass instead of failing the cleanup.
 - Green macOS is absence of regression, not Windows support. Prove Windows semantics with `PureWindowsPath` or `ntpath`; monkeypatching `os.name` does not change `pathlib`.
 
 ## Complexity Thresholds

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import cost_analyzer as ca
 import pytest
@@ -534,6 +536,14 @@ def projects_root(tmp_path: Path) -> Path:
     return tmp_path / "projects"
 
 
+@pytest.fixture
+def window_end(monkeypatch: pytest.MonkeyPatch) -> float:
+    """Freeze the CLI's measurement end after the in-window fixture calls."""
+    end = ca.parse_ts("2025-01-01T00:01:00Z")
+    monkeypatch.setattr(ca, "time", SimpleNamespace(time=lambda: end))
+    return end
+
+
 class TestWindowClipping:
     """A session older than the window prices only its in-window calls."""
 
@@ -544,10 +554,10 @@ class TestWindowClipping:
             project / "sid1.jsonl",
             [
                 _usage_row("old", ts="2020-01-01T00:00:00Z", output_tokens=1_000_000),
-                _usage_row("new", ts="2030-01-01T00:00:00Z", output_tokens=1_000_000),
+                _usage_row("new", ts="2025-01-01T00:00:00Z", output_tokens=1_000_000),
             ],
         )
-        for key, ts in (("old", "2020-01-01T00:00:00Z"), ("new", "2030-01-01T00:00:00Z")):
+        for key, ts in (("old", "2020-01-01T00:00:00Z"), ("new", "2025-01-01T00:00:00Z")):
             _write_jsonl(
                 project / "sid1" / "subagents" / f"agent-{key}.jsonl",
                 [_usage_row(f"sub-{key}", ts=ts, sidechain=True, output_tokens=1_000_000)],
@@ -574,14 +584,47 @@ class TestWindowClipping:
         path = _write_jsonl(tmp_path / "s.jsonl", [row])
         assert [c.message_id for c in ca.load_session(path, 1e12).calls] == ["m1"]
 
-    def test_window_report_prices_only_in_window_spend(self, tmp_path: Path, projects_root: Path):
-        """Window mode reports the in-window total, not the whole session's."""
-        self._tree(tmp_path)
+    def test_window_report_prices_only_in_window_spend(self, tmp_path: Path, projects_root: Path, window_end: float):
+        """The reported bounds cover only the usage counted for dollars and tokens."""
+        main = self._tree(tmp_path)
+        _write_jsonl(
+            main.parent / "sid1" / "subagents" / "agent-later.jsonl",
+            [_usage_row("sub-later", ts="2025-01-01T00:01:00Z", sidechain=True, output_tokens=1_000_000)],
+        )
         out = tmp_path / "cost.md"
-        # 2020 calls fall outside any relative window; the 2030 pair must be priced alone.
         rc = ca.main(["--projects-root", str(projects_root), "--since", "1h", "--output", str(out)])
         assert rc == 0
-        assert "**Window total: $50.00**" in out.read_text(encoding="utf-8")
+        lines = out.read_text(encoding="utf-8").splitlines()
+        assert f"Cost window (UTC epoch seconds): {window_end - 3600} to {window_end}" in lines
+        assert "**Window total: $50.00** across all 1 session(s) above." in lines
+        assert "**Total tokens: 2,000,000**" in lines
+
+    def test_window_report_keeps_an_active_subagent_of_an_old_parent(
+        self, tmp_path: Path, projects_root: Path, window_end: float
+    ) -> None:
+        """A recent subagent keeps the session in the window even when its parent and other agents are old."""
+        main = _write_jsonl(
+            projects_root / "-slug-a" / "sid1.jsonl",
+            [_usage_row("old-main", ts="2020-01-01T00:00:00Z", output_tokens=100)],
+        )
+        subagents = main.parent / main.stem / "subagents"
+        old = _write_jsonl(
+            subagents / "agent-a-old.jsonl",
+            [_usage_row("old-side", ts="2020-01-01T00:00:00Z", sidechain=True, output_tokens=200)],
+        )
+        recent = _write_jsonl(
+            subagents / "agent-z-recent.jsonl",
+            [_usage_row("recent-side", ts="2025-01-01T00:00:00Z", sidechain=True, output_tokens=1_000_000)],
+        )
+        os.utime(main, (window_end - 7200, window_end - 7200))
+        os.utime(old, (window_end - 7200, window_end - 7200))
+        os.utime(recent, (window_end - 60, window_end - 60))
+
+        out = tmp_path / "cost.md"
+        assert ca.main(["--projects-root", str(projects_root), "--since", "1h", "--output", str(out)]) == 0
+        lines = out.read_text(encoding="utf-8").splitlines()
+        assert "**Window total: $25.00** across all 1 session(s) above." in lines
+        assert "**Total tokens: 1,000,000**" in lines
 
 
 class TestCostByClass:
@@ -637,12 +680,106 @@ class TestSubagentWriteSplit:
         assert ca.render_subagent_writes([ca.AgentSpend("t", "d", 1, 1.0)]) == []
 
 
+class TestRebuildCause:
+    """Main-loop cache rebuilds named by cause, in precedence order."""
+
+    @staticmethod
+    def _call(message_id: str, ts: float, *, read: int = 0, write: int = 0, model: str = "claude-opus-5") -> ca.Call:
+        """Build a main-loop call with the given cache counters."""
+        usage = {"cache_read_input_tokens": read, "cache_creation_input_tokens": write}
+        return ca.Call(message_id, model, usage, ts=ts)
+
+    @pytest.mark.parametrize(
+        ("prev", "call", "expected"),
+        [
+            pytest.param((0, 300_000, 0, "o"), (60, 0, 100_000, "o"), "compaction", id="prompt-fell-below-70pct"),
+            pytest.param((0, 100_000, 0, "o"), (60, 0, 100_000, "s"), "model switch", id="other-model"),
+            pytest.param((0, 100_000, 0, "o"), (7_200, 0, 100_000, "o"), "idle over 1h", id="gap-past-ttl"),
+            pytest.param((0, 100_000, 0, "o"), (600, 0, 100_000, "o"), "other", id="rebuild-without-cause"),
+            pytest.param((0, 100_000, 0, "o"), (7_200, 90_000, 10_000, "o"), None, id="mostly-read-is-warm"),
+            pytest.param((0, 10_000, 0, "o"), (7_200, 0, 10_000, "o"), None, id="small-prompt-ignored"),
+        ],
+    )
+    def test_cause_precedence(self, prev: tuple, call: tuple, expected: str | None):
+        """Compaction beats model switch beats idle gap; warm or small prompts are not rebuilds."""
+        names = {"o": "claude-opus-5", "s": "claude-sonnet-5"}
+        before = self._call("a", prev[0], read=prev[1], write=prev[2], model=names[prev[3]])
+        after = self._call("b", call[0], read=call[1], write=call[2], model=names[call[3]])
+        assert ca.rebuild_cause(before, after) == expected
+
+    def test_first_in_window_call_uses_the_pre_window_lead(self, tmp_path: Path):
+        """A rebuild right after a long idle gap that straddles the cutoff is still attributed to the gap."""
+        main = _write_jsonl(
+            tmp_path / "s.jsonl",
+            [
+                _usage_row("old", ts="2020-01-01T00:00:00Z", cache_read_input_tokens=100_000),
+                _usage_row("new", ts="2030-01-01T00:00:00Z", cache_creation_input_tokens=100_000),
+            ],
+        )
+        session = ca.load_session(main, ca.parse_ts("2025-01-01T00:00:00Z"))
+        assert session.lead is not None
+        rows, spend = ca.rebuild_breakdown([session])
+        assert rows["idle over 1h"].rebuilds == 1
+        assert rows["idle over 1h"].write_usd > 0
+        assert spend >= rows["idle over 1h"].write_usd
+
+    def test_without_a_predecessor_nothing_is_attributed(self, tmp_path: Path):
+        """A session's very first call has no predecessor, so it is not called a rebuild."""
+        main = _write_jsonl(tmp_path / "s.jsonl", [_usage_row("m1", cache_creation_input_tokens=100_000)])
+        rows, _ = ca.rebuild_breakdown([ca.load_session(main)])
+        assert sum(row.rebuilds for row in rows.values()) == 0
+        assert ca.render_rebuild_causes([ca.load_session(main)]) == []
+
+    @pytest.mark.parametrize(
+        ("cutoff", "model", "output"),
+        [
+            pytest.param(0.0, "<synthetic>", 0, id="synthetic-inside-window"),
+            pytest.param(3_000.0, "<synthetic>", 0, id="synthetic-before-window"),
+            pytest.param(0.0, "claude-sonnet-5", 100, id="output-only-inside-window"),
+            pytest.param(3_000.0, "claude-sonnet-5", 100, id="output-only-before-window"),
+        ],
+    )
+    def test_cache_rebuild_skips_requests_without_prompt(self, tmp_path: Path, cutoff: float, model: str, output: int):
+        """Rows without prompt tokens cannot replace the preceding cache-bearing request."""
+        main = _write_jsonl(
+            tmp_path / "s.jsonl",
+            [
+                _usage_row("warm", ts="1970-01-01T00:00:01Z", cache_read_input_tokens=100_000),
+                _usage_row("unrelated", ts="1970-01-01T00:45:00Z", model=model, output_tokens=output),
+                _usage_row("rebuild", ts="1970-01-01T01:00:02Z", cache_creation_input_tokens=100_000),
+            ],
+        )
+        rows, _ = ca.rebuild_breakdown([ca.load_session(main, cutoff)])
+        assert rows["idle over 1h"].rebuilds == 1
+        assert rows["model switch"].rebuilds == 0
+
+    def test_window_report_lists_the_causes(self, tmp_path: Path, projects_root: Path, window_end: float):
+        """The window report carries the rebuild-cause table when a rebuild occurred."""
+        _write_jsonl(
+            projects_root / "-slug-a" / "sid1.jsonl",
+            [
+                _usage_row("old", ts="2024-12-31T00:00:00Z", cache_read_input_tokens=100_000),
+                _usage_row("new", ts="2025-01-01T00:00:00Z", cache_creation_input_tokens=100_000),
+            ],
+        )
+        out = tmp_path / "cost.md"
+        assert ca.main(["--projects-root", str(projects_root), "--since", "1h", "--output", str(out)]) == 0
+        body = out.read_text(encoding="utf-8")
+        assert "### Main-loop cache rebuilds by cause" in body
+        assert "| idle over 1h | 1 |" in body
+
+
 class TestMainCli:
     """The CLI entry point: session-id drill-down and window ranking."""
 
     def test_session_mode_writes_detail_report(self, tmp_path: Path, projects_root: Path, capsys):
         """Render the single-session deep-dive section."""
-        _write_jsonl(projects_root / "-slug-a" / "sid1.jsonl", [_usage_row("m1", output_tokens=100)])
+        calls = [_usage_row("m1", input_tokens=1, output_tokens=100, cache_read_input_tokens=2_000)]
+        main = _write_jsonl(projects_root / "-slug-a" / "sid1.jsonl", calls + calls)
+        _write_jsonl(
+            main.parent / main.stem / "subagents" / "agent-one.jsonl",
+            [_usage_row("sub", sidechain=True, cache_creation_input_tokens=300)],
+        )
         out = tmp_path / "cost.md"
         rc = ca.main(["--projects-root", str(projects_root), "--session-id", "sid1", "--output", str(out)])
         assert rc == 0
@@ -650,6 +787,42 @@ class TestMainCli:
         body = out.read_text(encoding="utf-8")
         assert "## Tokens & cost" in body
         assert "Session `sid1`" in body
+        assert "Cost session (UTC epoch seconds): 1893456000.0 to 1893456000.0" in body.splitlines()
+        assert "**Total tokens: 2,401**" in body
+
+    def test_session_mode_cost_bounds_span_the_parent_and_subagents(self, tmp_path: Path, projects_root: Path) -> None:
+        """Whole-session cost bounds include transcript rows on both sides of the main call."""
+        main = _write_jsonl(projects_root / "-slug-a" / "sid1.jsonl", [_usage_row("main", output_tokens=5)])
+        subagents = main.parent / main.stem / "subagents"
+        _write_jsonl(
+            subagents / "agent-one.jsonl",
+            [
+                {"timestamp": "2029-12-31T23:59:58Z"},
+                _usage_row("side", ts="2030-01-01T00:00:05Z", sidechain=True, output_tokens=7),
+            ],
+        )
+        out = tmp_path / "cost.md"
+        assert ca.main(["--projects-root", str(projects_root), "--session-id", "sid1", "--output", str(out)]) == 0
+        lines = out.read_text(encoding="utf-8").splitlines()
+        assert "Cost session (UTC epoch seconds): 1893455998.0 to 1893456005.0" in lines
+        assert "**Total tokens: 12**" in lines
+
+    @pytest.mark.parametrize("sidechain", [True, False])
+    def test_session_mode_qualifies_undated_usage(self, tmp_path: Path, projects_root: Path, sidechain: bool) -> None:
+        """Whole-session totals with undated main or subagent usage cannot certify their bounds."""
+        main = _write_jsonl(projects_root / "-slug-a" / "sid1.jsonl", [_usage_row("dated", output_tokens=5)])
+        scope = main.parent / main.stem / "subagents" / "agent-one.jsonl" if sidechain else main
+        scope.parent.mkdir(parents=True, exist_ok=True)
+        row = _usage_row("undated", ts="", sidechain=sidechain, output_tokens=7)
+        with scope.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row) + "\n")
+
+        out = tmp_path / "cost.md"
+        assert ca.main(["--projects-root", str(projects_root), "--session-id", "sid1", "--output", str(out)]) == 0
+        body = out.read_text(encoding="utf-8")
+        assert "**Total tokens: 12**" in body
+        assert "Cost session (UTC epoch seconds):" not in body
+        assert "usage has no timestamp" in body
 
     def test_session_mode_unknown_id_returns_1(self, tmp_path: Path, projects_root: Path, capsys):
         """An unmatched ``--session-id`` exits 1 with a stderr message, no report written."""
@@ -660,10 +833,11 @@ class TestMainCli:
         assert "no session matching" in capsys.readouterr().err
         assert not out.exists()
 
-    def test_window_mode_ranks_sessions_by_cost(self, tmp_path: Path, projects_root: Path, capsys):
+    def test_window_mode_ranks_sessions_by_cost(self, tmp_path: Path, projects_root: Path, capsys, window_end: float):
         """Default (no ``--session-id``) mode ranks every session in the window by cost."""
-        _write_jsonl(projects_root / "-slug-a" / "sid1.jsonl", [_usage_row("m1", output_tokens=100)])
-        _write_jsonl(projects_root / "-slug-b" / "sid2.jsonl", [_usage_row("m2", output_tokens=1)])
+        ts = "2025-01-01T00:00:00Z"
+        _write_jsonl(projects_root / "-slug-a" / "sid1.jsonl", [_usage_row("m1", ts=ts, output_tokens=100)])
+        _write_jsonl(projects_root / "-slug-b" / "sid2.jsonl", [_usage_row("m2", ts=ts, output_tokens=1)])
         out = tmp_path / "cost.md"
         rc = ca.main(["--projects-root", str(projects_root), "--since", "30d", "--output", str(out)])
         assert rc == 0
@@ -672,6 +846,18 @@ class TestMainCli:
         assert "Sessions ranked by cost" in body
         assert "sid1" in body
         assert "sid2" in body
+
+    def test_window_mode_qualifies_undated_usage(self, tmp_path: Path, projects_root: Path, window_end: float):
+        """A report can describe retained undated usage but cannot certify the interval of those totals."""
+        rows = [_usage_row("dated", ts="2025-01-01T00:00:00Z", output_tokens=5), _usage_row("undated", output_tokens=7)]
+        del rows[1]["timestamp"]
+        _write_jsonl(projects_root / "-slug-a" / "sid1.jsonl", rows)
+        out = tmp_path / "cost.md"
+        assert ca.main(["--projects-root", str(projects_root), "--since", "1h", "--output", str(out)]) == 0
+        body = out.read_text(encoding="utf-8")
+        assert "**Total tokens: 12**" in body
+        assert "Cost window (UTC epoch seconds):" not in body
+        assert "usage has no timestamp" in body
 
     def test_window_mode_empty_returns_1(self, tmp_path: Path, projects_root: Path, capsys):
         """No sessions with usage in the projects root exits 1 with a stderr message."""

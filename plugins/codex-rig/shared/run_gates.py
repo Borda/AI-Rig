@@ -14,7 +14,8 @@ Each gate has a command or an explicit skip reason and runs independently with a
 One writer captures and verifies a private candidate while the previous current attempt remains readable. It publishes
 the complete previous attempt under ``gate-attempts/<NNN>``, installs the current evidence under a publication guard,
 and exposes the new ``gates.json`` last. A retry can finish an interrupted installation from its retained candidate.
-An earlier failed applicable check must run again. Unauthenticated or displaced evidence blocks replacement.
+An earlier failed, timed-out or source-refused applicable check must run again; a refused attempt is archived like any
+other complete attempt once its reason is repaired. Unauthenticated or displaced evidence blocks replacement.
 
 ## Usage
 
@@ -27,6 +28,13 @@ values, and optional ``--pytest-args-json <array>``. This opt-in mode calls pyte
 each executing process, including xdist workers, and verifies that selected test files are tracked in the worktree;
 it cannot be combined with a free-form ``--tests`` command. Use ``--single-process-pytest`` only when that exact
 selection and its project configuration, plugins, fixtures and tests support execution without subprocesses or network.
+Use ``--shards N`` with explicit pytest paths after ``--`` in the JSON array. Pytest collects each selection before
+the shards run. Their node IDs must be disjoint and coverage must be inactive. Run coverage as one suite so its
+threshold applies once.
+Each sequential shard receives the same pytest options and a fresh ``--timeout-seconds`` budget. The tests gate retains
+each shard's receipt and logs. Its status reflects the worst outcome and its logs also include every code failure.
+Use one shared pytest configuration and select paths so every shard collects tests after filtering. Pytest's
+no-tests-collected exit remains a failure.
 Ordinary gates use their configured environment. A retained contributor integrity interval enables the existing macOS
 worktree profiles for eligible native Ruff and declared pytest commands, within the caller's contributor-execution
 controls. Use ``--sandbox-gate <gate>`` for each command requiring confinement, or ``--sandbox`` for every gate.
@@ -37,8 +45,10 @@ An unsupported workload requiring confinement fails before launch. Each gate rec
 sandboxed command is never repeated.
 Use ``--project-env <absolute-venv>`` to expose tools from a separately provisioned project environment to commands
 running in an isolated review worktree. It never creates an environment or installs a checker.
+Use ``--tool-cache <absolute-directory>`` outside the checkout to give pre-commit and uv a writable cache when the
+default cache under the user's home is read-only, as in a sandbox. It never seeds the cache or reaches the network.
 Commands can come from the gate flags or matching environment variables such as ``LINT_CMD``. Each gate applies the
-value supplied through ``--timeout-seconds`` separately.
+value supplied through ``--timeout-seconds`` separately, and every executable gate record retains that value.
 
 ## Used by
 
@@ -64,7 +74,15 @@ Parallel runs retain each worker's source proof and fail if a started worker has
 ## Failure
 
 A missing command, non-zero command result, timeout, source mismatch or dirtiness, Git inspection failure, malformed
-requested gate, or unwritable artifact directory is retained as explicit gate evidence. The CLI returns ``1`` for failed
+requested gate, or unwritable artifact directory is retained as explicit gate evidence. Every gate record that did not
+pass names a ``cause`` from a fixed set, so an environment limit such as a missing package or an unreachable network
+is not read as a code failure. A source-bound run observes its checkout once before any gate; when that observation
+refuses execution, ``gates.json`` carries one top-level ``refusal`` with its cause and reason, every gate that would
+have run is a ``refused`` row listed in ``checks_refused`` (never in ``checks_failed``), the attempt's status is
+``fail``, and no gate command runs.
+Ignored files under the workflows' own artifact roots (``.reports``, ``.temp``) and inside directories that a
+``pyvenv.cfg`` marks as virtual environments are environment or evidence, not source, so they never count as ignored
+inputs. The CLI returns ``1`` for failed
 gates, ``124`` for a timeout, and ``2`` for invalid input such as a newline in a skip reason, allowing callers to
 classify the run without parsing prose.
 An imported module or selected test file outside the worktree, absent from its required clean Git index or mismatched
@@ -77,6 +95,7 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import errno
 import hashlib
 import importlib
 import io
@@ -87,14 +106,17 @@ import secrets
 import shlex
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager, redirect_stdout
+from functools import partial
+from itertools import pairwise
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
@@ -127,6 +149,67 @@ SOURCE_GIT = ("git", "--no-pager", "-c", "core.fsmonitor=false", "-c", f"core.ho
 #: Pattern for a dotted Python module name accepted as a pytest import-origin argument.
 PYTHON_MODULE_PATTERN = re.compile(r"[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*")
 GIT_OBJECT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+#: Top-level directories the review and remediation workflows write their own run evidence into. Their ignored
+#: contents are workflow output (probe scripts, calibration fixtures), never project source a gate imports.
+TOOL_ARTIFACT_ROOTS = (".reports", ".temp")
+#: File that marks its directory as a Python virtual environment (PEP 405); its ignored contents are environment state.
+VIRTUAL_ENVIRONMENT_MARKER = "pyvenv.cfg"
+#: Desktop file-manager metadata that no Python tool reads; an untracked copy never makes the checkout dirty.
+OS_METADATA_NAMES = frozenset({".DS_Store", "Thumbs.db"})
+_MISSING_MODULE = re.compile(
+    r"(?:ModuleNotFoundError|ImportError): No module named '([A-Za-z_][A-Za-z0-9_.]*)'"
+    r"(?:; '[A-Za-z_][A-Za-z0-9_.]*' is not a package)?"
+)
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_PYTEST_REPORT = re.compile(r"={3,} (.+?) ={3,}")
+_PYTEST_CASE = re.compile(r"_{3,} .+ _{3,}")
+_PYTEST_CAPTURE = re.compile(r"-{3,} Captured .+ -{3,}")
+_TRACEBACK_TAIL = re.compile(
+    r'^Traceback \(most recent call last\):\n(?:  File "[^\n]+", line [0-9]+[^\n]*\n)(?:[ \t][^\n]*\n)*([^\n]+)'
+    r"|^E[ \t]+([^\n]+)(?:\nE[ \t]+[^\n]*)*",
+    re.MULTILINE,
+)
+#: Causes a gate record can name when it did not pass; ``command-failed`` is an ordinary non-zero exit.
+GATE_FAILURE_CAUSES = (
+    "timeout",
+    "missing-command",
+    "missing-python-package",
+    "hook-cache-unwritable",
+    "network-unavailable",
+    "loopback-bind-blocked",
+    "import-origin-unproven",
+    "source-refused",
+    "sandbox-refused",
+    "command-failed",
+)
+#: Reason every refused gate row carries; the attempt's single ``refusal`` record holds the diagnostic itself.
+REFUSED_ROW_REASON = "source refused before execution; see refusal"
+#: Causes of a source refusal recorded once per attempt in the top-level ``refusal`` record.
+SOURCE_REFUSAL_CAUSES = (
+    "source-ignored-inputs",
+    "source-dirty",
+    "source-head-mismatch",
+    "source-inspection-failed",
+    "source-inventory-changed",
+)
+#: Ordered evidence patterns for environment causes; the first match wins, so specific causes precede generic ones.
+_FAILURE_PATTERNS = (
+    (
+        "hook-cache-unwritable",
+        re.compile(
+            r"Failed to initialize cache at|PermissionError: \[Errno 1\] Operation not permitted: '[^']*"
+            r"(?:\.cache|pre-commit)|PermissionError: \[Errno 13\] Permission denied: '[^']*(?:\.cache|pre-commit)"
+        ),
+    ),
+    (
+        "network-unavailable",
+        re.compile(
+            r"Could not resolve host|Temporary failure in name resolution|nodename nor servname provided"
+            r"|Name or service not known|Network is unreachable|Failed to establish a new connection"
+        ),
+    ),
+    ("loopback-bind-blocked", re.compile(r"(?:bind|listen)\b.{0,80}(?:Operation not permitted|Permission denied)")),
+)
 
 
 _SandboxPolicy = Literal["standard", "contributor", "required"]
@@ -139,6 +222,7 @@ class PythonTestSpec(NamedTuple):
     modules: tuple[str, ...]
     arguments: tuple[str, ...]
     single_process: bool = False
+    shard: str | None = None
 
 
 def _capture_local_gate_snapshot(worktree: Path) -> dict[str, Any]:
@@ -317,7 +401,6 @@ def parse_args() -> argparse.Namespace:
         )
     parser.add_argument(
         "--timeout-seconds",
-        default=os.environ.get("GATE_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)),
         type=positive_integer,
         help="Per-gate timeout; defaults to 7200 or GATE_TIMEOUT_SECONDS.",
     )
@@ -334,6 +417,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--project-env", type=Path, help="Absolute existing project virtual environment for gate tools."
     )
+    parser.add_argument(
+        "--tool-cache",
+        type=Path,
+        help="Absolute writable directory outside the checkout for the pre-commit and uv caches of gate commands.",
+    )
     parser.add_argument("--pytest-python", type=Path, help="Absolute Python executable for import-bound pytest tests.")
     parser.add_argument(
         "--pytest-import",
@@ -343,12 +431,25 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--pytest-args-json", help="JSON array of arguments passed directly to in-process pytest.")
     parser.add_argument(
+        "--shards",
+        type=positive_integer,
+        help="Split the disjoint pytest paths after -- in --pytest-args-json into N sequential, independently timed "
+        "shards; options before -- carry attached values (--opt=value).",
+    )
+    parser.add_argument(
         "--single-process-pytest",
         action="store_true",
         help="Declare that this exact import-bound selection, config, plugins and tests support confinement without "
         "child processes or network. Used to select a compatible profile on protected or --sandbox runs.",
     )
     arguments = parser.parse_args()
+    arguments.timeout_origin = _timeout_origin(arguments.timeout_seconds, os.environ)
+    if arguments.timeout_seconds is None:
+        configured = os.environ.get("GATE_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))
+        try:
+            arguments.timeout_seconds = positive_integer(configured)
+        except (argparse.ArgumentTypeError, ValueError) as error:
+            parser.error(f"argument --timeout-seconds: {error}")
     # The interval reader is parent-only. Inspect it before any Git-based source validation can run.
     from review_worktree_cleanup import has_integrity_interval
 
@@ -386,6 +487,11 @@ def parse_args() -> argparse.Namespace:
         ):
             parser.error("invalid-project-env: expected an absolute existing virtual environment")
         arguments.project_env = arguments.project_env.resolve()
+    if arguments.tool_cache is not None:
+        try:
+            arguments.tool_cache = _tool_cache_directory(arguments.tool_cache, arguments.worktree or Path.cwd())
+        except (OSError, ValueError) as error:
+            parser.error(f"invalid-tool-cache: {error}")
     if arguments.pytest_python is not None:
         if arguments.worktree is None:
             parser.error("invalid-pytest-python: --worktree is required")
@@ -413,7 +519,130 @@ def parse_args() -> argparse.Namespace:
         if arguments.pytest_import or arguments.pytest_args_json is not None:
             parser.error("invalid-pytest-python: --pytest-python is required")
         arguments.python_test = None
+    if arguments.shards is not None:
+        if arguments.python_test is None:
+            parser.error("--shards requires import-bound pytest with --pytest-python")
+        try:
+            arguments.shards = _pytest_shards(arguments.python_test.arguments, arguments.shards)
+        except ValueError as error:
+            parser.error(str(error))
     return arguments
+
+
+def _pytest_shards(arguments: tuple[str, ...], count: int) -> list[tuple[str, ...]]:
+    """Partition explicit selectors in input order; the child proves their effective selection."""
+    if "--" not in arguments:
+        raise ValueError("--shards requires explicit pytest paths after -- in --pytest-args-json")
+    paths = arguments[arguments.index("--") + 1 :]
+    if len(paths) < count:
+        raise ValueError(f"--shards requires at least {count} pytest paths after --")
+    if any(not path or path.startswith(("-", "@")) for path in paths):
+        raise ValueError("--shards requires non-empty pytest paths after --, not options")
+    size, extra = divmod(len(paths), count)
+    boundaries = [index * size + min(index, extra) for index in range(count + 1)]
+    return [paths[start:end] for start, end in pairwise(boundaries)]
+
+
+def _timeout_origin(flag: int | None, environment: Mapping[str, str]) -> str:
+    """Name where the per-gate timeout came from, so a short budget can be traced to its caller.
+
+    Example:
+        >>> _timeout_origin(900, {"GATE_TIMEOUT_SECONDS": "60"})
+        'flag'
+        >>> _timeout_origin(None, {"GATE_TIMEOUT_SECONDS": "900"})
+        'environment'
+        >>> _timeout_origin(None, {})
+        'default'
+    """
+    if flag is not None:
+        return "flag"
+    if "GATE_TIMEOUT_SECONDS" in environment:
+        return "environment"
+    return "default"
+
+
+def _tool_cache_directory(requested: Path, checkout: Path) -> Path:
+    """Create the requested tool cache with its pre-commit and uv subdirectories, outside the checkout.
+
+    A cache inside the checkout would place hook environments among the reviewed inputs, so it is refused.
+    """
+    if not requested.is_absolute():
+        raise ValueError("expected an absolute directory")
+    cache = requested.resolve()
+    if cache.is_relative_to(checkout.resolve()):
+        raise ValueError("the cache must be outside the checkout")
+    for name in ("pre-commit", "uv"):
+        (cache / name).mkdir(parents=True, exist_ok=True)
+    probe = cache / f".write-probe-{secrets.token_hex(8)}"
+    probe.write_bytes(b"")
+    probe.unlink()
+    return cache
+
+
+def classify_gate_failure(check: dict[str, Any], output: str, stderr: str = "") -> str | None:
+    """Return the cause for a gate record that did not pass, or ``None`` for a pass or a not-applicable gate.
+
+    ``output`` and ``stderr`` are the gate's captured streams. Environment causes are recognised only from the
+    tools' own diagnostics; anything else is an ordinary ``command-failed``.
+
+    Example:
+        >>> classify_gate_failure({"status": "pass"}, "") is None
+        True
+        >>> classify_gate_failure({"status": "timeout"}, "")
+        'timeout'
+        >>> classify_gate_failure({"status": "fail"}, "E   ModuleNotFoundError: No module named 'quoted'")
+        'command-failed'
+        >>> classify_gate_failure({"status": "fail"}, "error: Failed to initialize cache at `.cache/uv`")
+        'hook-cache-unwritable'
+        >>> classify_gate_failure({"status": "fail"}, "fatal: unable to access: Could not resolve host: github.com")
+        'network-unavailable'
+        >>> classify_gate_failure({"status": "fail"}, "1 failed, 20 passed")
+        'command-failed'
+    """
+    status = check.get("status")
+    if status in {"pass", "not-applicable"}:
+        return None
+    if status in {"timeout", "missing-command"}:
+        return status
+    route = check.get("execution_route")
+    if isinstance(route, dict) and route.get("mode") == "not-started" and "sandbox required" in route.get("reason", ""):
+        return "sandbox-refused"
+    if check.get("missing_modules"):
+        return "missing-python-package"
+    if check.get("id") != "tests" and not check.get("id", "").startswith("tests-shard-"):
+        if missing_modules(output) or missing_modules(stderr):
+            return "missing-python-package"
+        for cause, pattern in _FAILURE_PATTERNS:
+            if pattern.search(f"{output}\n{stderr}"):
+                return cause
+    imports = check.get("python_imports")
+    if isinstance(imports, dict) and imports.get("status") in {"fail", "inconclusive"} and check.get("exit_code") == 0:
+        return "import-origin-unproven"
+    return "command-failed"
+
+
+def source_refusal_cause(error: str) -> str:
+    """Map one source-guard diagnostic onto the refusal cause recorded once per attempt.
+
+    Example:
+        >>> source_refusal_cause("source-dirty:ignored-inputs:count=2:paths=['a.py', 'b.py']")
+        'source-ignored-inputs'
+        >>> source_refusal_cause("source-dirty:git status --porcelain=v1 was non-empty")
+        'source-dirty'
+        >>> source_refusal_cause("source-head-mismatch:expected a, observed b")
+        'source-head-mismatch'
+        >>> source_refusal_cause("tracked-source-inventory-changed")
+        'source-inventory-changed'
+    """
+    if error.startswith("source-dirty:ignored-inputs"):
+        return "source-ignored-inputs"
+    if error.startswith("source-dirty"):
+        return "source-dirty"
+    if error.startswith("source-head-mismatch"):
+        return "source-head-mismatch"
+    if error.startswith("tracked-source-inventory"):
+        return "source-inventory-changed"
+    return "source-inspection-failed"
 
 
 def command_argv(command: str, platform: str | None = None) -> list[str]:
@@ -478,22 +707,34 @@ def default_commands(platform: str) -> dict[str, str]:
     }
 
 
+def _taskkill_tree(pid: int) -> subprocess.CompletedProcess[bytes]:
+    """Run one bounded ``taskkill`` tree kill and refuse to claim cleanup when it cannot report."""
+    try:
+        return subprocess.run(  # noqa: S603 - argv list, no shell
+            ["taskkill", "/PID", str(pid), "/T", "/F"],  # noqa: S607 - native system tool
+            capture_output=True,
+            timeout=2,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            "windows-process-tree-cleanup-unproven: "
+            f"returncode=unavailable timeout={error.timeout} "
+            f"stdout={(error.stdout or b'')[:256]!r} stderr={(error.stderr or b'')[:256]!r}"
+        ) from error
+
+
 def terminate_process(process: subprocess.Popen[str], platform: str) -> None:
     """Terminate a timed-out command and its descendants on the current platform."""
     if platform == "win32":
-        try:
-            completed = subprocess.run(  # noqa: S603 - argv list, no shell
-                ["taskkill", "/PID", str(process.pid), "/T", "/F"],  # noqa: S607 - native system tool
-                capture_output=True,
-                timeout=2,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as error:
-            raise RuntimeError(
-                "windows-process-tree-cleanup-unproven: "
-                f"returncode=unavailable timeout={error.timeout} "
-                f"stdout={(error.stdout or b'')[:256]!r} stderr={(error.stderr or b'')[:256]!r}"
-            ) from error
+        completed = _taskkill_tree(process.pid)
+        if completed.returncode == 255 and process.poll() is not None:
+            # A tree member can exit between taskkill's process snapshot and its kill, which makes the pass report 255
+            # although nothing it targeted survives. With the leader gone, a second pass over the finished tree proves
+            # the cleanup when it ends the rest (0) or finds nothing left to end (128).
+            retry = _taskkill_tree(process.pid)
+            if retry.returncode in (0, 128):
+                completed = subprocess.CompletedProcess(retry.args, 0, retry.stdout, retry.stderr)
         if completed.returncode != 0:
             raise RuntimeError(
                 "windows-process-tree-cleanup-unproven: "
@@ -550,6 +791,7 @@ def gate_environment(environment: dict[str, str] | None = None) -> dict[str, str
         "TZ",
         "TERM",
         "VIRTUAL_ENV",
+        "PRE_COMMIT_HOME",
         "UV_PROJECT_ENVIRONMENT",
         "UV_CACHE_DIR",
         "XDG_CACHE_HOME",
@@ -631,6 +873,7 @@ def execute_command(
     child_scratch: Path | None = None,
     *,
     prepared_environment: dict[str, str] | None = None,
+    pytest_report_dir: Path | None = None,
 ) -> tuple[int, float]:
     """Execute one command with a shared deadline for exit and bounded stream capture."""
     started = time.monotonic()
@@ -648,6 +891,11 @@ def execute_command(
             child_scratch,
         )
     )
+    if pytest_report_dir is not None:
+        pytest_report_dir.mkdir(mode=0o700)
+        child_environment["CODEX_RIG_PYTEST_REPORT_DIR"] = str(pytest_report_dir.resolve())
+        child_environment["PYTEST_ADDOPTS"] = "-p run_gates " + child_environment["PYTEST_ADDOPTS"]
+        child_environment["PYTHONPATH"] += os.pathsep + str(Path(__file__).resolve().parent)
     try:
         process = subprocess.Popen(  # noqa: S603 - argv list, no shell
             argv,
@@ -942,10 +1190,186 @@ def _aggregate_worker_proofs(
     return {"status": status, "modules": origins, "tests": tests, "workers": workers, "errors": errors}
 
 
+def _node_digest(node_ids: Sequence[str]) -> str:
+    """Bind the collected selection, including repeated IDs, without placing the list in argv."""
+    return hashlib.sha256(json.dumps(sorted(node_ids)).encode()).hexdigest()
+
+
+def _active_pytest_coverage(config: Any) -> bool:
+    """Read activation from the configured pytest-cov plugin."""
+    return config.pluginmanager.hasplugin("_cov") and not config.getoption("no_cov", default=False)
+
+
+class _PytestEvidence:
+    """Observe pytest's selected items, call reports and actual exceptions."""
+
+    def __init__(self, shard: str | None) -> None:
+        self.shard = shard
+        self.node_ids: list[str] | None = None
+        self.calls = 0
+        self.missing: dict[str, None] = {}
+        self.causes: set[str] = set()
+        self.refusal: str | None = None
+
+    def record_exception(self, exception: BaseException) -> None:
+        """Use exception identity and structured fields for causes the runner can prove."""
+        if isinstance(exception, ModuleNotFoundError) and exception.name:
+            if PYTHON_MODULE_PATTERN.fullmatch(exception.name):
+                self.missing[exception.name] = None
+        if isinstance(exception, socket.gaierror) or (
+            isinstance(exception, OSError) and exception.errno == errno.ENETUNREACH
+        ):
+            self.causes.add("network-unavailable")
+        if isinstance(exception, PermissionError):
+            traceback = exception.__traceback__
+            while traceback is not None:
+                frame = traceback.tb_frame
+                if (
+                    frame.f_globals.get("__name__") == "pytest_rerunfailures"
+                    and frame.f_code.co_name == "__init__"
+                    and type(frame.f_locals.get("self")).__name__ == "ServerStatusDB"
+                ):
+                    self.causes.add("loopback-bind-blocked")
+                    break
+                traceback = traceback.tb_next
+
+    def pytest_internalerror(self, excinfo: Any) -> None:
+        """Observe real tool exceptions, including failures while starting the session."""
+        self.record_exception(excinfo.value)
+
+    def pytest_runtest_logreport(self, report: Any) -> None:
+        """Count calls from serial pytest or from workers reporting to their controller."""
+        if report.when == "call":
+            self.calls += 1
+
+    def record_collection(self, session: Any) -> None:
+        """Record node IDs using resolved paths so symlink aliases share an identity."""
+        if self.shard is None:
+            return
+        self.node_ids = [
+            f"{os.path.normcase(str(Path(item.path).resolve()))}::{item.nodeid.partition('::')[2]}"
+            for item in session.items
+        ]
+        if self.shard is not None and _active_pytest_coverage(session.config):
+            self.refusal = _SHARD_COVERAGE_REASON
+        elif self.shard not in (None, "collect") and self.shard != _node_digest(self.node_ids):
+            self.refusal = "--shards selection changed since pytest collection"
+
+    def receipt(self, collected: int) -> dict[str, Any]:
+        """Return the retained evidence, with the full selection only on admission probes."""
+        return {
+            "collected": collected,
+            "calls": self.calls,
+            "missing_modules": list(self.missing),
+            "causes": sorted(self.causes),
+            "refusal": self.refusal,
+            **({"node_ids": self.node_ids} if self.shard == "collect" else {}),
+        }
+
+
+_SHARD_COVERAGE_REASON = "--shards cannot run coverage-enabled pytest; run one suite to apply coverage once"
+_COLLECT_ONLY_REASON = "pytest collect-only cannot satisfy the tests gate"
+
+
+def pytest_addoption(pluginmanager: Any) -> None:
+    """Install an observer before pytest imports the initial conftests."""
+    raw = os.environ.get("CODEX_RIG_PYTEST_SOURCE_PROOF")
+    directory = os.environ.get("CODEX_RIG_PYTEST_REPORT_DIR")
+    if raw is None and directory is None:
+        return
+    import pytest
+    from _pytest.config import ConftestImportFailure
+
+    class StartupEvidence:
+        """Record failures that occur before pytest can produce a session receipt."""
+
+        def publish(self, exception: BaseException) -> None:
+            """Keep a fallback receipt for a startup or internal pytest failure."""
+            config = pluginmanager.getplugin("pytestconfig")
+            if hasattr(config, "workerinput"):
+                return
+            evidence = _PytestEvidence(None)
+            evidence.record_exception(exception)
+            if raw is not None:
+                path = Path(json.loads(raw)["proof_path"]).with_suffix(".startup.json")
+            else:
+                path = Path(directory) / f"{os.getpid()}-{secrets.token_hex(8)}.json"
+            path.write_text(json.dumps(evidence.receipt(0)), encoding="utf-8")
+
+        @pytest.hookimpl(hookwrapper=True)
+        def pytest_load_initial_conftests(self):
+            """Preserve the typed cause of pytest's conftest loading error."""
+            outcome = yield
+            if outcome.excinfo is not None and isinstance(outcome.excinfo[1], ConftestImportFailure):
+                self.publish(outcome.excinfo[1].cause)
+
+        def pytest_internalerror(self, excinfo: Any) -> None:
+            """Observe tool errors even when pytest never entered its session."""
+            self.publish(excinfo.value)
+
+    pluginmanager.register(StartupEvidence())
+
+
+def _register_pytest_evidence(config: Any, shard: str | None, report_dir: str | None) -> _PytestEvidence:
+    """Install effective-selection checks and transport diagnostics from pytest worker processes."""
+    import pytest
+
+    class Evidence(_PytestEvidence):
+        """Bind observations to this pytest session."""
+
+        @pytest.hookimpl(tryfirst=True)
+        def pytest_collection_finish(self, session: Any) -> None:
+            """Check the final selection before pytest can execute any selected item."""
+            self.record_collection(session)
+            if self.refusal and shard != "collect":
+                pytest.exit(self.refusal, returncode=4)
+
+        def pytest_exception_interact(self, call: Any) -> None:
+            """Unwrap the typed error pytest uses to report an import failure during collection."""
+            if call.excinfo is not None:
+                exception = call.excinfo.value
+                if isinstance(exception, pytest.Collector.CollectError) and exception.__cause__ is not None:
+                    exception = exception.__cause__
+                self.record_exception(exception)
+
+        @pytest.hookimpl(optionalhook=True)
+        def pytest_testnodedown(self, node: Any) -> None:
+            """Merge typed failures reported by the executing worker."""
+            data = (getattr(node, "workeroutput", None) or {}).get("codex_rig_pytest_evidence")
+            if isinstance(data, dict):
+                self.missing.update(dict.fromkeys(data["missing_modules"]))
+                self.causes.update(data["causes"])
+                self.refusal = self.refusal or data["refusal"]
+
+        @pytest.hookimpl(tryfirst=True)
+        def pytest_sessionfinish(self, session: Any) -> None:
+            """Deliver evidence before the controller or a shell wrapper exits."""
+            data = self.receipt(session.testscollected)
+            if hasattr(config, "workeroutput"):
+                config.workeroutput["codex_rig_pytest_evidence"] = data
+            elif report_dir is not None:
+                path = Path(report_dir) / f"{os.getpid()}-{secrets.token_hex(8)}.json"
+                path.write_text(json.dumps(data), encoding="utf-8")
+
+    evidence = Evidence(shard)
+    config.pluginmanager.register(evidence, "codex-rig-pytest-evidence")
+    if config.getoption("collectonly"):
+        evidence.refusal = _COLLECT_ONLY_REASON
+    elif shard is not None and _active_pytest_coverage(config):
+        evidence.refusal = _SHARD_COVERAGE_REASON
+    elif shard == "unavailable":
+        evidence.refusal = "--shards could not admit this selection under the required sandbox"
+    if shard == "collect" or evidence.refusal:
+        config.option.collectonly = True
+    return evidence
+
+
 def pytest_configure(config: Any) -> None:
     """Attach source proof to pytest controllers and workers in opt-in gate mode."""
     raw = os.environ.get("CODEX_RIG_PYTEST_SOURCE_PROOF")
     if raw is None:
+        if report_dir := os.environ.get("CODEX_RIG_PYTEST_REPORT_DIR"):
+            _register_pytest_evidence(config, None, report_dir)
         return
     # Pytest remains optional for all other gate modes and normal module imports.
     import pytest
@@ -975,6 +1399,10 @@ def pytest_configure(config: Any) -> None:
         local_snapshot = json.loads(content)
         if local_snapshot["repository"] != worktree.as_posix():
             raise ValueError("local-python-snapshot-worktree-mismatch")
+    evidence = _register_pytest_evidence(config, task.get("shard"), None)
+    if task.get("shard") is not None and config.inipath and not config.inipath.resolve().is_relative_to(worktree):
+        evidence.refusal = "--shards cannot use inherited pytest configuration outside the worktree"
+        config.option.collectonly = True
 
     class SourceProof:
         """Retain each pytest process's selected tests and actual imported module origins."""
@@ -1071,6 +1499,7 @@ def pytest_configure(config: Any) -> None:
                 "runtime_interpreter": process_proof["runtime_interpreter"],
                 "sys_prefix": process_proof["sys_prefix"],
                 "worktree": worktree.as_posix(),
+                "pytest": evidence.receipt(session.testscollected),
                 **({"local_source": local_source} if local_source is not None else {}),
             }
             Path(task["proof_path"]).write_text(json.dumps(proof, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -1079,7 +1508,7 @@ def pytest_configure(config: Any) -> None:
 
 
 def run_python_tests_child(arguments: list[str]) -> int:
-    """Run pytest with controller and worker source proof in the selected interpreter."""
+    """Run pytest and return its own exit code when the child produced proof for the parent to validate."""
     if len(arguments) not in {5, 6}:
         print("invalid-python-test-child-arguments", file=sys.stderr)
         return 2
@@ -1091,7 +1520,13 @@ def run_python_tests_child(arguments: list[str]) -> int:
     if len(arguments) == 6:
         sys.dont_write_bytecode = True
     # Pytest is optional for all other gate modes and belongs to the selected test environment.
-    import pytest
+    try:
+        import pytest
+    except ModuleNotFoundError as error:
+        evidence = _PytestEvidence(None)
+        evidence.record_exception(error)
+        proof_path.with_suffix(".startup.json").write_text(json.dumps(evidence.receipt(0)), encoding="utf-8")
+        raise
 
     task = {
         "worktree": worktree.as_posix(),
@@ -1103,8 +1538,10 @@ def run_python_tests_child(arguments: list[str]) -> int:
         binding = json.loads(arguments[5])
         if "tracked_inventory" in binding:
             task["tracked_inventory"] = binding["tracked_inventory"]
-        else:
-            task["local_source"] = binding
+        elif "snapshot_path" in binding:
+            task["local_source"] = {key: binding[key] for key in ("snapshot_path", "snapshot_sha256")}
+        if "shard" in binding:
+            task["shard"] = binding["shard"]
     prior_task = os.environ.get("CODEX_RIG_PYTEST_SOURCE_PROOF")
     os.environ["CODEX_RIG_PYTEST_SOURCE_PROOF"] = json.dumps(task)
     try:
@@ -1117,11 +1554,8 @@ def run_python_tests_child(arguments: list[str]) -> int:
     if not proof_path.is_file():
         print("source-bound-pytest-proof-missing", file=sys.stderr)
         return test_exit_code or 1
-    if "tracked_inventory" in task:
-        proof = json.loads(_read_gate_file(proof_path, "source-gate-proof", MAX_TEST_PROOF_BYTES))
-    else:
-        proof = json.loads(proof_path.read_text(encoding="utf-8"))
-    return test_exit_code if test_exit_code else 0 if proof["status"] == "pass" else 1
+    # The parent fails the gate on bad proof while retaining pytest's outcome for failure classification.
+    return test_exit_code
 
 
 def check_paths(gate_id: str, out_dir: Path) -> tuple[dict[str, Path], dict[str, str]]:
@@ -1159,8 +1593,93 @@ def skipped_check(gate_id: str, reason: str, paths: dict[str, Path], recorded: d
     }
 
 
+def _source_status(porcelain: str) -> str:
+    """Drop untracked desktop metadata files from ``git status --porcelain=v1`` output; every other line remains.
+
+    Example:
+        >>> _source_status("?? .DS_Store\\n?? docs/Thumbs.db\\n M module.py")
+        ' M module.py'
+        >>> _source_status("?? stray.py")
+        '?? stray.py'
+    """
+    return "\n".join(
+        line
+        for line in porcelain.split("\n")
+        if not (line.startswith("?? ") and line[3:].rpartition("/")[2] in OS_METADATA_NAMES)
+    )
+
+
+def _traceback_report_lines(output: str) -> Iterator[str]:
+    """Yield traceback evidence outside pytest's captured output and summaries."""
+    in_failure = captured = in_summary = False
+    for line in _ANSI_ESCAPE.sub("", output).splitlines():
+        if report := _PYTEST_REPORT.fullmatch(line.rstrip()):
+            in_failure = report[1] in {"FAILURES", "ERRORS"}
+            in_summary = not in_failure
+            captured = False
+        elif line.startswith("ImportError while loading conftest "):
+            in_failure = True
+        elif in_failure and _PYTEST_CASE.fullmatch(line):
+            captured = False
+        elif in_failure and _PYTEST_CAPTURE.fullmatch(line):
+            captured = True
+        elif captured or in_summary or (line.startswith("E ") and not in_failure):
+            yield ""
+            continue
+        yield line
+
+
+def missing_modules(output: str) -> list[str]:
+    """Return the module names a captured import failure reports missing, in first-seen order.
+
+    Example:
+        >>> missing_modules("=== ERRORS ===\\nE   ModuleNotFoundError: No module named 'cv2'")
+        ['cv2']
+    """
+    report = "\n".join(_traceback_report_lines(output))
+    modules = {}
+    # Pytest marks every continuation of a multiline exception with E as well. Only the first line names its type.
+    for native, pytest_error in _TRACEBACK_TAIL.findall(report):
+        if match := _MISSING_MODULE.fullmatch((native or pytest_error).strip()):
+            modules[match[1]] = None
+    return list(modules)
+
+
+def _first_party_submodule(module: str, root: Path) -> bool:
+    """Return whether ``module`` is a submodule of a package the checkout itself provides, a source failure."""
+    top, dot, _ = module.partition(".")
+    if not dot:
+        return False
+    return any((base / top).is_dir() or (base / f"{top}.py").is_file() for base in (root, root / "src"))
+
+
+def _reachable_ignored_paths(paths: Sequence[str]) -> tuple[list[str], list[str]]:
+    """Split Git's ignored-file list into paths a gate can read as source and the roots excluded as non-source.
+
+    Excluded are the workflows' own top-level artifact roots and every directory holding a ``pyvenv.cfg``, which
+    marks a virtual environment as the existing ``.venv`` exclusion already treats it. pytest itself skips such
+    directories during collection. A marker at the checkout root excludes nothing. Git reports POSIX separators.
+
+    Example:
+        >>> _reachable_ignored_paths(
+        ...     [".reports/codex/run/probe.py", "exp/env/pyvenv.cfg", "exp/env/lib/site.py", "runtime/module.py"]
+        ... )
+        (['runtime/module.py'], ['.reports', 'exp/env'])
+        >>> _reachable_ignored_paths(["pyvenv.cfg", "module.py"])
+        (['pyvenv.cfg', 'module.py'], [])
+    """
+    roots = {root for root in TOOL_ARTIFACT_ROOTS if any(path.startswith(f"{root}/") for path in paths)}
+    roots.update(
+        path.rpartition("/")[0]
+        for path in paths
+        if path.rpartition("/")[2] == VIRTUAL_ENVIRONMENT_MARKER and "/" in path
+    )
+    prefixes = tuple(f"{root}/" for root in roots)
+    return [path for path in paths if not path.startswith(prefixes)], sorted(roots)
+
+
 def _ignored_source_inventory(worktree: Path | None) -> str:
-    """Record ignored paths outside tool caches without mixing them into Git status."""
+    """Record ignored source paths outside tool caches, artifact roots and environments, apart from Git status."""
     caches = (".venv", "__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache")
     ignored = subprocess.run(  # noqa: S603 - fixed local Git inspection with cache exclusions
         [
@@ -1179,7 +1698,8 @@ def _ignored_source_inventory(worktree: Path | None) -> str:
         check=True,
         timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
     )
-    return json.dumps([os.fsdecode(path) for path in ignored.stdout.split(b"\0") if path])
+    reachable, _ = _reachable_ignored_paths([os.fsdecode(path) for path in ignored.stdout.split(b"\0") if path])
+    return json.dumps(reachable)
 
 
 def _concealed_source_error(flags: str, worktree: Path | None) -> str | None:
@@ -1325,7 +1845,7 @@ def _observe_source(worktree: Path | None, expected_head: str | None = None) -> 
         if status.returncode != 0:
             detail = os.fsdecode(status.stderr).strip() or f"exit {status.returncode}"
             return unavailable(f"git-status-failed:{detail}")
-        snapshot["status"] = os.fsdecode(status.stdout).rstrip("\r\n")
+        snapshot["status"] = _source_status(os.fsdecode(status.stdout).rstrip("\r\n"))
         flags = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
             [*SOURCE_GIT, "ls-files", "-v", "-z"],
             cwd=worktree,
@@ -1355,7 +1875,7 @@ def source_guard_error(snapshot: dict[str, str], expected_head: str) -> str | No
     inputs = [
         path
         for path in json.loads(snapshot.get("ignored", "[]"))
-        if Path(path).suffix in {".py", ".pth", ".ini"} or Path(path).name in {"pyproject.toml", "setup.cfg"}
+        if Path(path).suffix in {".py", ".pth", ".ini"} or Path(path).name in _PYTEST_CONFIG_FILES
     ]
     if inputs:
         return f"source-dirty:ignored-inputs:count={len(inputs)}:paths={inputs[:10]!r}"
@@ -1456,6 +1976,15 @@ def _ruff_configuration_reason(worktree: Path, environment: dict[str, str], lint
 #: worktree, where the confined child reads an absent file and fails a test run the standard route would complete.
 _PYTEST_LOCATION_OPTIONS = ("-c", "--config-file", "--rootdir", "@")
 _PYTEST_LOCATION_REASON = "explicit pytest config, root or argument file needs the standard route"
+_PYTEST_CONFIG_FILES = (
+    "pytest.toml",
+    ".pytest.toml",
+    "pytest.ini",
+    ".pytest.ini",
+    "pyproject.toml",
+    "tox.ini",
+    "setup.cfg",
+)
 
 
 def _effective_pytest_option_reason(options: list[str]) -> str | None:
@@ -1476,20 +2005,8 @@ def _effective_pytest_option_reason(options: list[str]) -> str | None:
     return None
 
 
-def _pytest_configuration_reason(worktree: Path, options: list[str]) -> str | None:
-    """Keep the original pytest route if hiding enclosing config or starting workers could alter collection."""
-    files = ("pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg")
-    if any((directory / "conftest.py").is_file() for directory in worktree.parents):
-        return "pytest may load a conftest outside the worktree"
-    if any(option.startswith(_PYTEST_LOCATION_OPTIONS) for option in options):
-        return _PYTEST_LOCATION_REASON
-    # Pytest expands an addopts override before normal option parsing. Its value can itself
-    # introduce configuration, plugins or workers. An empty override introduces no arguments.
-    if any(option.partition("addopts=")[2] for option in options if option.startswith(("-", "addopts="))):
-        return "pytest addopts override needs the standard route"
-
-    # Pytest can start discovery at a positional path, including the file portion of a node ID.
-    # Check all plausible paths without interpreting plugin-defined flags or choosing between config formats.
+def _pytest_target_config_reason(worktree: Path, options: Sequence[str]) -> str | None:
+    """Detect positional targets that could give pytest a different config discovery root."""
     checked = {worktree}
     for option in options:
         if option.startswith("-"):
@@ -1502,55 +2019,81 @@ def _pytest_configuration_reason(worktree: Path, options: list[str]) -> str | No
             if not directory.is_relative_to(worktree):
                 return "pytest target may select configuration outside the worktree"
             while directory not in checked:
-                if any((directory / name).is_file() for name in files):
+                if any(os.path.lexists(directory / name) for name in _PYTEST_CONFIG_FILES):
                     return "pytest target may select nested configuration"
                 checked.add(directory)
                 directory = directory.parent
         except (OSError, ValueError):
             return "pytest target configuration cannot be verified"
+    return None
 
+
+def _read_pytest_addopts(config: Path) -> tuple[bool, list[str]]:
+    """Read a config candidate and report whether its format establishes pytest discovery precedence."""
+    content = _read_gate_file(config, "pytest-configuration", 1024 * 1024).decode("utf-8")
+    if config.suffix == ".toml":
+        if tomllib is None:
+            raise ValueError("TOML parser unavailable to verify pytest configuration")
+        document = tomllib.loads(content)
+        if config.name == "pyproject.toml":
+            settings = document.get("tool", {}).get("pytest", {})
+            # Older pytest accepts only the INI compatibility table as a config source.
+            owns_config = "ini_options" in settings
+            settings = settings.get("ini_options", settings)
+        else:
+            settings = document.get("pytest", {})
+            owns_config = False
+    else:
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.read_string(content)
+        section = "tool:pytest" if config.name == "setup.cfg" else "pytest"
+        owns_config = section in parser or config.name in ("pytest.ini", ".pytest.ini")
+        settings = parser[section] if section in parser else {}
+    addopts = settings.get("addopts", [])
+    options = shlex.split(addopts) if isinstance(addopts, str) else addopts
+    if not isinstance(options, list) or any(not isinstance(option, str) for option in options):
+        raise ValueError("pytest addopts must contain strings")
+    return owns_config, options
+
+
+def _pytest_config_addopts(worktree: Path) -> list[list[str]]:
+    """Collect every root config candidate's addopts without assuming the child uses this runner's pytest version."""
     owns_config = False
-    for name in files:
+    candidates = []
+    for name in _PYTEST_CONFIG_FILES:
         config = worktree / name
-        if not config.exists():
-            continue
-        try:
-            content = _read_gate_file(config, "pytest-configuration", 1024 * 1024).decode("utf-8")
-            if name.endswith(".toml"):
-                if tomllib is None:
-                    return "TOML parser unavailable to verify pytest configuration"
-                document = tomllib.loads(content)
-                if name == "pyproject.toml":
-                    settings = document.get("tool", {}).get("pytest")
-                    if settings is None:
-                        continue
-                    if not isinstance(settings, dict):
-                        return "pytest configuration cannot be verified"
-                    # Native TOML tables and pytest.toml require newer pytest. The selected
-                    # environment can differ from this runner, so only portable sections prove precedence.
-                    owns_config |= "ini_options" in settings
-                    settings = settings.get("ini_options", settings)
-                else:
-                    settings = document.get("pytest", {})
-            else:
-                parser = configparser.ConfigParser(interpolation=None)
-                parser.read_string(content)
-                section = "tool:pytest" if name == "setup.cfg" else "pytest"
-                if section not in parser and name in ("tox.ini", "setup.cfg"):
-                    continue
-                settings = parser[section] if section in parser else {}
-                owns_config = True
-            addopts = settings.get("addopts", [])
-            configured = shlex.split(addopts) if isinstance(addopts, str) else addopts
-            if not isinstance(configured, list) or any(not isinstance(option, str) for option in configured):
-                return "pytest configuration cannot be verified"
-            options.extend(configured)
-        except (configparser.Error, KeyError, AttributeError, OSError, ValueError):
-            return "pytest configuration cannot be verified"
-    if not owns_config and any((directory / name).is_file() for directory in worktree.parents for name in files):
-        return "pytest may inherit configuration outside the worktree"
+        if os.path.lexists(config):
+            try:
+                owns, options = _read_pytest_addopts(config)
+            except (configparser.Error, AttributeError, OSError, TypeError, ValueError) as error:
+                raise ValueError("pytest configuration cannot be verified") from error
+            owns_config |= owns
+            candidates.append(options)
+    if not owns_config and any(
+        os.path.lexists(path / name) for path in worktree.parents for name in _PYTEST_CONFIG_FILES
+    ):
+        raise ValueError("pytest may use inherited configuration outside the worktree")
+    return candidates
+
+
+def _pytest_configuration_reason(worktree: Path, options: list[str]) -> str | None:
+    """Keep the original pytest route if hiding enclosing config or starting workers could alter collection."""
+    if any((directory / "conftest.py").is_file() for directory in worktree.parents):
+        return "pytest may load a conftest outside the worktree"
+    if any(option.startswith(_PYTEST_LOCATION_OPTIONS) for option in options):
+        return _PYTEST_LOCATION_REASON
+    # Pytest expands an addopts override before normal option parsing. Its value can itself
+    # introduce configuration, plugins or workers. An empty override introduces no arguments.
+    if any(option.partition("addopts=")[2] for option in options if option.startswith(("-", "addopts="))):
+        return "pytest addopts override needs the standard route"
+    if reason := _pytest_target_config_reason(worktree, options):
+        return reason
+    try:
+        configured = _pytest_config_addopts(worktree)
+    except ValueError as error:
+        return str(error)
     # Configured addopts are expanded into the same command line, so they need the command-line checks too.
-    return _effective_pytest_option_reason(options)
+    return _effective_pytest_option_reason([*options, *(option for candidate in configured for option in candidate)])
 
 
 def _prepare_gate_profile(
@@ -1663,7 +2206,19 @@ def _launch_gate(
                 paths["stderr"].write_text(reason + "\n", encoding="utf-8")
                 return 1, 0.0, {"mode": "not-started", "reason": reason}
             outcome = execute_command(
-                command, timeout, paths["stdout"], paths["stderr"], worktree, environment, out_dir, scratch
+                command,
+                timeout,
+                paths["stdout"],
+                paths["stderr"],
+                worktree,
+                environment,
+                out_dir,
+                scratch,
+                **(
+                    {"pytest_report_dir": paths["stdout"].with_suffix(".pytest")}
+                    if gate_id == "tests" and isinstance(command, str)
+                    else {}
+                ),
             )
             route = {"mode": "standard", "reason": prepared}
         else:
@@ -1741,13 +2296,20 @@ def run_check(
     checkout: _StructuredCheckout | None = None,
     pr_integrity: Sequence[Sequence[str]] = (),
     sandbox_policy: _SandboxPolicy = "standard",
+    refused: tuple[dict[str, str], str] | None = None,
+    artifact_id: str | None = None,
 ) -> dict[str, Any]:
-    """Run one gate and bind local execution artifacts to the observed source and child proof."""
+    """Run one gate and bind local execution artifacts to the observed source and child proof.
+
+    ``refused`` carries the attempt's single refusing source observation; the gate then records that observation without
+    inspecting the checkout again and without running its command. A shard keeps the canonical gate identity for routing
+    and receives a distinct artifact name.
+    """
     run_root = run_root or out_dir
     # The confined child needs its scratch beside the tracked input. Use their real private coordinates
     # throughout execution and replay; only the validated receipt can publish the digest-named input.
     input_checks = (out_dir if expected_head is not None else run_root) / CHECKS_DIRNAME
-    paths, recorded = check_paths(gate_id, out_dir)
+    paths, recorded = check_paths(artifact_id or gate_id, out_dir)
     source_bound = expected_head is not None or local_source is not None
     artifact_escape = "local-gate-artifact-escape" if local_source is not None else "source-gate-artifact-escape"
     if source_bound:
@@ -1772,7 +2334,7 @@ def run_check(
         }
 
     python_test_argv: list[str] | None = None
-    proof_path = out_dir / CHECKS_DIRNAME / "tests.python-imports.json"
+    proof_path = out_dir / CHECKS_DIRNAME / f"{artifact_id or 'tests'}.python-imports.json"
     scratch = None
     scratch_identity = None
     checks_identity = None
@@ -1782,7 +2344,7 @@ def run_check(
             raise RuntimeError("worktree must not be None")
         checks_identity = proof_path.parent.lstat()
         scratch = input_checks.resolve() / f"pytest-scratch-{secrets.token_hex(16)}"
-        child_proof = scratch / proof_path.name
+        child_proof = scratch / "tests.python-imports.json"
         python_test_argv = [
             str(python_test.interpreter),
             "-B",
@@ -1795,21 +2357,25 @@ def run_check(
             python_test.interpreter.as_posix(),
         ]
         if local_source is not None:
-            python_test_argv.append(
-                json.dumps(
-                    {
-                        "snapshot_path": (out_dir / local_source["snapshot_path"]).resolve().as_posix(),
-                        "snapshot_sha256": local_source["snapshot_sha256"],
-                    }
-                )
-            )
+            child_binding = {
+                "snapshot_path": (out_dir / local_source["snapshot_path"]).resolve().as_posix(),
+                "snapshot_sha256": local_source["snapshot_sha256"],
+            }
+        else:
+            child_binding = {}
+        if python_test.shard is not None:
+            child_binding["shard"] = python_test.shard
+        if child_binding:
+            python_test_argv.append(json.dumps(child_binding))
         command = f"argv-json:{json.dumps(python_test_argv)}"
     command_bytes = f"{command}\n".encode()
     paths["command"].write_bytes(command_bytes)
     source: dict[str, Any] | None = None
     tracked_before = None
     if expected_head is not None:
-        if checkout is None:
+        if refused is not None:
+            before, error = refused
+        elif checkout is None:
             before = inspect_source(worktree)
             error = source_guard_error(before, expected_head)
         else:
@@ -1894,7 +2460,8 @@ def run_check(
         except FileExistsError:
             _read_tracked_inventory(inventory, digest)
         binding = {"path": str(inventory.resolve()), "head": expected_head, "sha256": digest}
-        python_test_argv.append(json.dumps({"tracked_inventory": binding}))
+        child_binding["tracked_inventory"] = binding
+        python_test_argv[9:] = [json.dumps(child_binding)]
         command_bytes = f"argv-json:{json.dumps(python_test_argv)}\n".encode()
         paths["command"].write_bytes(command_bytes)
     exit_code, duration, route = _launch_gate(
@@ -1986,10 +2553,14 @@ def run_check(
                 else:
                     proof_bytes = observation
         result["python_imports"] = proof
+        if python_test.shard != "collect":
+            _apply_pytest_evidence(result, [_child_pytest_evidence(proof, child_proof)], paths["stderr"])
         if proof.get("status") != "pass":
             append_stderr(paths["stderr"], f"python-import-origin:{proof.get('status', 'invalid')}")
             if result["status"] == "pass":
                 result["status"] = "fail"
+    elif gate_id == "tests" and route["mode"] != "not-started":
+        _apply_pytest_evidence(result, _read_pytest_evidence(paths["stdout"]), paths["stderr"])
     if local_source is not None:
         try:
             after = validate_local_gate_source(run_root, worktree)
@@ -2064,7 +2635,7 @@ def run_check(
         if inventory is not None:
             source["artifacts"][f"{CHECKS_DIRNAME}/{inventory.name}"] = binding["sha256"]
         if proof_bytes is not None:
-            source["artifacts"]["checks/tests.python-imports.json"] = hashlib.sha256(proof_bytes).hexdigest()
+            source["artifacts"][proof_path.relative_to(out_dir).as_posix()] = hashlib.sha256(proof_bytes).hexdigest()
     if status == "timeout":
         result["reason"] = f"timeout after {timeout} seconds"
     elif status == "missing-command":
@@ -2085,6 +2656,56 @@ _GATE_REPORTS = (
 )
 _PUBLICATION = ".gate-publication.json"
 _ARCHIVE_NUMBER = re.compile(r"00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,}")
+_SHARD_STREAMS = {"command_path": "command.txt", "stdout": "stdout.txt", "stderr": "stderr.txt"}
+_SHARD_PROOF = "python-imports.json"
+_SHARD_MEMBER = re.compile(
+    r"checks/tests-shard-[0-9]{3,}\.(?:command\.txt|stdout\.txt|stderr\.txt|python-imports\.json)"
+)
+_SHARD_STATUS_ORDER = {"pass": 0, "fail": 1, "missing-command": 1, "timeout": 2}
+#: Prior gate statuses a retry may declare out of scope. A gate that failed, timed out, lacked its command or was
+#: refused before it ran never established its result, so a retry must run it again rather than skip it.
+_SKIPPABLE_PRIOR_STATUSES = frozenset({"pass", "not-applicable"})
+
+
+def _shard_members(gates: dict[str, Any]) -> set[str]:
+    """Admit shard artifacts when the tests receipt agrees with the shared shard ordering."""
+    tests = next(check for check in gates["checks"] if check["id"] == "tests")
+    if "shards" not in tests:
+        return set()
+    shards = tests["shards"]
+    if not isinstance(shards, list) or not shards:
+        raise ValueError("invalid-pytest-shards")
+    members = set()
+    statuses = set()
+    for number, shard in enumerate(shards, 1):
+        shard_id = f"tests-shard-{number:03d}"
+        if not isinstance(shard, dict) or shard.get("id") != shard_id:
+            raise ValueError("invalid-pytest-shard-id")
+        status = shard.get("status")
+        paths = shard.get("selected_paths")
+        if (
+            not isinstance(status, str)
+            or status not in _SHARD_STATUS_ORDER
+            or (status != "pass" and shard.get("cause") not in GATE_FAILURE_CAUSES)
+            or not isinstance(paths, list)
+            or not paths
+            or not all(isinstance(path, str) and path for path in paths)
+            or not isinstance(shard.get("exit_code"), int)
+            or not isinstance(shard.get("duration_seconds"), (int, float))
+        ):
+            raise ValueError("invalid-pytest-shard-result")
+        statuses.add(status)
+        for key, suffix in _SHARD_STREAMS.items():
+            relative = f"checks/{shard_id}.{suffix}"
+            if shard.get(key) != relative:
+                raise ValueError("invalid-pytest-shard-log")
+            members.add(relative)
+        if "python_imports" in shard:
+            members.add(f"checks/{shard_id}.{_SHARD_PROOF}")
+    worst = _representative_shard(shards)["status"]
+    if tests["status"] != worst and not (tests["status"] == "refused" and statuses == {"fail"}):
+        raise ValueError("invalid-pytest-shard-aggregate")
+    return members
 
 
 def _receipt_logs(root: Path, gates: dict[str, Any], original: Path, archive: Path | None = None) -> set[str]:
@@ -2207,12 +2828,17 @@ def _verify_previous_archive(archived: Path, output: Path, plan: dict[str, Any])
     if not stat.S_ISDIR(identity.st_mode) or [identity.st_dev, identity.st_ino] != plan["archive_identity"]:
         raise ValueError("gate-publication-archive-changed")
     previous = _validate_staged_gates(archived, output, plan["damaged"], plan["damaged_logs"])
+    shard_members = _shard_members(previous)
+    if {name for name, state in plan["before"].items() if state is not None and _SHARD_MEMBER.fullmatch(name)} != (
+        shard_members
+    ):
+        raise ValueError("gate-publication-archive-changed")
     logs = _receipt_logs(archived, previous, output)
     if set(plan["legacy_logs"]) != logs.difference(_GATE_REPORTS):
         raise ValueError("gate-publication-archive-changed")
     for name, original in plan["before"].items():
         # New immutable inputs might already exist publicly, but did not belong to the prior attempt.
-        if name not in _GATE_REPORTS and name not in plan["damaged"]:
+        if name not in _GATE_REPORTS and name not in plan["damaged"] and name not in shard_members:
             continue
         if original is not None and name in _GATE_LOGS and name not in logs:
             raise ValueError(f"gate-publication-unowned-log:{name}")
@@ -2290,21 +2916,27 @@ def _finish_publication(output: Path) -> None:
         or (before["gates.json"] is None) != (plan["archive"] is None)
     ):
         raise ValueError("gate-publication-invalid-plan")
-    if plan["archive"] is None and any(before.get(name) is not None for name in _GATE_REPORTS):
+    report_members = set(_GATE_REPORTS) | {name for name in after if _SHARD_MEMBER.fullmatch(name)}
+    if plan["archive"] is None and any(before.get(name) is not None for name in report_members):
         raise ValueError("gate-publication-invalid-plan")
     if (output / CHECKS_DIRNAME).is_symlink() or (stage / CHECKS_DIRNAME).is_symlink():
         raise ValueError("gate-checks-directory-redirected")
     candidate = _validate_staged_gates(stage, output)
+    candidate_shards = _shard_members(candidate)
+    if {name for name, digest in after.items() if digest is not None and _SHARD_MEMBER.fullmatch(name)} != (
+        candidate_shards
+    ):
+        raise ValueError("gate-publication-unowned-shard")
     inventories = _receipt_inventories(candidate)
     # Journals can outlive their writer. Recompute every inventory installation or authorized retirement
     # from the receipts, including when an older journal previously admitted a name found in scratch.
     expected_inputs = {**dict.fromkeys(plan["damaged"]), **inventories}
-    if {key: value for key, value in after.items() if key not in _GATE_REPORTS} != expected_inputs or (
+    if {key: value for key, value in after.items() if key not in report_members} != expected_inputs or (
         plan["damaged"] and plan["archive"] is None
     ):
         raise ValueError("gate-publication-unowned-inventory")
     for name in after:
-        if name not in _GATE_REPORTS and not re.fullmatch(r"checks/tracked-source-[0-9a-f]{64}\.bin", name):
+        if name not in report_members and not re.fullmatch(r"checks/tracked-source-[0-9a-f]{64}\.bin", name):
             raise ValueError("gate-publication-invalid-member")
         prior = before[name]
         if prior is not None and (
@@ -2314,7 +2946,11 @@ def _finish_publication(output: Path) -> None:
             or not re.fullmatch("[0-9a-f]{64}", str(prior[-1]))
         ):
             raise ValueError("gate-publication-invalid-member")
-        state = _file_state(stage / name) if name in _GATE_REPORTS or name in inventories else None
+        state = (
+            _file_state(stage / name)
+            if name in _GATE_REPORTS or name in inventories or name in candidate_shards
+            else None
+        )
         if (state[-1] if state else None) != after[name]:
             raise ValueError("gate-publication-candidate-changed")
     number = plan["archive"]
@@ -2395,7 +3031,7 @@ def _finish_publication(output: Path) -> None:
 
 def preserve_previous_attempt(
     output: Path, skip_reasons: dict[str, str], archive: Path, recovery_source: tuple[str, str | None]
-) -> tuple[dict[str, str | None], dict[str, str], dict[str, str]]:
+) -> tuple[dict[str, str | None], dict[str, str], dict[str, str], set[str]]:
     """Archive existing gate evidence before rerun, refusing failed-to-skipped recovery.
 
     Re-executing a failed check can establish success; changing its applicability cannot. A pinned-source retry can
@@ -2405,7 +3041,7 @@ def preserve_previous_attempt(
     if not manifest.exists() and not manifest.is_symlink():
         if any((output / name).exists() or (output / name).is_symlink() for name in _GATE_REPORTS):
             raise ValueError("invalid-previous-gates")
-        return {}, {}, {}
+        return {}, {}, {}, set()
     prior = json.loads(_read_gate_file(manifest, "gate-previous-manifest"))
     checks = prior.get("checks") if isinstance(prior, dict) else None
     if not isinstance(checks, list) or len(checks) != len(GATE_IDS):
@@ -2414,10 +3050,13 @@ def preserve_previous_attempt(
         raise ValueError("invalid-previous-gates")
     if {check["id"] for check in checks} != set(GATE_IDS):
         raise ValueError("invalid-previous-gates")
+    # Every status the published reader accepts, including a refused gate that never ran, is a complete prior receipt.
+    statuses = importlib.import_module("validate-artifacts").VALID_GATE_STATUSES
     for check in checks:
-        if check.get("status") not in ("pass", "not-applicable", "fail", "timeout", "missing-command"):
+        status = check.get("status")
+        if not isinstance(status, str) or status not in statuses:
             raise ValueError("invalid-previous-gates")
-        if skip_reasons[check["id"]] and check["status"] in {"fail", "timeout", "missing-command"}:
+        if skip_reasons[check["id"]] and check["status"] not in _SKIPPABLE_PRIOR_STATUSES:
             raise ValueError(f"cannot-skip-failed-gate:{check['id']}; rerun its command or diagnose a new scoped run")
 
     # Never follow an inventory redirect. Record damaged regular inputs alongside the original archived
@@ -2426,6 +3065,7 @@ def preserve_previous_attempt(
     if checks_dir.is_symlink():
         raise ValueError("gate-checks-directory-redirected")
     logs = _receipt_logs(output, prior, output, archive)
+    shard_members = _shard_members(prior)
     for relative in _GATE_LOGS - logs:
         if os.path.lexists(output / relative):
             raise ValueError(f"gate-publication-unowned-log:{relative}")
@@ -2453,6 +3093,8 @@ def preserve_previous_attempt(
             damaged[relative] = observed
     # Only named members can be retained. An absent canonical log can belong to the candidate alone.
     (archive / CHECKS_DIRNAME).mkdir(parents=True, exist_ok=True)
+    for relative in sorted(shard_members):
+        (archive / relative).write_bytes(_read_gate_file(output / relative, "prior-pytest-shard"))
     for relative in (*_GATE_REPORTS, *inventories):
         if relative in _GATE_LOGS and relative not in logs:
             continue
@@ -2523,7 +3165,7 @@ def preserve_previous_attempt(
     if damaged_logs:
         (archive / "gate-log-errors.json").write_text(json.dumps(damaged_logs, indent=2) + "\n", encoding="utf-8")
     _validate_staged_gates(archive, output, damaged, damaged_logs)
-    return damaged, damaged_logs, legacy_logs
+    return damaged, damaged_logs, legacy_logs, shard_members
 
 
 def main() -> int:
@@ -2567,6 +3209,276 @@ def _admit_tracked_inventory(
     return checkout
 
 
+def _source_refusal(
+    check: dict[str, Any], expected_head: str, checkout: _StructuredCheckout | None
+) -> tuple[dict[str, str], str] | None:
+    """Return the source observation and diagnostic when this gate was refused before its command could launch.
+
+    A refused gate has no execution route and no after-observation. Other pre-launch failures, such as unusable scratch
+    space, leave the source guard satisfied and are not refusals.
+    """
+    source = check.get("source")
+    if (
+        check["status"] != "fail"
+        or "execution_route" in check
+        or not isinstance(source, dict)
+        or source.get("after") is not None
+        or not isinstance(source.get("before"), dict)
+    ):
+        return None
+    if checkout is not None and checkout.rejection is not None:
+        return checkout.rejection
+    error = source_guard_error(source["before"], expected_head)
+    return (source["before"], error) if error else None
+
+
+def _read_pytest_evidence(stdout: Path) -> list[dict[str, Any] | None]:
+    """Read the typed observations of pytest sessions started by shell tests commands."""
+    directory = stdout.with_suffix(".pytest")
+    if not directory.exists():
+        return []
+    if directory.is_symlink():
+        return [None]
+    evidence = []
+    for path in sorted(directory.glob("*.json")):
+        try:
+            evidence.append(json.loads(_read_gate_file(path, "pytest-evidence", 1024 * 1024)))
+        except (OSError, ValueError):
+            evidence.append(None)
+    return evidence
+
+
+def _child_pytest_evidence(proof: dict[str, Any], child_proof: Path) -> Any:
+    """Recover a typed startup failure when pytest never created a normal session receipt."""
+    if "pytest" in proof:
+        return proof["pytest"]
+    startup = child_proof.with_suffix(".startup.json")
+    try:
+        return json.loads(_read_gate_file(startup, "pytest-evidence", 1024 * 1024))
+    except (OSError, ValueError):
+        return None
+
+
+def _pytest_call_evidence(evidence: Any) -> bool:
+    """Require a nonempty collection and at least one call-phase report."""
+    return (
+        isinstance(evidence, dict)
+        and type(evidence.get("collected")) is int
+        and evidence["collected"] > 0
+        and type(evidence.get("calls")) is int
+        and evidence["calls"] > 0
+    )
+
+
+def _apply_pytest_evidence(result: dict[str, Any], observations: list[Any], stderr: Path) -> None:
+    """Enforce observed pytest execution and retain causes backed by typed exceptions."""
+    for observation in observations:
+        evidence = observation if isinstance(observation, dict) else {}
+        modules = evidence.get("missing_modules", [])
+        if (
+            isinstance(modules, list)
+            and all(isinstance(name, str) and PYTHON_MODULE_PATTERN.fullmatch(name) for name in modules)
+            and modules
+        ):
+            result["missing_modules"] = list(dict.fromkeys([*result.get("missing_modules", ()), *modules]))
+        if isinstance(evidence.get("causes"), list):
+            for cause in ("loopback-bind-blocked", "network-unavailable"):
+                if cause in evidence["causes"]:
+                    result.setdefault("cause", cause)
+        refusal = evidence.get("refusal")
+        if not isinstance(refusal, str) and result["status"] == "pass" and not _pytest_call_evidence(evidence):
+            refusal = "pytest execution unproven: expected selected tests and call-phase reports"
+        if isinstance(refusal, str):
+            append_stderr(stderr, refusal)
+            if result["status"] == "pass":
+                result.update(status="fail", exit_code=1)
+        if result["status"] == "pass":
+            result.pop("missing_modules", None)
+            result.pop("cause", None)
+
+
+def _annotate_checks(checks: list[dict[str, Any]], stage: Path, timeout: int, root: Path) -> None:
+    """Record each executable gate's timeout and, for a gate that did not pass, the cause of that outcome.
+
+    The records are annotated before any summary is written, so ``gates.json`` and ``gates.checks.jsonl`` agree. A
+    refused gate never ran, so it records only its cause.
+    """
+    for check in checks:
+        if check["status"] == "not-applicable":
+            continue
+        if check["status"] == "refused":
+            check["cause"] = "source-refused"
+            continue
+        if "shards" in check:  # The aggregate already carries the diagnosis derived from all of its shards.
+            continue
+        check["timeout_seconds"] = timeout
+        if check["status"] == "pass":
+            continue
+        stdout, stderr = (
+            _read_gate_file(path, "gate-log").decode("utf-8", errors="replace") if path.is_file() else ""
+            for stream in ("stdout", "stderr")
+            for path in (stage / check[stream],)
+        )
+        structured_cause = check.get("cause")
+        check["cause"] = classify_gate_failure(check, stdout, stderr)
+        if check["cause"] in {"command-failed", "import-origin-unproven"} and structured_cause:
+            check["cause"] = structured_cause
+        if check["cause"] == "missing-python-package":
+            if "missing_modules" not in check:
+                check["missing_modules"] = list(dict.fromkeys([*missing_modules(stdout), *missing_modules(stderr)]))
+            # A removed submodule of the project's own package is a source failure, not a missing dependency.
+            if any(_first_party_submodule(name, root) for name in check["missing_modules"]):
+                check["cause"] = "command-failed"
+
+
+def _representative_shard(shards: list[dict[str, Any]]) -> dict[str, Any]:
+    """Pick the shard that determines the canonical tests result for publication and validation.
+
+    Preserve the worst status rank. At the same rank, prefer a failed test command over host or source proof failures.
+    Equal candidates keep the first shard in selection order.
+    """
+    return max(
+        shards,
+        key=lambda shard: (
+            _SHARD_STATUS_ORDER[shard["status"]],
+            shard.get("cause") == "command-failed" and shard.get("exit_code") != 0,
+        ),
+    )
+
+
+def _shard_missing_modules(shards: list[dict[str, Any]]) -> list[str]:
+    """Return every module any failing shard reported missing, in shard and first-seen order."""
+    modules: dict[str, None] = {}
+    for shard in shards:
+        if shard["status"] != "pass":
+            modules.update(dict.fromkeys(shard.get("missing_modules", ())))
+    return list(modules)
+
+
+def _publish_shard_artifact(stage: Path, canonical: str, original: str, supplemental: list[str]) -> str:
+    """Write and hash one canonical artifact, including labeled additional failure logs when supplied."""
+    digest = hashlib.sha256()
+    with (stage / canonical).open("xb") as stream:
+        for name in (original, *supplemental):
+            if name != original:
+                header = f"\n\n--- {name} (command-failed) ---\n".encode()
+                stream.write(header)
+                digest.update(header)
+            content = _read_gate_file(stage / name, "pytest-shard-artifact")
+            stream.write(content)
+            digest.update(content)
+    return digest.hexdigest()
+
+
+def _collect_shard_selections(
+    run: Callable[..., dict[str, Any]],
+    spec: PythonTestSpec,
+    partitions: list[tuple[str, ...]],
+    checkout: _StructuredCheckout | None,
+) -> list[str | None]:
+    """Probe every partition under the gate's execution policy before admitting any test calls."""
+    options = spec.arguments[: spec.arguments.index("--") + 1]
+    seen: set[str] = set()
+    selections: list[str | None] = []
+    for number, paths in enumerate(partitions, 1):
+        probe = spec._replace(arguments=(*options, *paths), shard="collect")
+        check = run(python_test=probe, artifact_id=f"pytest-selection-{number:03d}")
+        if checkout is not None and checkout.rejection is not None:
+            return [None] * len(partitions)
+        if check.get("execution_route", {}).get("mode") == "not-started":
+            # Preserve each shard's refusal receipt, even if a subsequent launcher can initialize.
+            return ["unavailable"] * len(partitions)
+        evidence = check.get("python_imports", {}).get("pytest", {})
+        if evidence.get("refusal"):
+            raise ValueError(evidence["refusal"])
+        node_ids = evidence.get("node_ids")
+        if (
+            check.get("exit_code") not in {0, 2, 5}
+            or evidence.get("calls") != 0
+            or not isinstance(node_ids, list)
+            or any(not isinstance(node, str) for node in node_ids)
+        ):
+            raise ValueError(
+                f"--shards could not verify pytest collection for shard {number} (exit {check['exit_code']})"
+            )
+        nodes = set(node_ids)
+        overlap = seen & nodes
+        if len(nodes) != len(node_ids) or overlap:
+            example = min(overlap or nodes)
+            raise ValueError(f"--shards collected overlapping tests in shard {number}: {example}")
+        seen.update(nodes)
+        selections.append(_node_digest(node_ids))
+    return selections
+
+
+def _run_pytest_shards(
+    run: Callable[..., dict[str, Any]],
+    arguments: argparse.Namespace,
+    stage: Path,
+    checkout: _StructuredCheckout | None,
+) -> dict[str, Any]:
+    """Run every partition through the canonical gate and summarize it by its representative shard.
+
+    The aggregate takes its status and cause from the shard ``_representative_shard`` picks and lists all missing
+    modules. Its logs include other command failures. Gap and provisioning decisions use the individual receipts.
+    """
+    spec = arguments.python_test
+    options = spec.arguments[: spec.arguments.index("--") + 1]
+    selections = _collect_shard_selections(run, spec, arguments.shards, checkout)
+    shards = []
+    shard_hashes = {}
+    for number, (paths, selection_digest) in enumerate(zip(arguments.shards, selections), 1):
+        shard_id = f"tests-shard-{number:03d}"
+        files = [f"checks/{shard_id}.{suffix}" for suffix in (*_SHARD_STREAMS.values(), _SHARD_PROOF)]
+        if any(os.path.lexists(stage / name) for name in files):
+            raise ValueError(f"pytest-shard-artifact-already-exists:{shard_id}")
+        selection = spec._replace(arguments=(*options, *paths), shard=selection_digest)
+        shard = run(python_test=selection, artifact_id=shard_id)
+        shard.update(id=shard_id, selected_paths=list(paths))
+        _annotate_checks([shard], stage, arguments.timeout_seconds, arguments.worktree)
+        if arguments.expected_head is not None and _source_refusal(shard, arguments.expected_head, checkout):
+            shard["cause"] = "source-refused"
+        artifacts = (shard.get("source") or {}).get("artifacts", {})
+        shard_hashes.update(artifacts)
+        for name in files[: len(_SHARD_STREAMS)]:
+            if name not in artifacts:
+                shard_hashes[name] = hashlib.sha256(_read_gate_file(stage / name, "pytest-shard-log")).hexdigest()
+        shards.append(shard)
+
+    representative = _representative_shard(shards)
+    aggregate = {
+        **representative,
+        "id": "tests",
+        "duration_seconds": sum(shard["duration_seconds"] for shard in shards),
+        "shards": shards,
+    }
+    del aggregate["selected_paths"]
+    modules = _shard_missing_modules(shards)
+    if modules:
+        aggregate["missing_modules"] = modules
+    # Bind the canonical files and each shard's original evidence to the same receipt.
+    source = aggregate.get("source")
+    if isinstance(source, dict):
+        aggregate["source"] = {**source, "artifacts": shard_hashes}
+    members = dict(_SHARD_STREAMS)
+    if "python_imports" in representative:
+        members["python_imports"] = _SHARD_PROOF
+    for key, suffix in members.items():
+        original = f"checks/{representative['id']}.{suffix}"
+        canonical = f"checks/tests.{suffix}"
+        supplemental = [
+            shard[key]
+            for shard in shards
+            if key in {"stdout", "stderr"} and shard is not representative and shard.get("cause") == "command-failed"
+        ]
+        digest = _publish_shard_artifact(stage, canonical, original, supplemental)
+        if key != "python_imports":
+            aggregate[key] = canonical
+        if original in shard_hashes:
+            shard_hashes[canonical] = digest
+    return aggregate
+
+
 def _run_attempt(arguments: argparse.Namespace, output: Path) -> int:
     """Capture and verify a candidate while the preceding complete receipt remains independently readable."""
     skip_reasons = {gate_id: getattr(arguments, f"skip_{gate_id}") or "" for gate_id in GATE_IDS}
@@ -2580,6 +3492,9 @@ def _run_attempt(arguments: argparse.Namespace, output: Path) -> int:
         commands["types"] = "$null" if sys.platform == "win32" else ":"
         skip_reasons["types"] = skip_reasons["types"] or "no src directory or typed package target"
     environment = gate_environment()
+    if arguments.tool_cache is not None:
+        environment["PRE_COMMIT_HOME"] = str(arguments.tool_cache / "pre-commit")
+        environment["UV_CACHE_DIR"] = str(arguments.tool_cache / "uv")
     if arguments.project_env is not None:
         scripts = arguments.project_env / ("Scripts" if sys.platform == "win32" else "bin")
         environment["PATH"] = os.pathsep.join((str(scripts), environment.get("PATH", "")))
@@ -2629,7 +3544,9 @@ def _run_attempt(arguments: argparse.Namespace, output: Path) -> int:
     stage_identity = stage.lstat()
     archive = stage / "previous"
     recovery_source = ((arguments.worktree or Path.cwd()).as_posix(), arguments.expected_head)
-    damaged, damaged_logs, legacy_logs = preserve_previous_attempt(output, skip_reasons, archive, recovery_source)
+    damaged, damaged_logs, legacy_logs, previous_shards = preserve_previous_attempt(
+        output, skip_reasons, archive, recovery_source
+    )
     archive_identity = archive.lstat() if archive.exists() else None
     history = output / ("gate-diagnostics" if damaged_logs or damaged else "gate-attempts")
     if history.is_symlink() or history.resolve() != output / history.name:
@@ -2639,7 +3556,14 @@ def _run_attempt(arguments: argparse.Namespace, output: Path) -> int:
     checks_dir.mkdir(exist_ok=True)
     (stage / CHECKS_DIRNAME).mkdir()
     approval_name = "checks/tests-skip-approval.json"
-    names = set(_GATE_REPORTS) | set(damaged)
+    names = set(_GATE_REPORTS) | set(damaged) | previous_shards
+    if arguments.shards is not None:
+        # New names must be vacant before executing the candidate, including the optional proof sidecars.
+        for number in range(1, len(arguments.shards) + 1):
+            for suffix in (*_SHARD_STREAMS.values(), _SHARD_PROOF):
+                relative = f"checks/tests-shard-{number:03d}.{suffix}"
+                if relative not in previous_shards and os.path.lexists(output / relative):
+                    raise ValueError(f"gate-publication-unowned-shard:{relative}")
     if not (archive / approval_name).exists():
         if decision is None:
             names.discard(approval_name)
@@ -2671,8 +3595,12 @@ def _run_attempt(arguments: argparse.Namespace, output: Path) -> int:
     default_policy: _SandboxPolicy = (
         "contributor" if arguments.existing_interval or arguments.pr_integrity else "standard"
     )
-    checks = [
-        run_check(
+    # A refusal observed before any gate launched decides the whole attempt; later gates reuse it uninspected.
+    refusal: tuple[dict[str, str], str] | None = None
+    checks: list[dict[str, Any]] = []
+    for gate_id in GATE_IDS:
+        run = partial(
+            run_check,
             gate_id,
             commands[gate_id],
             skip_reasons[gate_id],
@@ -2680,20 +3608,42 @@ def _run_attempt(arguments: argparse.Namespace, output: Path) -> int:
             stage,
             arguments.expected_head,
             arguments.worktree,
-            arguments.python_test,
-            environment,
-            local_source,
+            environment=environment,
+            local_source=local_source,
             run_root=output,
             checkout=checkout,
             pr_integrity=arguments.pr_integrity,
             sandbox_policy="required" if gate_id in required_gates else default_policy,
+            refused=refusal,
         )
-        for gate_id in GATE_IDS
-    ]
+        if gate_id == "tests" and arguments.shards is not None:
+            check = _run_pytest_shards(run, arguments, stage, checkout)
+        else:
+            check = run(python_test=arguments.python_test)
+        shard_started = any("execution_route" in shard for shard in check.get("shards", ()))
+        if (
+            refusal is None
+            and arguments.expected_head is not None
+            and not shard_started
+            and not any("execution_route" in prior for prior in checks)
+        ):
+            refusal = _source_refusal(check, arguments.expected_head, checkout)
+        if refusal is not None and check["status"] == "fail" and "execution_route" not in check:
+            # The command never launched: report the gate as refused, not as one more failure.
+            check.update(status="refused", exit_code=0, reason=REFUSED_ROW_REASON)
+        checks.append(check)
+    _annotate_checks(checks, stage, arguments.timeout_seconds, (arguments.worktree or Path.cwd()).resolve())
     failed = [check["id"] for check in checks if check["status"] in {"fail", "missing-command", "timeout"}]
+    refused_ids = [check["id"] for check in checks if check["status"] == "refused"]
     if approval is not None:
         next(check for check in checks if check["id"] == "tests")["approval"] = approval
-    status = "timeout" if any(check["status"] == "timeout" for check in checks) else "fail" if failed else "pass"
+    status = (
+        "timeout"
+        if any(check["status"] == "timeout" for check in checks)
+        else "fail"
+        if failed or refused_ids
+        else "pass"
+    )
     not_applicable = [check["id"] for check in checks if check["status"] == "not-applicable"]
     (stage / "gates.txt").write_text(
         "".join(f"{check['id']}:{check['status']}\n" for check in checks), encoding="utf-8"
@@ -2710,6 +3660,14 @@ def _run_attempt(arguments: argparse.Namespace, output: Path) -> int:
         "checks_not_applicable": not_applicable,
         "checks": checks,
     }
+    if any(check["status"] not in {"not-applicable", "refused"} for check in checks):
+        payload["timeout"] = {"seconds": arguments.timeout_seconds, "origin": arguments.timeout_origin}
+    if refusal is not None:
+        payload["refusal"] = {"cause": source_refusal_cause(refusal[1]), "reason": refusal[1]}
+    if refused_ids:
+        payload["checks_refused"] = refused_ids
+    if arguments.tool_cache is not None:
+        payload["tool_cache"] = arguments.tool_cache.as_posix()
     if execution_cwd is None:
         payload["source"] = local_source or {
             "worktree": (arguments.worktree or Path.cwd()).as_posix(),
@@ -2725,6 +3683,11 @@ def _run_attempt(arguments: argparse.Namespace, output: Path) -> int:
         raise ValueError("gate-publication-invalid-stage")
     verified = _validate_staged_gates(stage, output)
     inventories = _receipt_inventories(verified)
+    candidate_shards = _shard_members(verified)
+    for name in candidate_shards - previous_shards:
+        if os.path.lexists(output / name):
+            raise ValueError(f"gate-publication-unowned-shard:{name}")
+        before[name] = None
     for name, digest in inventories.items():
         if name not in before:
             state = _file_state(output / name)
@@ -2735,8 +3698,11 @@ def _run_attempt(arguments: argparse.Namespace, output: Path) -> int:
     for name, state in before.items():
         if _file_state(output / name) != state:
             raise ValueError(f"gate-publication-current-changed:{name}")
-        candidate = _file_state(stage / name) if name in _GATE_REPORTS or name in inventories else None
+        admitted = name in _GATE_REPORTS or name in inventories or name in candidate_shards
+        candidate = _file_state(stage / name) if admitted else None
         after[name] = candidate[-1] if candidate else None
+        if name in candidate_shards and candidate is None:
+            raise ValueError(f"gate-publication-missing-shard:{name}")
         if name in inventories and after[name] != inventories[name]:
             raise ValueError("tracked-source-inventory-changed")
     number = None
@@ -2777,15 +3743,13 @@ def _run_attempt(arguments: argparse.Namespace, output: Path) -> int:
     _finish_publication(output)
     result_path = output / "gates.json"
     print(result_path)
-    if arguments.python_test is not None and "tests" in failed:
-        test_errors = (output / CHECKS_DIRNAME / "tests.stderr.txt").read_text(encoding="utf-8", errors="replace")
-        if "ModuleNotFoundError: No module named " in test_errors:
-            print(
-                "Test gate failed on an import. Check the declared dependency and follow the owning workflow's "
-                "dependency preparation rules; retain the failure and continue independent review work where "
-                "authorized. A missing package alone does not complete recovery.",
-                file=sys.stderr,
-            )
+    if any(check["id"] == "tests" and check.get("cause") == "missing-python-package" for check in checks):
+        print(
+            "Test gate failed on an import. Check the declared dependency and follow the owning workflow's "
+            "dependency preparation rules; retain the failure and continue independent review work where "
+            "authorized. A missing package alone does not complete recovery.",
+            file=sys.stderr,
+        )
     return 124 if status == "timeout" else 1 if status == "fail" else 0
 
 

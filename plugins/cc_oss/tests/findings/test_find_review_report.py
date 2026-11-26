@@ -6,6 +6,7 @@ Report discovery and gate parsing run against real files under ``tmp_path``; the
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
@@ -14,6 +15,12 @@ from unittest import mock
 
 import find_review_report as frr
 import pytest
+from _text_io import write_lf
+from _verdict_publication import Publication, candidate, judged, missing
+
+_HEAD = "abcdef1234567"
+_SOFTWARE_LINEUP = "sw-engineer | spawned | roles: Software engineer\n"
+_DROPPED_DOCS = "- Unreviewed dimension: docs+lint — dropped by FANOUT_MAX. Rerun with `/oss:review 7 --full`."
 
 
 def _can_symlink() -> bool:
@@ -481,3 +488,275 @@ class TestMain:
         (workdir / ".reports/review/pr-42/run-002").mkdir()
 
         assert frr.main(["--pr", "42"]) == 1
+
+
+def _fill_gaps_plan(directory: Path, carried: list[str]) -> None:
+    """Write the fill-gaps plan copy the run allocation step places beside a fill-gaps publication."""
+    plan = {
+        "head_sha": _HEAD,
+        "carried": {"assessments": [], "candidates": carried, "open_concerns": [], "findings": []},
+    }
+    write_lf(directory / "fill-gaps.json", json.dumps(plan))
+
+
+def _write_producer(directory: Path, publication: Publication) -> Path:
+    """Write the draft and the frozen reviewed identity required by the producer."""
+    report = publication.write(directory)
+    write_lf(report.with_name("head-sha.txt"), _HEAD + "\n")
+    return report
+
+
+@pytest.fixture
+def review_run(tmp_path: Path) -> Path:
+    """Allocate a numbered report path for tests comparing generated rerun commands."""
+    directory = tmp_path / ".reports/review/pr-7/run-001"
+    directory.mkdir(parents=True)
+    return directory
+
+
+def _keyless(record: dict) -> dict:
+    """Return a candidate record without its ``missing_capability_kind`` key, as saved before the key existed."""
+    return {key: value for key, value in record.items() if key != "missing_capability_kind"}
+
+
+class TestProducerCoverageEvidence:
+    """The publication gate refuses when the evidence it checks is absent, outside the fill-gaps exemption."""
+
+    @pytest.mark.parametrize("name", ["lineup.md", "fill-gaps.json", "head-sha.txt"])
+    def test_missing_parent_evidence_refusal_names_its_owner(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture, name: str
+    ) -> None:
+        """An absent launch artifact produces a labelled refusal that reaches the parent."""
+        report = _write_producer(tmp_path, self._blocked([candidate("V1", "UNVERIFIED")], lineup=None))
+        report.with_name(name).unlink(missing_ok=True)
+        self._assert_parent_refusal(report, capsys, name)
+
+    @pytest.mark.parametrize(
+        ("name", "payload"),
+        [
+            pytest.param("lineup.md", b"sw-engineer | spawned-extra", id="malformed-lineup"),
+            pytest.param("lineup.md", b"\xff\xfe", id="non-utf8-lineup"),
+            pytest.param("lineup.md", b"docs+lint | promoted-unslotted: docs changed", id="unrecorded-lineup-roles"),
+            pytest.param(
+                "lineup.md",
+                b"docs+lint | promoted-unslotted: docs changed | roles: Software engineer",
+                id="wrong-lineup-role",
+            ),
+            pytest.param("fill-gaps.json", b"{", id="malformed-plan"),
+            pytest.param("fill-gaps.json", b'{"head_sha":"abcdef1234567"}', id="plan-omits-carried-records"),
+            pytest.param("fill-gaps.json", b"\xff", id="non-utf8-plan"),
+            pytest.param("head-sha.txt", b"\xff", id="non-utf8-reviewed-head"),
+        ],
+    )
+    def test_damaged_parent_evidence_refusal_names_its_owner(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture, name: str, payload: bytes
+    ) -> None:
+        """An unreadable or malformed launch artifact produces a labelled refusal that reaches the parent."""
+        report = _write_producer(tmp_path, self._blocked([candidate("V1", "UNVERIFIED")]))
+        report.with_name(name).write_bytes(payload)
+        self._assert_parent_refusal(report, capsys, name)
+
+    @staticmethod
+    def _assert_parent_refusal(report: Path, capsys: pytest.CaptureFixture, name: str) -> None:
+        """Assert the CLI refusal contains the exact marker Step 5 uses for parent recovery."""
+        args = ["--report", str(report), "--producer"] + (["--fill-gaps"] if name == "fill-gaps.json" else [])
+        assert frr.main(args) == 1
+        output = capsys.readouterr().out.splitlines()
+        assert "incomplete-review-report" in output[0]
+        assert f"[gate] parent evidence: {name}" in output
+
+    @pytest.mark.parametrize("name", ["review-report.md", "review-validation.json", "findings.jsonl"])
+    def test_corrupt_publication_is_labelled_as_report_failure(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture, name: str
+    ) -> None:
+        """Undecodable publication inputs are refused without assigning them to the launch evidence owner."""
+        report = _write_producer(tmp_path, self._blocked([candidate("V1", "UNVERIFIED")]))
+        path = report.with_name(name)
+        path.write_bytes(path.read_bytes() + b"\xff\n")
+        assert frr.main(["--report", str(report), "--producer"]) == 1
+        output = capsys.readouterr().out
+        assert "incomplete-review-report" in output
+        assert "[gate] parent evidence:" not in output
+
+    @pytest.mark.parametrize(
+        ("unit", "roles", "additional_assessments", "expected_missing"),
+        [
+            pytest.param(
+                "docs+lint",
+                "Documentation reviewer, Linting expert",
+                [missing("Documentation reviewer")],
+                "Linting expert",
+                id="merged-role-omitted",
+            ),
+            pytest.param(
+                "perf+arch",
+                "Performance engineer, Solution architect",
+                [missing("Performance engineer"), judged("Solution architect", "MINOR_EDITS")],
+                "Solution architect",
+                id="merged-role-claimed-completed",
+            ),
+            pytest.param("doc-scribe", "Documentation reviewer", [], "Documentation reviewer", id="standalone-docs"),
+            pytest.param("sw-engineer", "Software engineer", [], "Software engineer", id="standalone-code"),
+            pytest.param(
+                "doc-scribe",
+                "Documentation reviewer",
+                [missing("Documentation reviewer")] * 2,
+                "Documentation reviewer",
+                id="duplicate-missing-record",
+            ),
+            pytest.param(
+                "perf+arch",
+                "Solution architect",
+                [missing("Solution architect")],
+                "",
+                id="only-preselected-member-required",
+            ),
+        ],
+    )
+    def test_unslotted_roles_are_missing_even_when_readiness_already_incomplete(
+        self, review_run: Path, unit: str, roles: str, additional_assessments: list[dict], expected_missing: str
+    ) -> None:
+        """An unrelated reason for incomplete readiness cannot conceal any role the launch record lists."""
+        assessments = [judged("QA specialist", "MINOR_EDITS"), missing("Challenger"), *additional_assessments]
+        fill = f'/oss:review 7 --fill-gaps=.reports/review/pr-7/run-001/review-report.md --roles="{roles.replace(", ", ",")}"'
+        publication = Publication(
+            "REVIEW_V1_PASS", "MINOR_EDITS", "incomplete", assessments,
+            lineup=f"{unit} | promoted-unslotted: scope trigger | roles: {roles}\n",
+            body=f"### Review Confidence\n\n- Unreviewed dimension: {unit} — scope trigger. Rerun with `/oss:review 7 --full` or `{fill}`.",
+        )  # fmt: skip
+        report = _write_producer(review_run, publication)
+        report.with_name("review-publication.published").touch()
+        assert frr.gate_verdict(report)[0] == "Gate: BLOCK"
+        line, reason = frr.publication_verdict(report, producer=True)
+        assert line == ("" if expected_missing else "Gate: BLOCK"), reason
+        assert reason == (
+            f"report requires exactly one presence: missing assessment for {unit!r} roles: {expected_missing}"
+            if expected_missing
+            else ""
+        )
+
+    def _blocked(self, candidates: list[dict], **extra: object) -> Publication:
+        """Publish a judged review whose candidates stay UNVERIFIED, readiness blocked."""
+        extra.setdefault("lineup", _SOFTWARE_LINEUP)
+        return Publication("REVIEW_V1_PASS", "MINOR_EDITS", "blocked", [judged("Software engineer", "MINOR_EDITS")],
+                           candidates, confidence="0.80 — no CUDA host", **extra)  # type: ignore[arg-type]  # fmt: skip
+
+    @pytest.mark.parametrize(
+        ("lineup", "fill_gaps", "fragment"),
+        [
+            pytest.param(None, False, "lineup.md", id="fresh-run-without-lineup"),
+            pytest.param("", False, "lineup.md", id="empty-lineup"),
+            pytest.param("sw-engineer | maybe\n", False, "lineup.md", id="unknown-lineup-state"),
+            pytest.param(None, True, "", id="fill-gaps-run-writes-no-lineup"),
+            pytest.param(_SOFTWARE_LINEUP, False, "", id="lineup-present"),
+        ],
+    )
+    def test_lineup_record_is_required_outside_fill_gaps(
+        self, tmp_path: Path, lineup: str | None, fill_gaps: bool, fragment: str
+    ) -> None:
+        """A fresh ranked run's lineup record is the gate's coverage evidence; its absence is a refusal, not a pass.
+
+        Only a fill-gaps run, named by the caller's ``--fill-gaps`` flag and backed by its plan, writes no lineup.
+        """
+        publication = self._blocked([candidate("V1", "UNVERIFIED")], lineup=lineup)
+        report = _write_producer(tmp_path, publication)
+        if fill_gaps:
+            _fill_gaps_plan(tmp_path, [])
+        line, reason = frr.publication_verdict(report, producer=True, fill_gaps=fill_gaps)
+        assert (bool(line), fragment in reason) == (not fragment, True), reason
+
+    @pytest.mark.parametrize(
+        ("readiness", "allowed"),
+        [
+            pytest.param("incomplete", True, id="incomplete"),
+            pytest.param("blocked", False, id="blocked"),
+            pytest.param("complete", False, id="complete"),
+        ],
+    )
+    def test_unslotted_promoted_unit_forces_incomplete_readiness(
+        self, review_run: Path, readiness: str, allowed: bool
+    ) -> None:
+        """A promoted unit without a slot is a missing required reviewer, so only ``incomplete`` readiness may stand.
+
+        The refused publications omit the unslotted unit's roles from the assessments, so resolve intake reads them;
+        only the lineup record shows the missing reviewer.
+        """
+        reviewers = [judged("Software engineer", "MINOR_EDITS")]
+        publication = Publication(
+            "REVIEW_V1_PASS", "MINOR_EDITS", readiness,
+            [*reviewers, missing("Documentation reviewer")] if readiness == "incomplete" else reviewers,
+            [candidate("V1", "UNVERIFIED")] if readiness == "blocked" else [],
+            confidence="0.70 — docs unit unslotted",
+            lineup=_SOFTWARE_LINEUP + "docs+lint | promoted-unslotted: CHANGELOG.md changed | roles: Documentation reviewer\n",
+            body="### Review Confidence\n\n- Unreviewed dimension: docs+lint — CHANGELOG.md changed. Rerun with "
+            '`/oss:review 7 --full` or `/oss:review 7 --fill-gaps=.reports/review/pr-7/run-001/review-report.md '
+            '--roles="Documentation reviewer"`.',
+        )  # fmt: skip
+        report = _write_producer(review_run, publication)
+        report.with_name("review-publication.published").touch()
+        intake, intake_reason = frr.gate_verdict(report)
+        line, reason = frr.publication_verdict(report, producer=True)
+        assert (bool(intake), bool(line)) == (True, allowed), (intake_reason, reason)
+
+    @pytest.mark.parametrize(
+        ("body", "allowed"),
+        [
+            pytest.param(f"### Review Confidence\n\n{_DROPPED_DOCS}", True, id="visible-generated-line"),
+            pytest.param(
+                "### Review Confidence\n\n- Unreviewed dimension: docs+lint", False, id="token-without-command"
+            ),
+            pytest.param(
+                "### Review Confidence\n\n" + _DROPPED_DOCS.replace("docs+lint", "docs+lint-x"),
+                False,
+                id="longer-unit-name",
+            ),
+            pytest.param(
+                "### Review Confidence\n\n" + _DROPPED_DOCS.replace("docs+lint", "docs+lint+typing"),
+                False,
+                id="unit-is-a-prefix",
+            ),
+        ],
+    )
+    def test_unreviewed_dimension_requires_its_generated_line(self, review_run: Path, body: str, allowed: bool) -> None:
+        """A dropped unit needs its whole generated disclosure in Review Confidence, including the rerun command."""
+        publication = self._blocked([candidate("V1", "UNVERIFIED")], lineup="docs+lint | dropped\n", body=body)
+        line, reason = frr.publication_verdict(_write_producer(review_run, publication), producer=True)
+        assert bool(line) == allowed, reason
+
+    @pytest.mark.parametrize(
+        ("fill_gaps", "carried", "allowed"),
+        [
+            pytest.param(False, [], False, id="fresh-candidate-without-kind"),
+            pytest.param(True, ["V1"], True, id="fill-gaps-carried-verbatim"),
+            pytest.param(True, [], False, id="fill-gaps-new-candidate-without-kind"),
+        ],
+    )
+    def test_every_unverified_candidate_carries_its_capability_kind(
+        self, tmp_path: Path, fill_gaps: bool, carried: list[str], allowed: bool
+    ) -> None:
+        """Omitting ``missing_capability_kind`` cannot evade the provisionable-tooling rule on a fresh record.
+
+        Only a candidate a fill-gaps plan carries verbatim from a run that predates the key may lack it.
+        """
+        publication = self._blocked(
+            [_keyless(candidate("V1", "UNVERIFIED"))], lineup=None if fill_gaps else _SOFTWARE_LINEUP
+        )
+        path = _write_producer(tmp_path, publication)
+        if fill_gaps:
+            _fill_gaps_plan(tmp_path, carried)
+        line, reason = frr.publication_verdict(path, producer=True, fill_gaps=fill_gaps)
+        assert bool(line) == allowed, reason
+        if not allowed:
+            assert "missing_capability_kind" in reason
+
+    def test_fill_gaps_flag_without_its_plan_is_refused(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        """``--fill-gaps`` lifts the lineup rule only beside the run's plan; without it no exemption can be read."""
+        report = _write_producer(tmp_path, self._blocked([candidate("V1", "UNVERIFIED")], lineup=None))
+        assert frr.main(["--report", str(report), "--producer", "--fill-gaps"]) == 1
+        assert "[gate] parent evidence: fill-gaps.json" in capsys.readouterr().out
+
+    def test_fill_gaps_flag_needs_the_producer_gate(self, tmp_path: Path) -> None:
+        """``--fill-gaps`` qualifies the producer gate only; on intake it is a usage error."""
+        with pytest.raises(SystemExit) as exit_info:
+            frr.main(["--report", str(tmp_path / "review-report.md"), "--fill-gaps"])
+        assert exit_info.value.code == 2

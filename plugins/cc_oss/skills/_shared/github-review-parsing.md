@@ -1,4 +1,4 @@
-<!-- file: github-review-parsing.md — consumers: analyse/modes/thread.md, resolve/modes/pr-intelligence.md -->
+<!-- file: github-review-parsing.md — consumers: analyse/modes/thread.md, resolve/modes/pr-intelligence.md, review/modes/preflight.md -->
 
 # GitHub review parsing — fetch completeness, collapsed findings, cross-round dedup
 

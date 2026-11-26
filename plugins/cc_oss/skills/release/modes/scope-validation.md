@@ -43,11 +43,11 @@ IFS= read -r SKILL_DIR < "${TMPDIR:-/tmp}/release-setup-${CSID}/SKILL_DIR" 2>/de
 python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$SKILL_DIR/modes/classify-truth-check.md"  # timeout: 5000
 ```
 
-Follow above and execute. Contains: category table, PR accumulation rules, dedup rules, OMIT-INTERNAL body-signal override, cherry-pick annotation.
+Pass the `BASELINE_FILE` literal printed by this invocation's Shared setup to the **Resolve the published baseline** block in the loaded file. Execute the block before applying the category table, PR accumulation rules, dedup rules, OMIT-INTERNAL body-signal override and cherry-pick annotation.
 
 ## Truth check
 
-Follow `modes/classify-truth-check.md` (Truth check section, loaded above) and execute. Gate: runs after Classify, before Audit changelog. Verify 🚀 Added / 🌱 Changed final names at HEAD; verify ❌ Removed old names exist at `$LAST_TAG` and are absent at HEAD; check ⚠️ Breaking Changes against the baseline before relabeling. Max 3 loop iterations.
+Follow `modes/classify-truth-check.md` (Truth check section, loaded above). Use the commit ID resolved before classification to verify 🚀 Added / 🌱 Changed final names at HEAD, verify ❌ Removed old names exist at `$BASELINE_REF` and are absent at HEAD, and check ⚠️ Breaking Changes against the same baseline before relabeling. Run after Classify and before Audit changelog, for at most 3 iterations.
 
 Inline runs must derive and persist waiver counts from this invocation's ledger immediately after Truth check:
 
@@ -95,7 +95,7 @@ printf '%s\n' "$MIGRATION_DOC" > "${TMPDIR:-/tmp}/release-migration-doc-${CSID}"
 
 Skip entirely when `$MIGRATION_DOC` empty — no migration/upgrade docs exist in project.
 
-**When found**: for every classified item in ⚠️ Breaking Changes, 🗑️ Deprecated, and ❌ Removed — verify present and described in `$MIGRATION_DOC`. "Present" = migration doc contains symbol name or semantically equivalent reference with upgrade instructions.
+**When found**: for every classified item in ⚠️ Breaking Changes, 🗑️ Deprecated, and ❌ Removed — verify present and described in `$MIGRATION_DOC`. "Present" = migration doc contains symbol name or semantically equivalent reference with upgrade instructions; a row in a grouped `old → new` table (Snippet shape, SKILL.md Draft migration guide) counts as present with an upgrade path.
 
 Check each item:
 

@@ -98,6 +98,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -131,10 +132,11 @@ from find_review_report import (  # noqa: E402
     assess_report,
     duplicate_finding_id,
     finding_row_problem,
+    publication_state_problem,
     source_rating,
     supported_outcomes,
 )
-from mint_finding_ids import read_jsonl  # noqa: E402
+from mint_finding_ids import _MAX_JSONL_BYTES, read_jsonl  # noqa: E402
 
 #: Report basename every review run publishes.
 _REPORT_NAME: Final = "review-report.md"
@@ -289,6 +291,7 @@ class _Prior:
     findings: list
     head: str
     gaps: list[Gap]
+    sidecar_sha256: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -396,11 +399,26 @@ def _prior_run_dir(report: Path, pr: str) -> Path:
         raise FillGapsBlocked(f"--fill-gaps {report.as_posix()!r} is not a report under {expected}")
     if not report.is_file():
         raise FillGapsBlocked(f"report {report.as_posix()!r} not found")
+    if problem := publication_state_problem(report):
+        raise FillGapsBlocked(problem)
     return run_dir
 
 
-def _load_prior(run_dir: Path) -> tuple[dict, list, str]:
-    """Read the prior run's envelope, actionable rows and reviewed head string.
+def _read_prior_findings(path: Path) -> bytes:
+    """Read at most one byte past the shared ledger size limit."""
+    with path.open("rb") as handle:
+        return handle.read(_MAX_JSONL_BYTES + 1)
+
+
+def _parse_prior_findings(content: bytes) -> list:
+    """Decode the same JSONL snapshot that the plan fingerprints."""
+    if len(content) > _MAX_JSONL_BYTES:
+        raise ValueError(f"findings.jsonl is over the {_MAX_JSONL_BYTES}-byte cap")
+    return [json.loads(line) for line in content.decode("utf-8").splitlines() if line.strip()]
+
+
+def _load_prior(run_dir: Path) -> tuple[dict, list, str, dict[str, str]]:
+    """Read the prior run's records, reviewed head and digests of the sidecar bytes parsed here.
 
     Raises:
         FillGapsBlocked: a sidecar is missing or malformed, the run is legacy or a terminal REJECT, or no head is known.
@@ -408,8 +426,10 @@ def _load_prior(run_dir: Path) -> tuple[dict, list, str]:
     report = run_dir / _REPORT_NAME
     fields = _parse_header_fields(report.read_text(encoding="utf-8", errors="replace").splitlines()) or {}
     try:
-        data = json.loads((run_dir / "review-validation.json").read_text(encoding="utf-8"))
-        findings = read_jsonl(run_dir / "findings.jsonl")
+        validation_bytes = (run_dir / "review-validation.json").read_bytes()
+        data = json.loads(validation_bytes.decode("utf-8"))
+        findings_bytes = _read_prior_findings(run_dir / "findings.jsonl")
+        findings = _parse_prior_findings(findings_bytes)
     except (OSError, ValueError, RecursionError) as exc:
         raise FillGapsBlocked(
             f"prior run has no readable review-validation.json/findings.jsonl ({type(exc).__name__}); "
@@ -433,7 +453,11 @@ def _load_prior(run_dir: Path) -> tuple[dict, list, str]:
     # Same shape the reject gate accepts; a stray short string would prefix-match almost any PR head.
     if not COMMIT_ID_RE.fullmatch(head):
         raise FillGapsBlocked("prior head-sha.txt is not a 7-40 or 64 hex commit id")
-    return data, findings, head
+    sidecar_sha256 = {
+        "review-validation.json": hashlib.sha256(validation_bytes).hexdigest(),
+        "findings.jsonl": hashlib.sha256(findings_bytes).hexdigest(),
+    }
+    return data, findings, head, sidecar_sha256
 
 
 def _read_prior(report: Path, pr: str) -> _Prior:
@@ -442,8 +466,8 @@ def _read_prior(report: Path, pr: str) -> _Prior:
     Raises:
         FillGapsBlocked: the report is not a published run of PR ``pr``, or ``_load_prior`` refuses it.
     """
-    data, findings, head = _load_prior(_prior_run_dir(report, pr))
-    return _Prior(pr, report, data, findings, head, assess_report(report).gaps)
+    data, findings, head, sidecar_sha256 = _load_prior(_prior_run_dir(report, pr))
+    return _Prior(pr, report, data, findings, head, assess_report(report).gaps, sidecar_sha256)
 
 
 def _unknown(requested: list[str], known: list[str], kind: str) -> None:
@@ -824,7 +848,7 @@ def build_plan(request: PlanRequest) -> dict:
         request: PR number, prior report path, requested roles/candidates and the current PR head.
 
     Returns:
-        The plan: prior artifact paths, the reviewed head string, re-run roles, re-validated ``candidates``,
+        The plan: prior paths and sidecar digests, the reviewed head, re-run roles, re-validated ``candidates``,
         ``publish_rows`` (named CONFIRMED candidates that only need their findings row; carried, not re-validated),
         spawn units, carried record keys and the number of ``Agent()`` spawns (dimension units plus the consolidator).
 
@@ -861,6 +885,7 @@ def build_plan(request: PlanRequest) -> dict:
         "prior_report": request.report.resolve().as_posix(),
         "prior_validation": (run_dir / "review-validation.json").resolve().as_posix(),
         "prior_findings": (run_dir / "findings.jsonl").resolve().as_posix(),
+        "prior_sha256": prior.sidecar_sha256,
         "head_sha": prior.head,
         "roles": request.roles,
         "candidates": list(scope.revalidate),
@@ -1218,45 +1243,128 @@ def _prior_sidecar(plan: dict, key: str, name: str) -> Path:
     return path
 
 
+def _verify_names(data: dict, fields: tuple[str, ...]) -> None:
+    """Require explicit lists of names before using the plan to select records."""
+    for key in fields:
+        names = data.get(key)
+        if not isinstance(names, list) or not all(isinstance(name, str) and name for name in names):
+            raise ValueError(f"{key} is not a list of nonempty strings")
+
+
+def _verify_source_records(records: list, key: str, required: list[str]) -> None:
+    """Refuse a comparison when the prior sidecar cannot supply the planned records."""
+    names = _names(records, key)
+    if len(names) != len(records):
+        raise ValueError(f"malformed or duplicate prior records keyed by {key}")
+    if set(names) != set(required):
+        raise ValueError(f"prior {key} values do not match the planned carried records")
+
+
+def _verify_object(path: Path) -> dict:
+    """Read a verification sidecar with an object at the top level."""
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"{path.name} is not a JSON object")
+    return value
+
+
+def _verify_prior(plan: dict, prior_validation: Path, prior_findings: Path) -> tuple[dict, list]:
+    """Require the frozen sidecar digests before comparing the prior and new publications."""
+    digests = plan.get("prior_sha256")
+    if not isinstance(digests, dict) or any(
+        not isinstance(digest := digests.get(path.name), str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        for path in (prior_validation, prior_findings)
+    ):
+        raise FillGapsBlocked(f"prior {PLAN_NAME} lacks valid SHA-256 digests for both sidecars")
+    return (
+        _verify_prior_validation(plan, prior_validation, digests[prior_validation.name]),
+        _verify_prior_findings(plan, prior_findings, digests[prior_findings.name]),
+    )
+
+
+def _verify_prior_validation(plan: dict, path: Path, digest: str) -> dict:
+    """Verify the envelope snapshot and preserve diagnostics for malformed records."""
+    carried = plan["carried"]
+    changed = ""
+    try:
+        content = path.read_bytes()
+        if hashlib.sha256(content).hexdigest() != digest:
+            changed = f"prior {path.name} changed since the plan"
+        prior = json.loads(content.decode("utf-8"))
+        if not isinstance(prior, dict):
+            raise ValueError(f"{path.name} is not a JSON object")
+        sections = (
+            ("assessments", "role", plan["roles"]),
+            ("candidates", "id", plan["candidates"]),
+            ("open_concerns", "candidate_id", plan["candidates"]),
+        )
+        for section, key, rerun in sections:
+            records = prior.get(section)
+            if not isinstance(records, list):
+                raise ValueError(f"prior {section} is not a list")
+            _verify_source_records(
+                [record for record in records if not _named(record, key, rerun)], key, carried[section]
+            )
+    except (OSError, *_MALFORMED) as exc:
+        raise FillGapsBlocked(f"{changed or f'prior {path.name}'} ({type(exc).__name__}: {str(exc)!r})") from exc
+    if changed:
+        raise FillGapsBlocked(changed)
+    return prior
+
+
+def _verify_prior_findings(plan: dict, path: Path, digest: str) -> list:
+    """Verify the findings snapshot and preserve diagnostics for malformed rows."""
+    carried = plan["carried"]
+    changed = ""
+    try:
+        content = _read_prior_findings(path)
+        if len(content) > _MAX_JSONL_BYTES or hashlib.sha256(content).hexdigest() != digest:
+            changed = f"prior {path.name} changed since the plan"
+        rows = _parse_prior_findings(content)
+        kept = [row for row in rows if not _named(row, "candidate_id", plan["candidates"])]
+        _verify_source_records(kept, "id", carried["findings"])
+        if not all(_named(row, "candidate_id", carried["candidates"]) for row in kept):
+            raise ValueError("prior findings rows do not match the planned carried candidates")
+    except (OSError, *_MALFORMED) as exc:
+        raise FillGapsBlocked(f"{changed or f'prior {path.name}'} ({type(exc).__name__}: {str(exc)!r})") from exc
+    if changed:
+        raise FillGapsBlocked(changed)
+    return rows
+
+
 def verify_carry(report: Path) -> list[str]:
-    """Check a published fill-gaps run kept every carried prior record and every requested name.
-
-    Never raises on the plan's or the sidecars' content: an unreadable file, a non-object envelope or an oddly typed
-    record becomes one problem line.
-
-    Args:
-        report: The new run's ``review-report.md``; ``fill-gaps.json`` must sit beside it.
-
-    Returns:
-        One problem string per violation; empty when the carry-over is intact.
-
-    Examples:
-        >>> verify_carry(Path("no-such-run/review-report.md"))
-        ['fill-gaps.json beside the report unreadable (FileNotFoundError); not a fill-gaps run']
-    """
+    """Return routed diagnostics for a fill-gaps publication, or an empty list when carry-over is intact."""
+    parent = "[gate] parent evidence:"
     try:
-        plan = json.loads(report.with_name(PLAN_NAME).read_text(encoding="utf-8"))
-    except (OSError, ValueError, RecursionError) as exc:
-        return [f"{PLAN_NAME} beside the report unreadable ({type(exc).__name__}); not a fill-gaps run"]
+        plan = _verify_object(report.with_name(PLAN_NAME))
+        _verify_names(plan, ("roles", "candidates", "publish_rows"))
+        carried = plan.get("carried")
+        if not isinstance(carried, dict):
+            raise ValueError("carried is not a JSON object")
+        _verify_names(carried, ("assessments", "candidates", "open_concerns", "findings"))
+        prior_validation = _prior_sidecar(plan, "prior_validation", "review-validation.json")
+        prior_findings = _prior_sidecar(plan, "prior_findings", "findings.jsonl")
+    except (OSError, *_MALFORMED) as exc:
+        return [f"{parent} prior {PLAN_NAME} ({type(exc).__name__}: {str(exc)!r})"]
     try:
-        prior = json.loads(
-            _prior_sidecar(plan, "prior_validation", "review-validation.json").read_text(encoding="utf-8")
-        )
-        prior_rows = read_jsonl(_prior_sidecar(plan, "prior_findings", "findings.jsonl"))
-        current = json.loads(report.with_name("review-validation.json").read_text(encoding="utf-8"))
-        current_rows = read_jsonl(report.with_name("findings.jsonl"))
-    except (OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
-        return [f"prior or new sidecar unreadable ({type(exc).__name__}: {exc})"]
-    shapes = {"prior review-validation.json": prior, "new review-validation.json": current, PLAN_NAME: plan}
-    not_objects = [name for name, value in shapes.items() if not isinstance(value, dict)]
-    if not_objects or not isinstance(plan.get("carried"), dict):
-        return [f"{name} is not a JSON object" for name in not_objects or [f"{PLAN_NAME} carried"]]
+        prior, prior_rows = _verify_prior(plan, prior_validation, prior_findings)
+    except FillGapsBlocked as exc:
+        return [f"{parent} {exc}"]
+    sidecar = "review-validation.json"
     try:
-        return _carried_problems(plan["carried"], prior, prior_rows, current, current_rows) + _requested_problems(
-            plan, current, current_rows
-        )
+        current = _verify_object(report.with_name(sidecar))
+        sidecar = "findings.jsonl"
+        current_rows = read_jsonl(report.with_name(sidecar))
+    except (FileNotFoundError, ValueError, RecursionError) as exc:
+        return [f"[carry] new {sidecar} unreadable ({type(exc).__name__}: {str(exc)!r})"]
+    except OSError as exc:
+        return [f"[gate] new run evidence: {sidecar} ({type(exc).__name__}: {str(exc)!r})"]
+    try:
+        problems = _carried_problems(carried, prior, prior_rows, current, current_rows)
+        problems += _requested_problems(plan, current, current_rows)
     except _MALFORMED as exc:
-        return [f"malformed plan or sidecar record ({type(exc).__name__}: {exc})"]
+        return [f"{parent} prior plan or sidecar record ({type(exc).__name__}: {str(exc)!r})"]
+    return [f"[carry] {problem}" for problem in problems]
 
 
 def _write_outputs(plan_out: Path, head_out: Path, plan: dict | None) -> None:
@@ -1286,12 +1394,9 @@ def _run_plan(args: argparse.Namespace) -> int:
 
 
 def _run_verify(args: argparse.Namespace) -> int:
-    """Print every carry-over violation of a published fill-gaps run."""
+    """Print the carry verifier's diagnostics with their recovery routes."""
     problems = verify_carry(Path(args.report))
-    for problem in problems:
-        print(f"[carry] {problem}")
-    if not problems:
-        print("[carry] intact")
+    print("\n".join(problems) if problems else "[carry] intact")
     return 1 if problems else 0
 
 

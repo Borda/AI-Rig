@@ -729,7 +729,7 @@ The blueprint and sentinel classifiers treat command-table names inside fixed or
 
 Hooks register from `hooks/hooks.json` when the plugin is enabled; no settings edit is needed.
 
-Executable helper blocks resolve and export `PLUGIN_ROOT` before calling `python "$PLUGIN_ROOT/bin/<script>.py"`. Loaders render the plain bootstrap token in modes and templates to the validated owning-plugin path. The blueprint hook checks the bound source template and exact rendered command; altered commands still use normal permission checks, and deny rules remain effective. Run these examples from a host-substituted or loader-rendered copy; an ordinary shell does not supply the bootstrap token.
+Executable helper blocks resolve and export `PLUGIN_ROOT` before calling `python "$PLUGIN_ROOT/bin/<script>.py"`. Loaders render the plain bootstrap token in modes and templates to the validated owning-plugin path. The blueprint hook checks the bound source template and rendered command, preserving whitespace and blank lines inside quoted arguments in the digest. An altered quoted value uses normal permission checks, and deny rules remain effective. Run these examples from a host-substituted or loader-rendered copy, where the bootstrap token is available.
 
 - They run `node` from PATH, then `/opt/homebrew/bin/node` or `/usr/local/bin/node`. When none exists, hooks skip without blocking and one `SessionStart` check reports once per session that they are inactive.
 - The plugin's `bin/python` and native Windows `bin/python.cmd` probe candidate runtimes for Python 3.10+ before executing the workload once. An eligible system `python` takes precedence; missing eligible runtimes produce a clear diagnostic.
@@ -766,7 +766,7 @@ python "$PLUGIN_ROOT/bin/verify_blueprint_audit.py" prune --older-than 30 --dry-
 
 Progress tables come only from the ledger helper and include reconciliation of previous dispositions and current carried, repeat-route and new findings for all tiers and security. Old means a known invariant, including closed history, rather than only previous-row carryover. Reviews run before a ledger are disclosed as pre-ledger prose, never invented table rows. Repeated review/fix requests, a second independent review of the same change, or a repeated skill review/fix cycle activate the full loop before the next reviewer dispatch, with its stop rules and user-set round budget.
 
-`rules/quality-gates.md` requires confidence blocks on analysis output, defines report-file and terminal-header formatting, and requires independent review/fix cycles to follow its local adversarial-loop procedure. When a `foundry:challenger` round reports `"codex_blocked": "quota"`, the rest of that loop runs without Codex. Confidence describes the correctness of the delivered result and how it was checked; completion is reported separately, and a high score does not pass an unmet gate.
+`rules/quality-gates.md` requires confidence blocks on analysis output, defines report-file and terminal-header formatting, and requires independent review/fix cycles to follow its local adversarial-loop procedure. With Foundry installed, each loop round uses `foundry:challenger --codex-full`. With Bridge alone, permitted independent passes use `bridge:review`. When a challenger round reports `"codex_blocked": "quota"`, the rest of that loop runs without Codex. Confidence describes the correctness of the delivered result and how it was checked. Completion and gate status are reported separately.
 
 `/research:setup` installs one variant at `research-quality-gates.md`:
 

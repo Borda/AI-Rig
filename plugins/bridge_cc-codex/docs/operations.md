@@ -102,7 +102,7 @@ A supervisor that fails with an internal error before producing an envelope reco
 
 On Windows, `stalled` may never appear after supervisor PID reuse. Retain the launch budget and dispatch time (`--timeout-seconds`, default 600 seconds for `implement` when omitted); stop waiting at `--timeout-seconds` × 1.2 + 9 seconds termination/drain + 120 seconds startup grace, measured from dispatch, then read `/bridge:result`. Report incomplete work if no result exists; that deadline does not prove the child stopped or release ownership of paths it may still be editing.
 
-Retention is automatic and runs at most once per call without failing it: completed job artifacts under `.temp/bridge` older than 30 days or beyond the newest 200 completed jobs are removed, never following symlinks and never touching a queued or running job or the transcripts it references. `health.jsonl` rotates at 5 MiB and keeps one previous generation, `health.jsonl.1`. A supervisor that dies abruptly cannot enforce the hard cutoff and may leave its peer running, so after `stalled` edit the workspace only once the peer is confirmed terminated or the cutoff has passed.
+Retention is automatic and runs at most once per call without failing it: completed job artifacts under `.temp/bridge` older than 30 days or beyond the newest 200 completed jobs are removed, never following symlinks and never touching a queued or running job or the transcripts it references. `health.jsonl` rotates at 5 MiB and keeps one previous generation, `health.jsonl.1`. A supervisor that dies abruptly cannot enforce the hard cutoff and may leave its peer running, so after `stalled` edit the workspace only once the peer is confirmed terminated (a terminal peer status or a confirmed cancellation); an elapsed cutoff never releases ownership.
 
 Finalization freezes the bounded capture under its lock; a failed drain returns a non-retrying blocked drain failure rather than timeout or cancellation unless output-limit was already observed, and late unseen bytes are not reclassified as output-limit.
 
@@ -152,6 +152,7 @@ Capture compaction:
 Output-limit recovery steps:
 
 1. Read `blockers` and the bounded `transcript_path`. When `incident` is present, open the JSON file at that workspace-relative path and inspect its `fault` member.
+   - `confidence_null_reason` names the same stop as `output-limit` without opening the incident; every envelope carries one closed-set code whenever `confidence` is `null` (`rules/envelope.md` §Confidence).
    - Optional Codex-only `partial_output` in the envelope and incident is an unverified fragment of the last complete agent message, bounded to 4 KiB of UTF-8; it is absent for Claude and when no message was seen.
    - Label it unverified and use it only to scope the split follow-up, never as findings or a verdict: status stays `blocked`, fault stays `output-limit`, and findings stay empty.
    - Treat the call as incomplete even if the transcript contains useful work.

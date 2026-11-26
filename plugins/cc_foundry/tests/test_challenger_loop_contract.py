@@ -107,6 +107,47 @@ def test_challenger_states_delivery_rule(clause: str) -> None:
     assert clause in _flat(_CHALLENGER)
 
 
+@pytest.mark.parametrize(
+    "clause",
+    [
+        pytest.param("`--codex-full` → `CODEX_MODE=full`", id="full-mode-flag"),
+        pytest.param("it wins over `--codex-full`", id="no-codex-wins"),
+        pytest.param("Codex reviews the whole scope the brief assigns, not a sample", id="codex-reviews-whole-scope"),
+        pytest.param('args="--partition-file <that path> --wave 1 --effort high', id="codex-partition-call"),
+        pytest.param("`--expect-digest <partition_digest of wave 1>`", id="codex-later-waves-keep-digest"),
+        pytest.param("Do not open `CODEX_OUTPUT` before your own findings are final", id="engines-do-not-anchor"),
+        pytest.param("Merge by violated invariant, never by file:line", id="merge-by-invariant"),
+        pytest.param("Every Codex-only finding gets the Step 5 refutation", id="codex-only-is-reproduced"),
+        pytest.param("Codex silence is not a refutation", id="opus-only-stays"),
+        pytest.param('"engines": {"both": N, "opus_only": N, "codex_only": N, "codex_refuted": N}', id="engine-counts"),
+    ],
+)
+def test_challenger_dual_engine_mode_runs_both_engines_over_the_whole_scope(clause: str) -> None:
+    """``--codex-full`` makes a challenger round the reproduced union of Opus and Codex, each over the whole scope.
+
+    The bounded cross-check sent Codex one call over at most five files, so a round was Opus plus a sample; the full
+    mode partitions the scope, keeps the engines independent until both are final, and merges by invariant.
+    """
+    assert clause in _flat(_CHALLENGER)
+
+
+@pytest.mark.parametrize("relative", [_LOOP_RULE, "codex-rig/shared/adversarial-loop.md"])
+@pytest.mark.parametrize(
+    "clause",
+    [
+        pytest.param("`foundry:challenger` dispatched with `--codex-full`", id="dual-engine-route"),
+        pytest.param("Do not swap to one engine alone mid-loop", id="no-single-engine-swap"),
+        pytest.param("That ask carries a redesign recommendation for the section", id="third-occurrence-redesign"),
+        pytest.param("never offers a fourth instance fix as the only option", id="no-fourth-instance-fix"),
+        pytest.param("A finding in code the change did not author is fixed like any other", id="preexisting-is-fixed"),
+    ],
+)
+def test_loop_rule_requires_dual_engine_review_and_redesign_after_three_rounds(relative: str, clause: str) -> None:
+    """The loop rule names the combined reviewer, fixes pre-existing findings and asks for a redesign at a third
+    repeat."""
+    assert clause in _flat(relative)
+
+
 @pytest.mark.parametrize("tier", ["security", "critical", "high", "medium", "low", "nit"])
 def test_challenger_maps_findings_to_loop_tier(tier: str) -> None:
     """Every adversarial-loop tier has a row in the challenger's mapping, so its counts fold into the progress table.

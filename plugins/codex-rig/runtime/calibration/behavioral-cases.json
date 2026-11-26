@@ -3912,6 +3912,44 @@
       "expected_findings": [
         "authorized-review-abandoned"
       ],
+      "id": "code-review-fresh-collection-only-handoff",
+      "prompt": "A user selects New review after the previous report fails validation. The current PR is open and the collector verifies the isolated checkout. The parent releases its slot and ends with a table of completed collection and unstarted review. No user stop or missing prerequisite exists. Assess the release and handoff. Recover the claim, reverify the source, inspect the diff, reconcile findings, run the gates and deliver this run's validated completion output with the normal tables.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "stale-online-triage"
+      ],
+      "id": "code-review-same-commit-new-discussion",
+      "prompt": "A user explicitly asks for a re-review after new feedback. The commit matches a prior report, so the agent repeats its verdict without collecting the current comments, reviews, and thread replies. Assess the freshness of the evidence and the missing review work.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "authorized-remediation-abandoned"
+      ],
+      "id": "code-remediate-prepared-dispatch-stop",
+      "prompt": "A PR remediation with +review successfully prepares the nested reviewer calls and still has authorization and verified source. It releases its checkout claims and ends with an incomplete table, listing dispatch as the next step. Assess whether preparation permits a terminal handoff and how the parent should continue through review, current online intake and scope selection.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "unrun-challenge-blocks-completion"
+      ],
+      "id": "code-remediate-unrun-challenge-blocks-completion",
+      "prompt": "Code Remediate fixes every selected finding with local commits, and every gate passes. The bounded independent implementation challenge did not run because approval review denied the bridge call. The agent reports remediation incomplete, adds an independent-review unresolved row and asks the user to authorize another review. Assess the completion status and how the challenge that did not run is handled.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-remediate-unrun-challenge-recorded-limitation",
+      "prompt": "Code Remediate fixes every selected finding and every gate passes. The bounded independent implementation challenge did not run because its route was unavailable. The agent reports remediation complete, lists implementation challenge not run: route unavailable under limitations, records the implementation-challenge-not-run confidence gap with its deduction, claims no independent review and asks nothing. Assess the completion status and how the challenge that did not run is handled.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "authorized-review-abandoned"
+      ],
       "id": "code-review-fallback-preparation-terminal-stop",
       "prompt": "A reviewer repair is ineligible, but source remains verified and the authorized scope does not require independence. The parent announces the supported fallback, creates a new run containing only collected PR metadata, and ends by asking the user to rerun remediation. No capability denial or missing decision exists. Assess the omitted fresh parent inspection, validation, promotion, completion and nested remediation continuation.",
       "target": "code-review"

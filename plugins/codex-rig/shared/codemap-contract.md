@@ -2,7 +2,7 @@
 
 # Codemap-py structural-context contract — codex-rig
 
-Protocol: `codemap-py.integration.v1`. Codex Rig is **consumer**, never provider — it reads only public `codemap-py` CLI/JSON surface (`doctor --json`, `query <subcommand>`) via `codemap_adapter.py`. It never imports `codemap_py`, never reads codemap-py cache internals or source-tree paths, and never depends on `codemap-py` being installed.
+Protocol: `codemap-py.integration.v1`. Codex Rig consumes the public `codemap-py` CLI and JSON surface (`context`, `doctor --json`, and `query <subcommand>`) through `codemap_adapter.py`. Provider discovery uses the executable, so it works independently of the producer's Python modules, cache internals, and repository layout.
 
 ## Launcher resolution
 
@@ -94,6 +94,25 @@ Provider maps only case-sensitive `.py` post-image paths from diff file, and rev
 - Recovered pre-rule run: run restored by `review_prepare.py recover-native-provenance` (which leaves `native-recovery/inspection-summary.json` and `specialist-manifest.native-recovery.candidate.json`) never re-runs adapter retroactively. It keeps its existing schema-3 artifact, or, with none, records `codemap_context: "not-required-historical"` in result metadata. Validator requires both recovery files, marker as JSON object and candidate carrying recovery identity (`schema_version` 8, `manifest_kind` `native-wave`, `dispatch_protocol` `paged-context-v6`), and rejects exemption beside real probe artifact or any other value.
 - `code-remediate` and `implement` persist no canonical changed-file listing for validator to classify, so their requirement is instruction-level; their own notes still name artifact path and status.
 - `assess`, `investigate`, `optimize`, `research`, `audit`, and `release` keep optional decision-point probe.
+
+## Structural context at the reviewed head
+
+The standard `review` CLI batch used by review and remediation reads the head from a checkout receipt matching `--root` in the run. It uses `local-checkout.json` for PR review, `pr/local-checkout.json` for PR remediation, and `review-worktree.json` (typically under `local-source/`) or `local-worktree-owner.json` for local review. It passes the collected diff and `--out <run-directory>/codemap-structural-context.json` to `codemap-py context` (requires the Codemap provider). For a commit checkout it passes `--expect-head <reviewed SHA>` so the producer verifies the head before building and refuses uncommitted or untracked indexed Python (`head-mismatch`). Omit `--expect-head` for a local working-tree or path review mirror. The provider analyzes the retained overlay and records `expected_head: null`. The adapter verifies the mirror and collected diff around the query, records the receipt's Git anchor as `expected_head`, and binds the overlay with `source_snapshot_sha256`. The index base defaults to the run's `codemap-index` directory, with `CODEMAP_INDEX_DIR` available as an override. A relative override resolves against the adapter's working directory, and an override that lands inside the reviewed root yields to the run's `codemap-index`, since the producer refuses an index base inside the source. The producer keeps the head-specific index outside reviewed source and honors `SCAN_NO_AUTOBUILD=1`.
+
+The main artifact keeps its existing schema and records the provider's status, closed cause, diagnostic, and any bounded fallback in the optional `structural_context` field. A successful provider answer still appears under `queries[]` as `diff-impact`. The provider's `not-applicable` response follows the no-Python route with no query or structural gap.
+
+The exact-head call replaces the legacy doctor and query subprocesses for this batch. It uses the caller's `--timeout` as an outer deadline when supplied. To share a prepared index with a targeted follow-up, use the producer record's `index.dir` as that follow-up's `CODEMAP_INDEX_DIR`.
+
+| Provider status | Adapter status | Recorded evidence |
+| -- | -- | -- |
+| `available` | `available` | Bounded query answer. The existing adapter check still degrades an answer that omitted a Python change, such as a mode-only change without a text hunk. |
+| `degraded` | `degraded` | Bounded query answer and producer caveats in `status_reasons`. |
+| `unavailable` | `degraded` | `status_reasons` contains `context: <cause>: <detail>`. Text-search fallback, when present, supplies low-confidence candidates and leaves impact unknown. |
+| `not-applicable` | `available` | `non-python-scope` in the summary with no structural gap. |
+
+The closed unavailable causes are `codemap-not-installed`, `codemap-interpreter-unsupported`, `codemap-timeout`, `index-missing`, `index-stale`, `index-root-mismatch`, `index-busy`, `index-build-failed`, `query-failed`, `context-request-invalid`, `head-mismatch`, `source-unavailable`, and `diff-unavailable`. The adapter records `context-request-invalid` itself when the producer exits 2 with `{"error": "invalid_context_request"}`: the request was refused as written, which is no failed query. A cause introduced by a newer producer maps to `query-failed` in the main artifact. The raw producer record retains its original cause when written.
+
+A launcher that exits 2 with usage for an unknown command selects the existing `doctor` and `diff-impact` path. That path also handles calls without a matching receipt. A missing launcher retains `absent` and records `codemap-not-installed`, including in remediation. Exit 127 from the context launcher records `codemap-interpreter-unsupported`, and an outer deadline records `codemap-timeout`. Missing tools, missing indexes, and failed builds remain non-fatal and require no install, approval, or user question. The review validator binds new context summaries to the checkout receipt and run diff and continues to read older artifacts.
 
 ## Specialist follow-up queries
 

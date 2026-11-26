@@ -291,6 +291,8 @@ const REDIRECTING_CONFIG = /^(?:remote|url|push|branch|include|includeif)\./i;
 const CONFIG_VARIABLE = /\b(?:GIT_CONFIG(?:_[A-Z0-9_]+)?|HOME|XDG_CONFIG_HOME)=/;
 // A word whose value the shell sets at run time.
 const DYNAMIC_WORD = /[$`]/;
+// Until a push value is known to be one argv word, expansion may introduce another option or operand.
+const UNSETTLED_WORD = /[$`*?\[\]{}~]/;
 
 // What one push approval covers (user decision "approved branch only"): one push of the current branch at the
 // approved HEAD to a configured remote name. Options one approval may carry; every other one is outside it — the
@@ -389,12 +391,9 @@ const READ_FORMS = {
 // containing it is a force. A long option is a force when its name (before any
 // `=`) starts with `force` or is a prefix of a FORCE_LONG_OPTIONS entry; never a
 // substring test, since `--follow-tags` also contains an f and is not a force.
-function isForceFlag(token) {
-  if (token.startsWith("--")) {
-    const name = token.slice(2).split("=")[0];
-    return name.startsWith("force") || (name !== "" && FORCE_LONG_OPTIONS.some((option) => option.startsWith(name)));
-  }
-  return token.startsWith("-") && token.length > 1 && token.includes("f");
+function isForceFlag(option) {
+  const name = option.slice(2);
+  return name.startsWith("force") || (name !== "" && FORCE_LONG_OPTIONS.some((force) => force.startsWith(name)));
 }
 
 // A push carrying force in any spelling can never be authorized — checked before
@@ -415,11 +414,8 @@ function isForceFlag(token) {
 // Ref deletion (`:ref`, `--delete`, `--prune`) is not a force: it needs a
 // push token like any push.
 function isForcePush(pushArgs) {
-  const args = pushArgs.slice(1);
-  if (args.some(isForceFlag)) return true;
-  // Refspecs are the non-flag arguments after the remote. A leading `+` on any
-  // of them requests a non-fast-forward update — a force push by another name.
-  return args.some((t) => t.startsWith("+"));
+  const parsed = parsePushWords(pushArgs.slice(1));
+  return parsed.force || parsed.operands.slice(parsed.namedRepo ? 0 : 1).some((ref) => ref.startsWith("+"));
 }
 
 // One reading's push arguments from `push` on, or null when it pushes nothing. git runs a program
@@ -479,25 +475,23 @@ function wipeLegacySentinels(cwd) {
   } catch {}
 }
 
-// Delete the push tokens and the gh write token with the claims their spent copies left, in the session project's
-// common dir, so an approval never outlives its session or a /clear. Only foundry ships this hook; in an install
-// without foundry each token's expiry (15 minutes, a run push token 12 hours) bounds it.
-function wipeTokens(cwd) {
+/** Clean up the owning session's pending and spent tokens in the common dir. */
+function wipeTokens({ cwd, session_id: sessionId }) {
   const grants = loadGrants();
   for (const scope of [PUSH_SCOPE, PUSH_RUN_SCOPE, GH_WRITE_SCOPE]) {
     try {
-      if (grants) grants.removeRecord(scope, { cwd });
+      if (grants) grants.removeRecord(scope, { cwd, sessionId });
     } catch {}
   }
 }
 
 // One reading's words as git receives them: quote and backslash-escape characters dropped, the list cut at a comment,
 // redirections and their targets left out — so the lexer's precise and coarse readings of one push read alike.
-function cleanWords(args) {
+function cleanWords(args, comments = true) {
   const words = [];
   for (let i = 0; i < args.length; i += 1) {
+    if (comments && args[i].startsWith("#")) break;
     const word = args[i].replace(/["'\\]/g, "");
-    if (word.startsWith("#")) break;
     if (/^\d*(?:[<>]+|&>+)&?$/.test(word))
       i += 1; // a bare operator: its target is the next word
     else if (!/[<>]/.test(word)) words.push(word);
@@ -510,9 +504,7 @@ function cleanWords(args) {
 // `b`) differently, which is no second push; a push inside a substitution is a reading of its own and still counts,
 // and every reading still passes the scope check on its own.
 function readingKey(args) {
-  return cleanWords(args)
-    .filter((word) => !DYNAMIC_WORD.test(word))
-    .join(" ");
+  return args.filter((word) => !DYNAMIC_WORD.test(word)).join(" ");
 }
 
 // A git invocation split at its global options: the repository options it carries (`-C <dir>` as {name: "-C", value},
@@ -583,7 +575,7 @@ function inlineConfigKeys(words) {
 // `git push` arguments as git parses them: `--` ends the options, options may follow the operands. Collects the
 // operands, every option one approval never covers, and whether the last dry-run option asks for a dry run.
 function parsePushWords(words) {
-  const parsed = { operands: [], uncovered: [], dryRun: false };
+  const parsed = { operands: [], uncovered: [], dryRun: false, force: false, namedRepo: false, unsettled: false };
   for (let i = 0; i < words.length; i += 1) {
     const word = words[i];
     if (word === "--") {
@@ -594,6 +586,8 @@ function parsePushWords(words) {
     if (word.startsWith("--")) takesNext = readLongOption(word, parsed);
     else if (word.length > 1 && word.startsWith("-")) takesNext = readShortCluster(word, parsed);
     else parsed.operands.push(word);
+    if (word.startsWith("-") && UNSETTLED_WORD.test(word)) parsed.unsettled = true;
+    if (takesNext && UNSETTLED_WORD.test(words[i + 1] ?? "")) parsed.unsettled = true;
     if (takesNext) i += 1;
   }
   return parsed;
@@ -603,6 +597,8 @@ function parsePushWords(words) {
 function readLongOption(word, parsed) {
   const eq = word.indexOf("=");
   const name = eq < 0 ? word : word.slice(0, eq);
+  if (isForceFlag(name)) parsed.force = true;
+  if (name === "--repo") parsed.namedRepo = true;
   if (name === "--dry-run" || name === "--no-dry-run") {
     if (eq < 0) parsed.dryRun = name === "--dry-run";
     else parsed.uncovered.push(name);
@@ -624,6 +620,7 @@ function readShortCluster(word, parsed) {
   const valueAt = cluster.indexOf("o");
   for (const letter of valueAt < 0 ? cluster : cluster.slice(0, valueAt)) {
     if (letter === "n") parsed.dryRun = true;
+    else if (letter === "f") parsed.force = true;
     else if (!PUSH_COVERED_SHORT.has(letter)) parsed.uncovered.push(`-${letter}`);
   }
   return valueAt === cluster.length - 1;
@@ -632,8 +629,8 @@ function readShortCluster(word, parsed) {
 // True when this push reading sends nothing: `git push --dry-run`/`-n`, `git lfs push --dry-run`. Only with no
 // option that could undo it and no word set at run time, which may expand to `--no-dry-run`.
 function isDryRun(reading) {
-  const words = cleanWords(reading.slice(1));
-  if (words.some((word) => DYNAMIC_WORD.test(word))) return false;
+  const words = reading.slice(1);
+  if (words.some((word) => UNSETTLED_WORD.test(word))) return false;
   const program = reading[0].toLowerCase();
   if (program === "lfs") {
     const options = words.slice(1).filter((word) => word.startsWith("-"));
@@ -673,7 +670,7 @@ function refspecProblem(spec, scope, destinationAllowed) {
 // Why one push reading is outside what an approval covers, or null.
 function readingScopeProblem(reading, scope) {
   const program = reading[0].toLowerCase();
-  const words = cleanWords(reading.slice(1));
+  const words = reading.slice(1);
   if (program === "lfs") {
     if (words[0] !== "push") return "`git lfs` options before `push` are not covered";
     const options = words.slice(1).filter((word) => word.startsWith("-"));
@@ -683,6 +680,7 @@ function readingScopeProblem(reading, scope) {
   }
   if (program !== "push") return `\`git ${program}\` is not a push of the current branch to a configured remote`;
   const parsed = parsePushWords(words);
+  if (parsed.unsettled) return "a push option or its value may expand at run time";
   if (parsed.uncovered.length > 0) {
     return `it carries ${parsed.uncovered.join(" ")}, which a push approval never covers`;
   }
@@ -790,6 +788,28 @@ function configuredRemotes(cwd, grants) {
   }
 }
 
+/** Resolve the default for a plain push using Git's remote selection precedence. */
+function defaultPushRemote(here, remotes, grants) {
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !grants.DISCOVERY_ENV.includes(key.toUpperCase())),
+  );
+  for (const key of [`branch.${here.branch}.pushRemote`, "remote.pushDefault", `branch.${here.branch}.remote`]) {
+    try {
+      const value = execFileSync("git", ["config", "--get", key], {
+        cwd: here.dir || process.cwd(),
+        env,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 5000,
+      }).replace(/\r?\n$/, "");
+      return remotes.includes(value) ? value : null;
+    } catch (error) {
+      if (error.status !== 1) return null;
+    }
+  }
+  return remotes.length === 1 ? remotes[0] : remotes.includes("origin") ? "origin" : null;
+}
+
 // A reason computed in the `-C` checkout `dir` names it: the session's own cwd is another checkout, so "the current
 // branch" would otherwise read as the cwd's.
 function inCheckout(reason, dir) {
@@ -829,99 +849,74 @@ function siblingWorktreeHint(reason, cwd, grants) {
   );
 }
 
-// Why the push token does not allow this call, or null after spending it: a token of the session project, valid, on
-// the current branch at the current HEAD, claimed once for this call's tool_use_id with the approving answer proved
-// in the transcript (lib/approval-grants.js `spendToken`: of concurrent calls exactly one claims it).
-function onceTokenProblem(grants, here, data) {
-  const status = grants.recordStatus(PUSH_SCOPE, { cwd: data.cwd });
-  if (!status.ok) {
-    if (status.expired) fs.rmSync(status.file, { force: true });
-    return status.reason;
-  }
-  const dir = here.checkout.explicit ? here.dir : null;
-  if (here.branch !== status.record.branch) {
-    return inCheckout(
-      `the current branch is not the one the push was approved on (approval names ${status.record.branch}, the checkout is on ${here.branch})`,
-      dir,
-    );
-  }
-  if (here.head !== status.record.head) return inCheckout("HEAD moved since the push was approved", dir);
-  if (typeof data.tool_use_id !== "string" || data.tool_use_id === "") {
-    return "the payload carries no tool_use_id to spend the push approval with";
-  }
-  const spent = grants.spendToken(PUSH_SCOPE, {
-    cwd: data.cwd,
-    callId: data.tool_use_id,
-    expected: { branch: here.branch, head: here.head },
-    checkout: here.checkout,
-    transcriptPath: data.transcript_path,
-  });
-  return spent.ok ? null : spent.reason;
+/** Read the remote operand from a token's displayed command or the actual push. */
+function pushRemoteOperand(reading) {
+  const [program, ...words] = reading;
+  return program.toLowerCase() === "lfs" ? words[1] : parsePushWords(words).operands[0];
 }
 
-// Why the one push reading is not literally `git push <remote> <branch>` as the run question showed it, or null: the
-// plain `push` program (not `git lfs push`), no option at all, and exactly the two operands the question named, so
-// no push.default, `remote.*.push` setting, `-u` or refspec decides what goes.
-function runPushShapeProblem(pushReadings, record) {
-  const reading = pushReadings[0];
-  if (!reading || reading[0].toLowerCase() !== "push") {
-    return "the run's push approval covers only `git push <remote> <branch>`, not another push program";
+/** Read the displayed push using the same tokenizer and operand parser as the call. */
+function questionPush(command, branch) {
+  const scoped = PLAIN_BRANCH.test(branch) ? command.replace(BRANCH_SUBSTITUTION, branch) : command;
+  const info = {};
+  const all = gitSubcommandArgs(scoped, info);
+  const pushes = info.exactReadings.filter((args) => asPush(args) !== null);
+  if (pushes.length === 0 && !all.some((args) => asPush(args) !== null)) return null;
+  if (info.unreadable || !pushes.length || repeatProblem(scoped, pushes)) return { ambiguous: true };
+  const reading = pushes[0];
+  const remote = pushRemoteOperand(reading);
+  if (readingScopeProblem(reading, { branch, remotes: [remote] })) {
+    return { ambiguous: true };
   }
-  const words = cleanWords(reading.slice(1));
-  if (words.some((word) => word.startsWith("-"))) {
-    return "the run's push approval covers `git push <remote> <branch>` with no option";
+  return { remote };
+}
+
+/** Explain why the actual push cannot use a run approval. */
+function runPushShapeProblem(reading, branch) {
+  const [program, ...words] = reading;
+  if (program.toLowerCase() !== "push" || words.some((word) => word.startsWith("-"))) {
+    return "the run's push approval covers only \`git push <remote> <branch>\` with no option";
   }
-  if (words.length !== 2 || words[0] !== record.remote || words[1] !== record.branch) {
-    return "the push is not exactly the `git push <remote> <branch>` the run's question showed";
+  if (words.length !== 2 || words[1] !== branch) {
+    return "the push is not exactly the \`git push <remote> <branch>\` the run's question showed";
   }
   return null;
 }
 
-// Why a run push token (`git-push-run`) does not allow this call, or null after spending it: the checkout is on the
-// branch the question named, the push is literally the one it showed, and HEAD descends from the PR head it named (the
-// run's own commits sit on top of it), claimed once like the exact-HEAD token. A call that already spent the exact-HEAD
-// token (a second copy of the same hook call) never spends this one too.
-function runTokenProblem(grants, here, data, pushReadings, record) {
-  const dir = here.checkout.explicit ? here.dir : null;
-  if (here.branch !== record.branch) {
-    return inCheckout(
-      `the current branch is not the one the run's push was approved on (approval names ${record.branch}, the checkout is on ${here.branch})`,
-      dir,
-    );
-  }
-  if (grants.holdsClaim(PUSH_SCOPE, { cwd: data.cwd, callId: data.tool_use_id })) {
-    return "this call already spent the exact-HEAD push approval";
-  }
-  const shape = runPushShapeProblem(pushReadings, record);
-  if (shape) return shape;
-  const remote = record.remote;
-  if (!grants.isAncestor(here.dir, record.base_head, here.head)) {
-    return inCheckout("HEAD is not on the line of the PR head the run's push was approved from", dir);
-  }
-  if (typeof data.tool_use_id !== "string" || data.tool_use_id === "") {
-    return "the payload carries no tool_use_id to spend the push approval with";
-  }
-  const spent = grants.spendToken(PUSH_RUN_SCOPE, {
+/** Resolve the destination once and let the library choose or replay the qualifying approval. */
+function tokenProblem(grants, here, data, reading, remotes) {
+  const operand = pushRemoteOperand(reading);
+  const remote = operand ?? (reading[0].toLowerCase() === "push" ? defaultPushRemote(here, remotes, grants) : null);
+  const spent = grants.spendPushToken({
     cwd: data.cwd,
     callId: data.tool_use_id,
-    expected: { branch: here.branch, remote },
     checkout: here.checkout,
     transcriptPath: data.transcript_path,
+    push: {
+      cwd: here.dir,
+      head: here.head,
+      remote,
+      readPush: questionPush,
+      runProblem: runPushShapeProblem(reading, here.branch),
+      expected: {
+        [PUSH_SCOPE]: { branch: here.branch, head: here.head },
+        [PUSH_RUN_SCOPE]: { branch: here.branch, remote: operand },
+      },
+    },
   });
-  return spent.ok ? null : spent.reason;
+  return spent.ok ? null : inCheckout(spent.reason, here.checkout.explicit ? here.dir : null);
 }
 
-// Why no push token allows this call, or null after spending one. The exact-HEAD token (`git-push`) goes first; when it
-// does not allow the call and a valid run token (`git-push-run`) is on record, that token decides and names the reason.
-function tokenProblem(grants, here, data, pushReadings) {
-  const once = onceTokenProblem(grants, here, data);
-  if (once === null) return null;
-  const run = grants.recordStatus(PUSH_RUN_SCOPE, { cwd: data.cwd });
-  if (!run.ok) {
-    if (run.expired) fs.rmSync(run.file, { force: true });
-    return once;
-  }
-  return runTokenProblem(grants, here, data, pushReadings, run.record);
+/** Keep conservative readings only when the tokenizer could not supply their argument boundaries. */
+function approximatePushes(exact, readings) {
+  const keys = new Set(exact.map(readingKey));
+  return readings.filter(
+    (args) =>
+      asPush(args) !== null &&
+      !keys.has(readingKey(args)) &&
+      !keys.has(readingKey(cleanWords(args))) &&
+      !keys.has(readingKey(cleanWords(args, false))),
+  );
 }
 
 // The verdict on a non-force push, or null after spending the token. `kind` picks the advice: `ask` (the git-push
@@ -953,8 +948,12 @@ function pushVerdict(command, data, inspection) {
   // Git discovery can outlast the text budget; substituted text gets its own bounded inspection phase.
   const info = scoped === command ? inspection : { ...inspection, deadline: inspectionNow() + 1000 };
   const all = scoped === command ? inspection.readings : gitSubcommandArgs(scoped, info);
-  const readings = info.unreadable ? info.exactReadings || [] : all;
+  const readings = info.exactReadings || [];
   const pushReadings = readings.filter((args) => asPush(args) !== null);
+  if (!pushReadings.length) return { kind: "byHand", reason: "the push's arguments could not be read exactly" };
+  if (!info.unreadable && approximatePushes(pushReadings, all).length > 0) {
+    return { kind: "ask", reason: "the command holds more than one push reading" };
+  }
   const repeated = repeatProblem(scoped, pushReadings);
   if (repeated) return { kind: "ask", reason: repeated };
   const scope = { branch: here.branch, remotes: configuredRemotes(checkout, grants) };
@@ -967,7 +966,7 @@ function pushVerdict(command, data, inspection) {
   }
   const moving = movingGitProblem(readings.filter((args) => asPush(args) === null));
   if (moving) return { kind: "ask", reason: moving };
-  const token = tokenProblem(grants, here, data, pushReadings);
+  const token = tokenProblem(grants, here, data, pushReadings[0], scope.remotes);
   return token ? { kind: "ask", reason: token } : null;
 }
 
@@ -976,7 +975,7 @@ const PUSH_ADVICE = {
     "Pushes are never auto-armed: each push needs the user's own approval. Invoke one AskUserQuestion with header " +
     "`git-push` and options exactly `Approve` / `Hold`, whose question shows the branch, the target and the command " +
     "you will run. The user's `Approve` records a single-use token (claude-push-approval.json in the git common dir, " +
-    "15 min) for one push of this branch at this HEAD to a configured remote — `git push [-u] [<remote>] " +
+    "15 min) for one push of this branch at this HEAD to the configured remote shown in the question — `git push [-u] [<remote>] " +
     "[HEAD|<branch>][:<branch>]`, remote and branch written out — run from this checkout as the only push in its Bash " +
     "command, beside no git that moves HEAD. To push another checkout of this project (a worktree) without changing " +
     "directory, write the push as `git -C <absolute worktree path> push <remote> <branch>` — path unquoted, no space or " +
@@ -1034,6 +1033,14 @@ function askInspection(command, reason, executable = false) {
   process.exit(0);
 }
 
+/** Stop before approval lookup when a reading requests a force update. */
+function blockForcePush() {
+  process.stderr.write(
+    "git push blocked — force-push is forbidden on any branch. No override, no token bypasses this.\n",
+  );
+  process.exit(2);
+}
+
 function handlePayload() {
   let data;
   try {
@@ -1046,7 +1053,7 @@ function handlePayload() {
 
   // --- SessionStart: no push approval carries over from a prior session ---
   if (hook_event_name === "SessionStart") {
-    wipeTokens(data.cwd);
+    wipeTokens(data);
     wipeLegacySentinels(data.cwd);
     process.exit(0);
   }
@@ -1054,7 +1061,7 @@ function handlePayload() {
   // --- UserPromptSubmit: wipe on /clear ---
   if (hook_event_name === "UserPromptSubmit") {
     const prompt = (data.prompt || data.user_message || "").trim();
-    if (/^\/clear\b/.test(prompt)) wipeTokens(data.cwd);
+    if (/^\/clear\b/.test(prompt)) wipeTokens(data);
     process.exit(0);
   }
 
@@ -1069,33 +1076,25 @@ function handlePayload() {
       askInspection(command, "cannot load hooks/lib/shell-git.js");
     }
     info.coarseReadings = coarseGitSubcommandArgs?.(command, info) || [];
-    if (info.coarseReadings.map(asPush).filter(Boolean).some(isForcePush)) {
-      process.stderr.write(
-        "git push blocked — force-push is forbidden on any branch. No override, no token bypasses this.\n",
-      );
-      process.exit(2);
-    }
     // Anchoring on /^\s*git push\b/ would miss `git -C /path push`, a push after
     // a shell operator, and one inside a group or behind a prefix; all reach the
     // same remote. Inspect every invocation the library finds instead.
     const all = gitSubcommandArgs(command, info);
     info.readings = all;
-    const readings = (info.unreadable ? info.exactReadings || [] : all).filter((args) => asPush(args) !== null);
+    const exact = (info.exactReadings || []).filter((args) => asPush(args) !== null);
+    const approximate = approximatePushes(exact, [
+      ...(info.unreadable ? [] : all),
+      ...info.coarseReadings,
+      ...(info.prefixReadings || []),
+    ]);
     // Force-push is forbidden on any branch, always — checked before any
     // token lookup, so a valid push token never bypasses it.
-    if (
-      [...readings, ...(info.coarseReadings || []), ...(info.prefixReadings || [])]
-        .map(asPush)
-        .filter(Boolean)
-        .some(isForcePush)
-    ) {
-      process.stderr.write(
-        `git push blocked — force-push is forbidden on any branch. No override, no token bypasses this.\n`,
-      );
-      process.exit(2);
+    if ([...exact, ...approximate].map(asPush).some(isForcePush)) blockForcePush();
+    if (info.unreadable && !exact.length) {
+      askInspection(command, info.unreadableReason || "unreadable shell syntax", info.unreadableExecutable);
     }
     // A dry run sends nothing: no token needed, none spent.
-    if (readings.length === 0 || readings.every(isDryRun)) {
+    if ((!exact.length && !approximate.length) || (exact.length && !approximate.length && exact.every(isDryRun))) {
       // The lexer adds a synthetic force reading for syntax it cannot read exactly, so this branch also catches commands
       // naming no git at all (`echo ${(U)HOME}`): ask only when the command names git, never apply a synthetic force ban.
       if (info.unreadable)
@@ -1121,6 +1120,7 @@ function handlePayload() {
 
     process.exit(0);
   } catch (error) {
+    if ((info.coarseReadings || []).map(asPush).filter(Boolean).some(isForcePush)) blockForcePush();
     askInspection(command, (error && error.message) || "lexer error");
   }
 }

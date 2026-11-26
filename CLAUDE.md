@@ -100,6 +100,7 @@ Repository-specific additions:
 
 - Adversarial convergence loop: `AGENTS.md` links the Codex source-tree entrypoint; Foundry ships a local copy for Claude.
 - Multi-OS executables: this repository supports Linux, macOS, and native Windows, so the conditional rule always applies here, without exception.
+- Windows is a CI gate, never a follow-up. Before handoff, a change touching subprocess output, file or sentinel writes, paths, environment, config locations, timeouts or fixtures is walked against the Multi-OS bullets above (decode in threads, CRLF sentinels, Git Bash paths, per-OS config, tight timeouts); macOS green is not evidence. A Windows-only failure is fixed in the code, or in an OS-aware test that keeps the case on every OS, never by a blanket skip. A fixture or test over 10 s on a Windows leg is optimized (one build per run shared across xdist workers, fewer spawned processes), not given a longer deadline.
 - Instruction-file compression gate: save the byte-exact backup under `.codex/caveman-compress/backups/`; this repository's calibration gate (`plugins/codex-rig/runtime/calibration/run.py --layout plugin`) is mandatory.
 
 ## Interpreter Commands — Fix the Launcher, Not the Call Site

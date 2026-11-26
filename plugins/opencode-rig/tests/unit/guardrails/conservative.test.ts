@@ -4,6 +4,22 @@ import { classifyCommand, decide } from "../../../src/guardrails.ts"
 
 const GRANTED = { status: "granted", path: "approval.json" } as const
 
+describe("GitHub authentication status", () => {
+  it.each(["", " --active", " -h example.test", " --hostname=example.test --active"])(
+    "classifies non-secret status options as read-only: %j",
+    (options) => {
+      expect(classifyCommand(`gh auth status${options}`).kind).toBe("read-only-git")
+    },
+  )
+
+  it.each(["--show-token", "-t", "--show-token=true", "--unknown", "--hostname", "--hostname --show-token"])(
+    "asks before an unmodelled status option: %s",
+    (options) => {
+      expect(decide(classifyCommand(`gh auth status ${options}`), "standard", GRANTED)?.effect).toBe("ask")
+    },
+  )
+})
+
 describe("conservative shell recognition", () => {
   it.each([
     ["parameter process substitution", "echo ${v:-<(git status)}"],

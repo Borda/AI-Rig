@@ -33,7 +33,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
-from codemap_py import index_paths, integration, query, runtime_log
+from codemap_py import index_paths, integration, query, runtime_log, structural_context
 
 #: Lowest (major, minor) CPython version the launcher accepts as an interpreter.
 _MIN = (3, 11)
@@ -42,13 +42,14 @@ _MAX_EXCLUSIVE = (3, 15)
 #: Number of whitespace-separated fields (implementation, major, minor) an interpreter probe must print.
 _PROBE_FIELDS = 3
 #: One-line usage string written to stderr on a missing or unknown subcommand.
-_USAGE = "usage: codemap-py {index,query,doctor,integrate} [args...]"
+_USAGE = "usage: codemap-py {index,query,context,doctor,integrate} [args...]"
 #: Full top-level help text printed to stdout for the bare help request.
-_HELP = """usage: codemap-py {index,query,doctor,integrate} [args...]
+_HELP = """usage: codemap-py {index,query,context,doctor,integrate} [args...]
 
 Commands:
   index [args...]       Build or update the structural index.
   query [args...]       Query the structural index as JSON.
+  context [args...]     Index a checkout at a verified head, outside it, and report diff-impact or why not.
   doctor [--json]       Report the resolved interpreter, index path, and hook failure counts.
   integrate [args...]   Run a supported integration command.
 
@@ -333,7 +334,7 @@ def _run_index(rest: Sequence[str], plugin_root: Path) -> int:
 
 
 def main(argv: Sequence[str] | None = None, plugin_root: Path | None = None, *, owns_process: bool = False) -> int:
-    """Dispatch ``index``/``query``/``doctor``/``integrate``.
+    """Dispatch ``index``/``query``/``context``/``doctor``/``integrate``.
 
     ``owns_process`` is true only for the command-line entry point, which may end the process itself when a query
     deadline cannot interrupt the main thread; embedded callers leave it false so a timeout never exits their host.
@@ -351,6 +352,7 @@ def main(argv: Sequence[str] | None = None, plugin_root: Path | None = None, *, 
         "doctor": lambda: _doctor(rest, root),
         "index": lambda: _run_index(rest, root),
         "query": lambda: _run_query(rest, root, owns_process=owns_process),
+        "context": lambda: structural_context.main(rest, root),
         "integrate": lambda: integration.run(rest, root),
     }
     handler = handlers.get(command)

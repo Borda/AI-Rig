@@ -14,9 +14,10 @@ one carries the item, else ``""``); ``why`` (the challenge or skip reason); and 
 name, so re-running this script for the same run appends nothing new).
 
 ``fixed`` and ``self-resolved`` need implementation evidence, not only a challenge that accepted the item: a Phase 2
-commit, a Codex-direct item record, or a ``[resolve No.<id>]`` commit after ``--base-sha``. An item a merge conflict
-left unapplied, or one accepted but never implemented, is reported ``pending``. A ``rejected`` verdict records that
-resolve's challenger affirmatively refuted the finding. Unavailable evidence stays ``unverified``; later fixes stay
+commit, a Codex-direct item record, or a ``[resolve No.<id>]`` commit after ``--base-sha``. Grouped mode requires
+landed item evidence from replay on the current branch. An item left unapplied is reported ``pending``.
+A ``rejected`` verdict records that resolve's challenger affirmatively refuted the finding.
+Unavailable evidence stays ``unverified``; later fixes stay
 ``already-fixed``. The next review re-checks them
 at the new head.
 
@@ -46,6 +47,8 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Final
+
+from resolve_group_replay import ABSORBED_RECORD, CommitReceipt, ReplayError
 
 #: challenge-log ``resolution=`` value → verdict reported back to the review.
 VERDICT_BY_RESOLUTION: Final = {
@@ -135,14 +138,65 @@ def implemented_ids(impl_dir: Path) -> set[int]:
     return done
 
 
-def _verdict(entry: dict[str, str], implemented: bool, sha: str) -> tuple[str, str]:
+def _git_succeeds(cwd: Path, *args: str) -> bool:
+    """Check a read-only Git predicate without using unchecked output."""
+    proc = subprocess.run(  # noqa: S603 - argv list, no shell
+        ["git", *args],  # noqa: S607 - git resolved via PATH on purpose
+        cwd=cwd,
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+    return proc.returncode == 0
+
+
+def _absorbed_commits(impl_dir: Path, cwd: Path, receipts: dict[str, CommitReceipt]) -> dict[int, str]:
+    """Confirm fully absorbed items only when the replay's proven paths still match HEAD."""
+    landed = set()
+    for fence in impl_dir.glob("group-replay-fence-*.json"):
+        _, items, fully_landed = json.loads(fence.read_text(encoding="utf-8"))
+        if fully_landed is True:
+            landed.update(items)
+    paths: dict[str, dict[str, set[str]]] = {}
+    for row in _read_jsonl(impl_dir / ABSORBED_RECORD):
+        item, path, group = row["item"], row["path"], row["group"]
+        if item not in landed:
+            continue
+        carriers = paths.setdefault(item, {}).setdefault(path, set())
+        receipt = receipts.get(group)
+        if receipt and _git_succeeds(
+            cwd, "--literal-pathspecs", "diff", "--quiet", "--ignore-submodules=none", receipt.head, "HEAD", "--", path
+        ):
+            carriers.add(receipt.head)
+    confirmed = {}
+    for item, carriers_by_path in paths.items():
+        if all(carriers_by_path.values()):
+            single_commit = set.intersection(*carriers_by_path.values())
+            confirmed[int(item)] = min(single_commit, default="")[:12]
+    return confirmed
+
+
+def grouped_commits(impl_dir: Path, cwd: Path) -> dict[int, str]:
+    """Return only grouped items proven by replay and reachable from this checkout's HEAD."""
+    receipts = {}
+    for path in sorted(impl_dir.glob("group-replay-receipt-*.txt")):
+        receipt = CommitReceipt.read(path)
+        if not receipt.proof_pending and _git_succeeds(cwd, "merge-base", "--is-ancestor", receipt.head, "HEAD"):
+            receipts[path.stem.removeprefix("group-replay-receipt-")] = receipt
+    confirmed = _absorbed_commits(impl_dir, cwd, receipts)
+    confirmed.update({int(item): receipt.head[:12] for receipt in receipts.values() for item in receipt.items})
+    return confirmed
+
+
+def _verdict(entry: dict[str, str], implemented: bool, sha: str, *, grouped: bool) -> tuple[str, str]:
     """Combine the challenge verdict with implementation evidence into the reported ``(verdict, why)``."""
     verdict = VERDICT_BY_RESOLUTION.get(entry.get("resolution", ""), "")
     if verdict in ("rejected", "unverified", "already-fixed"):
         return verdict, entry.get("evidence_why", "")
     why = entry.get("suggestion_why", "")
     if verdict in ("fixed", "self-resolved") and not (implemented or sha):
-        return "pending", "accepted at challenge; no implementation record for this item"
+        missing = "no landed group receipt for this item" if grouped else "no implementation record for this item"
+        return "pending", f"accepted at challenge; {missing}"
     if not verdict:
         verdict = "fixed" if (implemented or sha) else "pending"
     return verdict, why
@@ -176,7 +230,7 @@ def _finding_records(item: dict, by_finding: dict[str, dict], outcome: dict) -> 
 
 
 def build_records(
-    impl_dir: Path, run: str, cwd: Path, *, findings: Path | None = None, base_sha: str = ""
+    impl_dir: Path, run: str, cwd: Path, *, findings: Path | None = None, base_sha: str = "", commit_mode: str = "each"
 ) -> list[dict]:
     """Build resolution records for each selected review item and every finding folded into it."""
     items = {int(record["id"]): record for record in _read_jsonl(impl_dir / "action-items.jsonl")}
@@ -187,7 +241,9 @@ def build_records(
     log_path, skip_path = impl_dir / "challenge-log.txt", impl_dir / "skipped-items.txt"
     log = parse_challenge_log(log_path.read_text(encoding="utf-8")) if log_path.exists() else {}
     skipped = parse_skipped(skip_path.read_text(encoding="utf-8")) if skip_path.exists() else {}
-    implemented = implemented_ids(impl_dir)
+    grouped = grouped_commits(impl_dir, cwd) if commit_mode == "grouped" else {}
+    ordinary = commit_mode in {"each", "all", "stage"}
+    implemented = implemented_ids(impl_dir) if ordinary else set(grouped)
     records = []
     for item_id in selected:
         item = items.get(item_id)
@@ -199,8 +255,10 @@ def build_records(
             "unverified",
             "already-fixed",
         )
-        sha = "" if closed else commit_for(item_id, cwd, base_sha)
-        verdict, why = _verdict(entry, item_id in implemented, sha)
+        sha = ""
+        if not closed:
+            sha = commit_for(item_id, cwd, base_sha) if ordinary else grouped.get(item_id, "")
+        verdict, why = _verdict(entry, item_id in implemented, sha, grouped=commit_mode == "grouped")
         if item_id in skipped:
             verdict, why = "skipped", skipped[item_id]
         records.extend(
@@ -224,24 +282,34 @@ def build_records(
 
 def main(argv: list[str] | None = None) -> int:
     """Append this resolve run's per-finding outcomes to the review directory's resolution ledger."""
+    sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]  # the summary line carries an arrow
     parser = argparse.ArgumentParser(description="Append oss:resolve outcomes to the review's resolution.jsonl.")
     parser.add_argument("--impl-dir", required=True, help="resolve $IMPL_DIR holding the run's records")
-    parser.add_argument("--review-dir", required=True, help="review report directory (.reports/review/pr-N/run-NNN)")
-    parser.add_argument("--repo", default=".", help="git checkout used to look up [resolve No.<id>] commits")
+    purpose = parser.add_mutually_exclusive_group(required=True)
+    purpose.add_argument("--review-dir", help="review report directory (.reports/review/pr-N/run-NNN)")
+    purpose.add_argument("--grouped-ids", action="store_true", help="list confirmed grouped item ids without writing")
+    parser.add_argument("--repo", default=".", help="git checkout holding the run's commits")
     parser.add_argument("--base-sha", default="", help="head when this resolve run started; scopes the commit lookup")
+    parser.add_argument("--commit-mode", choices=("each", "grouped", "all", "stage", "unset"), default="each")
     args = parser.parse_args(argv)
     if args.base_sha.startswith("-"):
         print("! BLOCKED — --base-sha must not start with '-'", file=sys.stderr)
         return 1
-    impl_dir, review_dir = Path(args.impl_dir), Path(args.review_dir)
-    if not review_dir.is_dir():
-        print(f"! BLOCKED — review directory {review_dir.as_posix()} not found", file=sys.stderr)
-        return 1
     try:
+        impl_dir, cwd = Path(args.impl_dir), Path(args.repo)
+        if args.grouped_ids:
+            for item in sorted(grouped_commits(impl_dir, cwd)):
+                print(item)
+            return 0
+        review_dir = Path(args.review_dir)
+        if not review_dir.is_dir():
+            raise OSError(f"review directory {review_dir.as_posix()} not found")
         candidates = (review_dir / "findings.jsonl", impl_dir / "report-findings.jsonl")
         findings = next((p for p in candidates if p.is_file() and p.stat().st_size), None)
-        records = build_records(impl_dir, impl_dir.name, Path(args.repo), findings=findings, base_sha=args.base_sha)
-    except (OSError, ValueError, KeyError) as exc:
+        records = build_records(
+            impl_dir, impl_dir.name, cwd, findings=findings, base_sha=args.base_sha, commit_mode=args.commit_mode
+        )
+    except (OSError, ValueError, KeyError, TypeError, ReplayError, subprocess.TimeoutExpired) as exc:
         print(f"! BLOCKED — cannot read resolve records: {exc}", file=sys.stderr)
         return 1
     ledger = review_dir / "resolution.jsonl"

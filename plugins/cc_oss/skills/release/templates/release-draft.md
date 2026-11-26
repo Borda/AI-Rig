@@ -25,7 +25,7 @@
 
 ## 🔄 Migration guide
 
-> A breaking change worked before and now fails or behaves differently, without prior warning or a deprecation shim. Classify an API removed after a prior release deprecated it with a warning and forwarding as ❌ Removed, not ⚠️ Breaking Changes. Include before/after code for each breaking change. If none, say “No migration required for this release.”
+> A breaking change worked before and now fails or behaves differently, without prior warning or a deprecation shim. Classify an API removed after a prior release deprecated it with a warning and forwarding as ❌ Removed, not ⚠️ Breaking Changes. Every Breaking, Deprecated or Removed symbol carries one before/after snippet, its affected call sites listed under it, in the shape defined in `SKILL.md` “Draft migration guide” (Snippet shape). If none, say “No breaking changes, deprecations or removals in this release.”
 
 [Migration guidance]
 

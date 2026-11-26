@@ -738,6 +738,25 @@ _AMBIGUOUS_TARGET = {
 _ROOT_MISMATCH_REASON = "diff-impact: root_mismatch: index built for another root"
 
 
+_DEEP_JSON = b"[" * 10_000 + b"0" + b"]" * 10_000
+
+
+def _deep_json_outcome() -> tuple[int, str]:
+    """Return the query exit and error text this interpreter's JSON parser produces for the deeply nested answer.
+
+    Before Python 3.14 the parser exhausts the stack and raises ``RecursionError``, a parse failure reported with exit
+    0. Newer parsers read the same text as a list, so the answer then fails payload validation instead (exit -1).
+    """
+    try:
+        json.loads(_DEEP_JSON)
+    except RecursionError:
+        return 0, "recursion"
+    return -1, "query payload invalid"
+
+
+_DEEP_JSON_OUTCOME = _deep_json_outcome()
+
+
 class TestStatusReduction:
     """Reduce probe and query answers to one status and keep the provider's own detail as the reasons."""
 
@@ -984,6 +1003,56 @@ class TestStatusReduction:
         assert (record["status"], query["exit_code"], query["input_rejected"]) == ("incompatible", 2, False)
         assert record["status_reasons"] == [f"diff-impact: {query['error']}"]
         assert "unrecognized arguments" in query["error"]
+
+    @pytest.mark.parametrize(
+        ("stream", "output", "query_exit", "message"),
+        [
+            pytest.param("stdout", b"\xff", -1, "decode", id="undecodable-stdout"),
+            pytest.param("stderr", b"\xff", -1, "decode", id="undecodable-stderr"),
+            pytest.param("stdout", _DEEP_JSON, *_DEEP_JSON_OUTCOME, id="excessive-json-nesting"),
+        ],
+    )
+    def test_malformed_provider_output_is_diagnostic(
+        self, tmp_path: Path, stream: str, output: bytes, query_exit: int, message: str
+    ) -> None:
+        """A query whose output cannot be decoded or parsed still leaves a diagnostic artifact."""
+        provider = tmp_path / "provider"
+        bin_dir = provider / "bin"
+        bin_dir.mkdir(parents=True)
+        _write_fake_codemap_py(
+            bin_dir,
+            "import sys\n"
+            f"if sys.argv[1] == 'doctor': print({json.dumps(_HEALTHY_DOCTOR)!r})\n"
+            f"else: sys.{stream}.buffer.write({output!r})\n",
+        )
+        diff_file = tmp_path / "pr.diff"
+        diff_file.write_text(_PYTHON_CHANGE_DIFF, encoding="utf-8")
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                str(ADAPTER_PATH),
+                "context",
+                "--category",
+                "review",
+                "--provider-root",
+                str(provider),
+                "--diff-file",
+                str(diff_file),
+            ],
+            capture_output=True,
+            encoding="utf-8",
+            timeout=30,
+            check=False,
+        )
+
+        assert proc.returncode == 0, proc.stderr
+        record = json.loads(proc.stdout)
+        query = record["queries"][0]
+        assert (record["status"], query["exit_code"]) == ("incompatible", query_exit)
+        assert record["status_reasons"] == [f"diff-impact: {query['error']}"]
+        assert message in query["error"]
 
     def test_answer_lists_and_text_are_bounded_with_original_lengths(self, stub_provider, adapter) -> None:
         """Keep a large answer small: cut lists and long strings, and record every cut's original length.
@@ -1247,6 +1316,13 @@ class TestChangeSet:
         [
             pytest.param(_PYTHON_CHANGE_DIFF, _REAL_MAPPED_DIFF_IMPACT, "available", None, id="python-change-mapped"),
             pytest.param(
+                _PYTHON_CHANGE_DIFF + _NEW_MODULE_DIFF,
+                {**_REAL_MAPPED_DIFF_IMPACT, "changed_files": 2, "unmapped_files": ["new_mod.py"]},
+                "degraded",
+                "diff-impact: some changed Python files unmapped by the index",
+                id="unmapped-file-beside-mapped-change",
+            ),
+            pytest.param(
                 _NEW_MODULE_DIFF,
                 _REAL_UNMAPPED_DIFF_IMPACT,
                 "degraded",
@@ -1299,6 +1375,20 @@ class TestChangeSet:
         assert query["answer"]["changed_modules"] == payload["changed_modules"]
         assert query["answer"]["unmapped_files"] == payload["unmapped_files"]
         assert "index" not in query["answer"]
+
+    def test_unmapped_gap_survives_artifact_truncation(self, stub_provider, adapter, tmp_path: Path) -> None:
+        """The same gap is recoverable from the bounded answer available to artifact validators."""
+        diff_file = tmp_path / "diff.patch"
+        diff_file.write_text(_PYTHON_CHANGE_DIFF, encoding="utf-8")
+        paths = [f"new_{i}.py" for i in range(adapter.ANSWER_LIST_LIMIT + 1)]
+        stub_provider({**_REAL_MAPPED_DIFF_IMPACT, "changed_files": len(paths) + 1, "unmapped_files": paths})
+
+        record = adapter.gather_structural_context("review", diff_file=diff_file).to_dict()
+
+        query = record["queries"][0]
+        assert record["status"] == "degraded"
+        assert query["answer_truncated"]["unmapped_files"] == len(paths)
+        assert query["adapter_gap"] == adapter.change_set_gap("diff-impact", query["answer"], _PYTHON_CHANGE_DIFF)
 
     def test_relative_diff_file_resolves_against_caller_directory(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, adapter
@@ -1806,6 +1896,14 @@ class TestRealCodemapCli:
             ),
             pytest.param(
                 "proj", _NEW_MODULE_DIFF, "degraded", [f"diff-impact: {_UNMAPPED_GAP}"], 1, id="new-module-unmapped"
+            ),
+            pytest.param(
+                "proj",
+                _PYTHON_CHANGE_DIFF + _NEW_MODULE_DIFF,
+                "degraded",
+                ["diff-impact: some changed Python files unmapped by the index"],
+                2,
+                id="mapped-module-beside-new-unmapped-module",
             ),
             pytest.param(
                 "proj",

@@ -43,8 +43,16 @@ appends one outcome per admitted review finding to that review run's ``resolutio
 --metadata <draft.json> --handoff <draft.json> --status <status> --confidence <score> --artifact-path <result path>``
 derives metadata and handoff, refreshes the remediation ledger, renders ``final.md``, writes ``result.candidate.json``
 through the shared result writer, and runs the shared validator in all-errors mode; ``--promote`` renames a passing
-candidate to ``result.json``. ``publication-resume --run <run>`` reads the local delivery and terminal or consumed
-publication evidence so the same run can finish reports after locally rechecking its destination.
+candidate to ``result.json`` and then, for Code Review and Code Remediate, records the run's gaps in ``gaps.jsonl``
+through ``run_gap_records.py`` (best effort, reported as ``gap_ledger`` in the summary, never blocking delivery).
+``publication-resume --run <run>`` reads the local delivery and terminal or consumed publication evidence so the same
+run can finish reports after locally rechecking its destination.
+
+``start --run <run> [--checkpoint <name>]`` writes or advances the incomplete ``run-state.json`` stub, so a run that
+stops before promotion still leaves a terminal-state record with its last checkpoint and cause. A passing
+``preflight`` advances the stub to its ``selection`` or ``plan`` stage and a selected bucket closure advances it to
+``implementation``, so the stub names the furthest checkpoint reached. A stub that cannot be written is reported on
+stderr and never fails those actions. Promotion removes the stub for every skill.
 
 ``obligations --run <run>`` derives inspectable report source occurrences from retained ``findings-input.txt``.
 Retain these as review context; they grant no admission, selection, or automatic action-item authority.
@@ -83,6 +91,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
@@ -223,10 +232,80 @@ def _load(path: Path) -> dict[str, Any]:
     return payload
 
 
+#: Non-terminal run stub, the same file name and shape family Code Review writes; ``result.json`` keeps its meaning.
+RUN_STATE = "run-state.json"
+#: Version family of the remediation ``run-state.json`` stub.
+RUN_STATE_SCHEMA_VERSION = 1
+#: Remediation checkpoints in workflow order; the stub only moves forward through them.
+RUN_CHECKPOINTS = ("allocated", "source-collected", "selection", "plan", "implementation", "gates-run")
+
+
+def start_run_state(run: Path, checkpoint: str) -> dict[str, Any]:
+    """Record the furthest checkpoint a remediation run reached, as an ``incomplete`` stub beside its artifacts.
+
+    A run that stops before promotion keeps this stub, so it is counted as incomplete with its last checkpoint instead
+    of disappearing from outcome counts. Promotion removes the stub, and once ``result.json`` exists no stub is written
+    again. The write is atomic, so a run killed mid-write keeps its previous stub.
+    """
+    if checkpoint not in RUN_CHECKPOINTS:
+        raise DeriveError(f"run-state-checkpoint-invalid:{checkpoint}")
+    if run.is_symlink() or not run.is_dir():
+        raise DeriveError("run-state-directory-invalid")
+    if os.path.lexists(run / "result.json"):
+        return {"status": "pass", "run_state": str(run / RUN_STATE), "state": "promoted"}
+    try:
+        previous = json.loads((run / RUN_STATE).read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        previous = None
+    prior = previous.get("checkpoint") if isinstance(previous, dict) else None
+    if prior in RUN_CHECKPOINTS and RUN_CHECKPOINTS.index(prior) > RUN_CHECKPOINTS.index(checkpoint):
+        checkpoint = prior
+    stub = {
+        "schema_version": RUN_STATE_SCHEMA_VERSION,
+        "remediation_status": "incomplete",
+        "checkpoint": checkpoint,
+        "cause": f"The run reached {checkpoint} and no promoted result.json was written afterwards.",
+    }
+    target = run / RUN_STATE
+    if target.is_symlink():
+        raise DeriveError("run-state-redirected")
+    descriptor, temporary = tempfile.mkstemp(prefix=".run-state.", suffix=".tmp", dir=run)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(stub, indent=2, sort_keys=True) + "\n")
+        os.replace(temporary, target)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+    return {"status": "pass", "run_state": str(target), "state": "incomplete", "checkpoint": checkpoint}
+
+
+def record_reached_checkpoint(run: Path, checkpoint: str) -> None:
+    """Advance the run stub to a checkpoint a helper action has just proved, without failing that action.
+
+    Passing selection and plan preflights and selected bucket closures establish the ``selection``, ``plan`` and
+    ``implementation`` checkpoints. A refused or unwritable stub is reported on stderr and the action's own result
+    stands.
+    """
+    try:
+        start_run_state(run, checkpoint)
+    except (DeriveError, OSError) as error:
+        print(f"run-state-unrecorded:{checkpoint}:{error}", file=sys.stderr)
+
+
 def _write(path: Path, payload: dict[str, Any]) -> bytes:
-    """Write deterministic UTF-8 JSON with LF line endings and return the exact bytes supplied by the producer."""
+    """Replace a JSON artifact atomically and return its exact UTF-8 bytes."""
+    if path.is_symlink():
+        raise DeriveError(f"artifact-output-redirected:{path.name}")
     encoded = (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode()
-    path.write_bytes(encoded)
+    try:
+        # Replace the directory entry so even a destination changed during the write cannot redirect the bytes.
+        with tempfile.TemporaryDirectory(dir=path.parent) as staging:
+            temporary = Path(staging) / path.name
+            temporary.write_bytes(encoded)
+            os.replace(temporary, path)
+    except OSError as error:
+        raise DeriveError(f"artifact-write-failed:{path.name}") from error
     return encoded
 
 
@@ -721,10 +800,23 @@ def validate_event(event: object, items: set[str], buckets: set[str]) -> dict[st
     return event
 
 
+def _events_ledger_present(path: Path) -> bool:
+    """Treat only a missing entry as absent, and require an ordinary ledger for both readers and appenders."""
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise DeriveError("events-ledger-unreadable") from error
+    if not stat.S_ISREG(mode):
+        raise DeriveError("events-ledger-not-regular")
+    return True
+
+
 def read_events(run: Path) -> list[dict[str, Any]]:
     """Read the run's status-event ledger in append order; an absent ledger has no events."""
     path = run / EVENTS_LEDGER
-    if not path.is_file():
+    if not _events_ledger_present(path):
         return []
     with path.open("rb") as stream:
         content = stream.read(MAX_LEDGER_BYTES + 1)
@@ -764,6 +856,30 @@ def fold_events(events: list[dict[str, Any]]) -> tuple[dict[str, str], dict[str,
     return buckets, items
 
 
+def _record_bucket_closure_checkpoint(run: Path, text: str) -> None:
+    """Advance implementation when a closure names a bucket in the confirmed selection."""
+    heading = text.strip().partition("\n")[0].rstrip()
+    inventory_path = run / "selection.json"
+    plan_path = run / "work-bucket-plan.json"
+    if not heading.startswith("### ") or not inventory_path.is_file() or not plan_path.is_file():
+        return
+    try:
+        selected = _load(inventory_path).get("selected_indexes")
+        buckets = _load(plan_path).get("work_buckets")
+    except (DeriveError, UnicodeError, RecursionError) as error:
+        print(f"run-state-unrecorded:implementation:{error}", file=sys.stderr)
+        return
+    if not isinstance(selected, list) or not isinstance(buckets, list):
+        return
+    for bucket in buckets:
+        if not isinstance(bucket, dict) or bucket.get("bucket_id") != heading[4:]:
+            continue
+        indexes = bucket.get("selected_indexes")
+        if isinstance(indexes, list) and indexes and all(index in selected for index in indexes):
+            record_reached_checkpoint(run, "implementation")
+        return
+
+
 def append_record(run: Path, ledger: str, record: Path | None = None) -> dict[str, Any]:
     """Append one staged record file to a run ledger, then remove the staged file.
 
@@ -785,6 +901,7 @@ def append_record(run: Path, ledger: str, record: Path | None = None) -> dict[st
     if not text.strip():
         raise DeriveError(f"append-record-empty:{staged.name}")
     if ledger == EVENTS_LEDGER:
+        _events_ledger_present(target)
         try:
             payload = json.loads(text)
         except json.JSONDecodeError as error:
@@ -800,6 +917,8 @@ def append_record(run: Path, ledger: str, record: Path | None = None) -> dict[st
         _append_text(target, f"{prefix}\n{text.strip()}\n")
         appended = 1
     staged.unlink()
+    if ledger == CLOSURE_LEDGER:
+        _record_bucket_closure_checkpoint(run, text)
     return {"status": "pass", "ledger": str(target), "appended": appended}
 
 
@@ -940,7 +1059,7 @@ def derive_events(run: Path, metadata: dict[str, Any]) -> None:
 
 
 def derive_metadata(run: Path, metadata: dict[str, Any]) -> dict[str, Any]:
-    """Merge every derivable metadata field into an agent draft, overwriting stale copies."""
+    """Merge derivable metadata into the draft and store canonical item status spellings."""
     derive_selection(run, metadata)
     derive_events(run, metadata)
     table = metadata["final_resolution_table"]
@@ -951,6 +1070,7 @@ def derive_metadata(run: Path, metadata: dict[str, Any]) -> dict[str, Any]:
             status = value.strip().casefold() if isinstance(value, str) else None
             if status not in counts:
                 raise DeriveError(f"item-{field}-invalid:{item.get('input_item_id')}")
+            item[field] = status
             counts[status] += 1
         table[f"{field}_counts"] = counts
     derive_workplan(run, metadata)
@@ -1878,6 +1998,8 @@ def _result_arguments(
     """Build the shared result writer's arguments with gate-derived check lists."""
     failed = [
         *gates.get("checks_failed", []),
+        # Refused gates are absent from checks_failed; the result names their single source refusal instead.
+        *(["source-refused"] if gates.get("checks_refused") else []),
         *[item for item in arguments.extra_checks_failed.split(",") if item.strip()],
     ]
     return argparse.Namespace(
@@ -1956,12 +2078,49 @@ def _step(summary: dict[str, Any], name: str, action: Any) -> bool:
 
 
 def finalize(arguments: argparse.Namespace) -> dict[str, Any]:
-    """Keep separately authored review notes recoverable until the result passes both validators."""
-    with ExitStack() as notes_rollback:
-        summary = _finalize(arguments, notes_rollback)
-        if summary["status"] == "pass":
-            notes_rollback.pop_all()
-        return summary
+    """Finalize a run, preserving authored notes and any promoted delivery until the validators pass.
+
+    A repeated finalization of a promoted run rewrites the handoff before it validates. When it fails, the last
+    validated delivery is restored byte for byte, so ``result.json`` never stays bound to a handoff it no longer
+    validates against.
+    """
+    delivery = _read_delivery(arguments.run)
+    promoted = "result.json" in delivery
+    try:
+        with ExitStack() as notes_rollback:
+            summary = _finalize(arguments, notes_rollback)
+            if summary["status"] == "pass":
+                notes_rollback.pop_all()
+    except BaseException:
+        if promoted:
+            _restore_delivery(arguments.run, delivery)
+        raise
+    if promoted and summary["status"] != "pass":
+        _restore_delivery(arguments.run, delivery)
+    return summary
+
+
+def _read_delivery(run: Path) -> dict[str, bytes]:
+    """Return the bytes of the promoted result and the final delivery files beside it, refusing links."""
+    delivery: dict[str, bytes] = {}
+    for path in sorted(run.iterdir()):
+        if path.name != "result.json" and not path.name.startswith("final"):
+            continue
+        if path.is_symlink() or not path.is_file():
+            if path.name == "result.json":
+                raise DeriveError("finalize-result-not-regular")
+            continue
+        delivery[path.name] = path.read_bytes()
+    return delivery if "result.json" in delivery else {}
+
+
+def _restore_delivery(run: Path, delivery: dict[str, bytes]) -> None:
+    """Rewrite the saved delivery files atomically so a failed or changed repeat keeps the last validated result."""
+    for name, data in delivery.items():
+        target = run / name
+        staged = run / f".{name}.restore"
+        staged.write_bytes(data)
+        os.replace(staged, target)
 
 
 def _finalize(arguments: argparse.Namespace, notes_rollback: ExitStack) -> dict[str, Any]:
@@ -2158,6 +2317,12 @@ def _finalize(arguments: argparse.Namespace, notes_rollback: ExitStack) -> dict[
     if report["status"] == "pass" and arguments.promote:
         os.replace(run / "result.candidate.json", run / "result.json")
         summary["promoted"] = True
+        # A promoted run never keeps a stub saying it is incomplete, whichever skill wrote it; unlink removes a link
+        # itself, never its target. Readers check result.json first, so a stub that cannot be removed only warns.
+        try:
+            (run / RUN_STATE).unlink(missing_ok=True)
+        except OSError as error:
+            print(f"run-state-not-removed:{error}", file=sys.stderr)
         if arguments.skill == "code-remediate":
             summary.update(_manual_push_command(run, state["metadata"].get("worktree_publication", {})))
             if "manual_push_command" in summary:
@@ -2168,7 +2333,20 @@ def _finalize(arguments: argparse.Namespace, notes_rollback: ExitStack) -> dict[
         summary["result"] = str(run / "result.json")
         if arguments.skill == "code-review":
             summary["review_result_sha256"] = state["review_result_sha256"]
+        if arguments.skill in {"code-review", "code-remediate"}:
+            summary["gap_ledger"] = _record_gap_ledger(run, arguments.skill)
     return summary
+
+
+def _record_gap_ledger(run: Path, skill: str) -> dict[str, Any]:
+    """Record the promoted run's gaps in ``gaps.jsonl``; any failure is reported and never changes the result."""
+    try:
+        import run_gap_records
+
+        return run_gap_records.record_promoted_run(run, skill)
+    except Exception as error:
+        # Best effort by contract: the result is already promoted, so a ledger defect must not fail its delivery.
+        return {"status": "failed", "code": f"gap-ledger-unavailable:{type(error).__name__}"}
 
 
 def _review_validate(arguments: argparse.Namespace, run: Path, summary: dict[str, Any]) -> dict[str, Any]:
@@ -2474,6 +2652,8 @@ def _preflight_action(arguments: argparse.Namespace) -> dict[str, Any]:
         derive_selection(run, metadata)
         derive_workplan(run, metadata)
         validator._validate_code_remediate_workplan(metadata, run, pre_edit=True)
+    # A passing preflight proves the run reached this stage; both stage names are remediation checkpoints.
+    record_reached_checkpoint(run, arguments.stage)
     return {"status": "pass", "stage": arguments.stage}
 
 
@@ -2486,6 +2666,7 @@ ACTIONS = {
     "ledger": _ledger_action,
     "publication-resume": _publication_resume_action,
     "append": lambda arguments: append_record(arguments.run.resolve(), arguments.ledger, arguments.record),
+    "start": lambda arguments: start_run_state(arguments.run.resolve(), arguments.checkpoint),
     "resolutions": lambda arguments: append_review_resolutions(
         arguments.run, arguments.review_run, arguments.sha, arguments.item_sha
     ),
@@ -2541,7 +2722,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     feedback = actions.add_parser(
         "resolutions", help="Append per-finding outcomes to the admitted review run's resolution.jsonl."
     )
-    for action in (metadata, workplan, ledger, final, append, feedback, obligations, preflight, publication_resume):
+    start = actions.add_parser(
+        "start",
+        help="Write or advance the run's incomplete run-state.json stub.",
+        description="Record the furthest checkpoint reached; a promoted result.json supersedes the stub.",
+    )
+    start.add_argument("--checkpoint", choices=RUN_CHECKPOINTS, default="allocated", help="Checkpoint just reached.")
+    run_actions = (
+        metadata,
+        workplan,
+        ledger,
+        final,
+        append,
+        feedback,
+        obligations,
+        preflight,
+        publication_resume,
+        start,
+    )
+    for action in run_actions:
         action.add_argument("--run", type=Path, required=True, help="Remediation run directory.")
     for action in (metadata, workplan, ledger, final):
         action.add_argument("--metadata", type=Path, required=True, help="Agent-authored metadata draft JSON.")

@@ -16,8 +16,20 @@ from pathlib import Path
 import pytest
 
 _SKILLS = Path(__file__).resolve().parents[2] / "skills"
+_RULES = _SKILLS.with_name("rules")
 _QUALITY_STACK = "_shared/foundry--quality-stack.md"
 _REVIEW = "review/SKILL.md"
+
+
+@pytest.mark.parametrize("name", ["quality-gates.md", "quality-gates-delta.md"])
+def test_loop_rounds_require_the_dual_engine_reviewer_with_foundry(name: str) -> None:
+    """Require full challenger coverage each round and reserve direct bridge review for standalone installs."""
+    lines = (_RULES / name).read_text(encoding="utf-8").splitlines()
+    route = next(line for line in lines if line.startswith("For permitted independent review"))
+
+    assert "`foundry:challenger --codex-full` for every loop round" in route
+    assert "subject to the Codex quota stop below" in route
+    assert "`bridge:review` only on installs without `foundry`" in route
 
 
 @cache

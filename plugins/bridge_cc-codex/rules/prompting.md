@@ -6,4 +6,6 @@
 
 > The prompt is peer-neutral: it names no host as primary or fallback authority. It never asks for model, effort, cost, duration, session, depth, or run metadata because harness owns those facts.
 
+> Every task asks the callee to name each limit on its result in `confidence_gaps` as `(-0.NN) <limit>`, with one `(-0.00) <reason>` line when nothing limits it. It never asks for a confidence number: the harness derives it as 1.00 minus the deductions and cannot score an empty list (`envelope.md` §Confidence).
+
 > A partial result is useful. Caller may issue a fresh bounded request containing prior remaining work; read-only calls do not resume a prior session.

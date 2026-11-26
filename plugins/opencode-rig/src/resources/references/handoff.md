@@ -10,7 +10,7 @@
 | Alignment | `high`, `partial`, `off` | Evidence that the subject follows or breaks the project's actual codebase and direction: module layout, naming, documentation, tests, dependency policy. Name what was checked and what was not. |
 | Findings | counts by severity, blocking subset, fixed vs open | `N open (a high, b medium, c low, d nit), m blocking, k fixed`. Use `none` and the reason when the workflow produces no findings. |
 | Next action | exact skill or command, or `none — hand off` | The one primary action and what it closes. Secondary follow-ups may follow it; a human-owned step is named as such. |
-| Confidence | number between 0 and 1 | The value and the single largest limit behind it. |
+| Confidence | number between 0 and 1 | The value and each named gap and what closes it. Lead with the gap most likely to change the verdict. |
 
 ## Verdict scale
 
@@ -32,7 +32,8 @@
 - `MAJOR_REVISION` and `REJECT` require at least one blocking finding or a stated blocking reason. `MINOR_EDITS` names the confirmed required corrections. `APPROVE` requires the verification behind it, including when it carries non-blocking notes. `null` names the undecidable scope, its missing prerequisite and the next check: the review ran but cannot judge the source. `blocked` names the unavailable prerequisite or the decision that is the user's: the run could not proceed.
 - Alignment is a judgment about fit, not a restatement of the findings. A clean diff can be `partial` when it contradicts the documented direction; a risky change can be `high` when it follows the established pattern and the risk is stated.
 - A convention that was not checked is listed under Alignment, not omitted. When nothing was assessed, write `off — no codebase assessment was possible` and the reason.
-- Confidence reflects the weakest accepted evidence, not the average. The limit is the one most likely to change the verdict.
+- Confidence reflects the weakest accepted evidence, not the average. Adjust only for named gaps and state what each is and what closes it, including an unavailable independent reviewer, a selected axis that did not run, an unexecuted check required by the applicable skill, or a required class the host lacks. Honor the skill's documented check exemptions. Count an unexecuted manual substitute when the exemption requires it. Exclude null, blocked or failed contributions from the judgment and name each gap once. Never substitute a constant for a reviewer or check with no score of its own.
+- Record the host operating system and architecture and packages that can be provisioned as facts of the run, never confidence gaps. Name a required hardware or OS class the host lacks as `not reproducible on this host: requires <CLASS>`.
 - A skill that hands work to another names it exactly, for example `code-remediate` on `F-001`–`F-003`, `rig-plan` for the approved finding, or `rig-implement` with the recorded plan digest.
 - A diagnostic workflow maps its outcomes onto the same values: pass is `APPROVE`, warnings are `APPROVE` with each warning listed as a non-blocking note, and a failing prerequisite is `blocked`; a read-only report is `investigated`. Any other workflow that completes with nothing required reports `APPROVE`, and one that leaves required work reports `MINOR_EDITS` or `MAJOR_REVISION` by the evidence rule above.
 - A run with a frozen plan adds, below the table, the plan outcome and rounds (`converged`, `round-limit`, `authority-required`), the task-tree leaves and their owners, the final-challenge reviewer and verdict, and the challenge-loop rounds and stop reason when the loop ran. The five table fields stay the decision surface.

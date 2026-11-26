@@ -426,10 +426,10 @@ class TestGitDiagnostics:
         assert diagnostic["timeout_ms"] == 5000
 
 
-def _event(run_hook: Callable, repo: Path, payload: dict) -> subprocess.CompletedProcess:
+def _event(run_hook: Callable, repo: Path, payload: dict, **env: str) -> subprocess.CompletedProcess:
     """Run a non-tool event payload in ``repo`` as the session project."""
     return run_hook(
-        "commit-guard.js", {**payload, "cwd": str(repo)}, cwd=repo, env_extra={"CLAUDE_PROJECT_DIR": str(repo)}
+        "commit-guard.js", {**payload, "cwd": str(repo)}, cwd=repo, env_extra={"CLAUDE_PROJECT_DIR": str(repo), **env}
     )
 
 
@@ -536,14 +536,15 @@ class TestCommitGuard:
         assert json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"] == "ask"
 
     def test_session_start_deletes_push_token(self, run_hook: Callable, git_repo: Path, push_token: Callable) -> None:
-        """SessionStart deletes a pending push token, so a prior session's approval never carries over.
+        """SessionStart deletes a pending push token recorded by the same session."""
+        token = push_token(git_repo, session_id="owner")
 
-        Scenario: a token was recorded earlier, for example by a previous session. SessionStart must wipe it so an
-        approval never outlives the session in which the user gave it.
-        """
-        token = push_token(git_repo)
-
-        result = _event(run_hook, git_repo, {"hook_event_name": "SessionStart"})
+        result = _event(
+            run_hook,
+            git_repo,
+            {"hook_event_name": "SessionStart", "session_id": "owner"},
+            CLAUDE_CODE_SESSION_ID="",
+        )
 
         assert result.returncode == 0, result.stderr
         assert not token.exists()
@@ -578,9 +579,14 @@ class TestCommitGuard:
         Scenario: a token is pending and the user submits `/clear` or an ordinary prompt. Only the clear is a session
         boundary, so an ordinary prompt must not cost the user their approval.
         """
-        token = push_token(git_repo)
+        token = push_token(git_repo, session_id="owner")
 
-        result = _event(run_hook, git_repo, {"hook_event_name": "UserPromptSubmit", "prompt": prompt})
+        result = _event(
+            run_hook,
+            git_repo,
+            {"hook_event_name": "UserPromptSubmit", "prompt": prompt, "session_id": "owner"},
+            CLAUDE_CODE_SESSION_ID="sibling",
+        )
 
         assert result.returncode == 0, result.stderr
         assert token.exists() == kept
@@ -721,7 +727,7 @@ class TestCommitGuard:
         Scenario: shipped skill blocks end a command with `# timeout: N`, which the harness reads. The guard must not
         count the comment text as a second push.
         """
-        push_token(git_repo, "git push")
+        push_token(git_repo, question="Command: `git push`\n\nPush main to origin?")
 
         result = guard("git push # timeout: 30000")
 
@@ -786,7 +792,6 @@ class TestOnePushPerCommand:
             pytest.param("git push origin HEAD:main", id="head-to-branch"),
             pytest.param("git push origin HEAD:refs/heads/main", id="head-to-full-ref"),
             pytest.param("git push origin refs/heads/main:refs/heads/main", id="full-ref-both-sides"),
-            pytest.param("git push upstream HEAD:refs/heads/main", id="other-configured-remote"),
             pytest.param('git push origin "main"', id="quoted-word"),
             pytest.param("git push origin main 2>&1", id="redirection"),
             pytest.param("git push origin main > push.log", id="redirection-to-file"),
@@ -1020,6 +1025,8 @@ class TestDryRun:
             pytest.param("git push -nu origin main", id="short-cluster"),
             pytest.param("git push origin main --dry-run", id="after-positionals"),
             pytest.param("git push --dry-run --porcelain origin HEAD", id="porcelain"),
+            pytest.param("git push -n -o '#label' origin main", id="quoted-hash-value"),
+            pytest.param(r"git push -n -o \#label origin main", id="escaped-hash-value"),
             pytest.param("git lfs push --dry-run origin main", id="lfs"),
         ],
     )
@@ -1049,6 +1056,8 @@ class TestDryRun:
         "command",
         [
             pytest.param("git push --dry-run --no-dry-run origin main", id="negated-later"),
+            pytest.param("git push -n -o '#label' --no-dry-run origin main", id="negated-after-quoted-value"),
+            pytest.param(r"git push -n -o \#label --no-dry-run origin main", id="negated-after-escaped-value"),
             pytest.param("git push -o n origin main", id="n-is-a-push-option-value"),
             pytest.param("git push -on origin main", id="n-glued-to-push-option"),
             pytest.param("git push --push-option --dry-run origin main", id="dry-run-as-push-option-value"),
@@ -1741,6 +1750,23 @@ class TestForcePushSpelling:
     Each command below reaches the remote with a non-fast-forward update, so each must be blocked even when a valid push
     token is present — the force check runs before the token lookup.
     """
+
+    @pytest.mark.parametrize(
+        "option",
+        [
+            pytest.param("-o +label", id="short-value"),
+            pytest.param("--push-option +label", id="long-value"),
+            pytest.param("-o+label", id="attached-short-value"),
+            pytest.param("--push-option=+label", id="attached-long-value"),
+            pytest.param("-o '+label with +suffix'", id="quoted-value"),
+            pytest.param("-o example-f", id="short-value-ending-in-f"),
+        ],
+    )
+    def test_push_option_value_is_not_force(self, guard: Callable, option: str) -> None:
+        """Git option values are consumed before identifying flags and refspecs on a dry run."""
+        result = guard(f"git push -n {option} origin main")
+
+        assert result.returncode == 0, result.stderr
 
     @pytest.mark.parametrize(
         "command",

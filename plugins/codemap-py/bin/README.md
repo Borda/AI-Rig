@@ -26,11 +26,12 @@ ruff check --select C901,PLR0911,PLR0912,PLR0915
 
 ### `codemap-py` and `codemap-py.cmd`
 
-`codemap-py` is the POSIX launcher; `codemap-py.cmd` is its Windows batch equivalent. Both forward arguments to `scripts/codemap_py_entry.py`, which dispatches `index`, `query`, `doctor`, and `integrate` without shell-command mode or dependency installation.
+`codemap-py` is the POSIX launcher; `codemap-py.cmd` is its Windows batch equivalent. Both forward arguments to `scripts/codemap_py_entry.py`, which dispatches `index`, `query`, `context`, `doctor`, and `integrate` without shell-command mode or dependency installation.
 
 ```text
 codemap-py index [--root PATH] [--incremental] [--with-coverage PATH] [--timeout N]
 codemap-py query [global flags] <subcommand> ...
+codemap-py context --root PATH --diff-file PATH [--expect-head SHA] [--index-dir PATH] [--no-build] [--timeout N] [--out PATH]
 codemap-py doctor [--json]
 codemap-py integrate {audit,plan,apply,sync,demo} ...
 ```

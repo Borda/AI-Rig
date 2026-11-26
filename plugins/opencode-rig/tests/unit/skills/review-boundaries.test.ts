@@ -169,22 +169,35 @@ describe("review scope boundaries", () => {
     expect(refresh).toContain("identify the intake result as historical")
   })
 
-  it("keeps the blanket repository write ban and its sole PR fetch exception", () => {
-    const rule = section("code-review", "Rules").find((line) => line.includes("Sole exception"))
-    ruleSentence(rule, "Never write to the repository or GitHub during review.", ["never"])
-    const exception = ruleSentence(rule, "Sole exception: PR preparation may create one new dedicated local ref", [
-      "never",
-    ])
-    expect(exception).toContain("objects `git fetch` stores")
-    expect(exception).toContain("never switch branches, touch the index or working tree, or overwrite existing refs")
+  it("keeps the repository write ban and lists every permitted local write", () => {
+    const rule = section("code-review", "Rules").find((line) => line.includes("Keep existing refs"))
+    const writes = ruleSentence(
+      rule,
+      "Keep existing refs, the project's index, working tree and environment untouched.",
+      [],
+    )
+    expect(writes).toContain("untouched")
+    const limits = ruleSentence(
+      rule,
+      "Local writes are limited to review evidence, one new dedicated PR ref and fetched objects",
+      [],
+    )
+    expect(limits).toContain("a disposable detached review worktree")
+    expect(limits).toContain("the throwaway verification environment outside the project")
+    ruleSentence(rule, "Never write to GitHub or switch the project's branch", ["never"])
     const introduction = readFileSync(join(RESOURCES_DIR, "skills", "code-review", "SKILL.md"), "utf8").split("\n")
     const readOnly = ruleSentence(
       introduction.find((line) => line.startsWith("> Read")),
-      "This workflow is read-only with the sole PR preparation exception",
-      ["never"],
+      "This workflow is read-only apart from its evidence artifacts, PR preparation",
+      [],
     )
     expect(readOnly).toContain("one new dedicated local ref")
-    expect(readOnly).toContain("it never writes to GitHub")
+    expect(readOnly).toContain("dependency provisioning in a throwaway verification environment outside the project")
+    ruleSentence(
+      introduction.find((line) => line.startsWith("> Read")),
+      "It never writes to GitHub.",
+      ["never"],
+    )
   })
 
   it("persists the number of unreviewed PR commits in run limits", () => {

@@ -13,6 +13,15 @@ async function startedRun(project: Project, harness: Awaited<ReturnType<typeof c
 }
 
 describe("rig_script", () => {
+  it.each(["project", "run", "plugin"])("refuses %s scripts before host approval under all-sandbox", async (source) => {
+    const project = Project.withCommit({ "scripts/probe.mjs": "console.log('probe')\n" })
+    const harness = await createHarness(project, { execution: "all-sandbox", inspection: false, guardrails: "off" })
+    await expect(
+      harness.call("rig_script", { source, path: "scripts/probe.mjs", interpreter: "node" }),
+    ).rejects.toThrow(/all-sandbox requires rig_sandbox/)
+    expect(harness.assertions).toHaveLength(0)
+  })
+
   it("runs a run probe and writes a receipt next to its log", async () => {
     const project = Project.withCommit()
     project.write(".gitignore", ".opencode-rig/\n")

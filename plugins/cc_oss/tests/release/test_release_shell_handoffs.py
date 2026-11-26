@@ -341,6 +341,116 @@ def test_adversarial_context_is_resolved_before_spawn(tmp_path: Path, has_gather
 
 
 @_skip_shell_unavailable
+@pytest.mark.parametrize(
+    ("baseline", "with_path"),
+    [
+        pytest.param("a" * 40, True, id="published-commit"),
+        pytest.param("", True, id="no-published-release"),
+        pytest.param("a" * 40, False, id="missing-invocation-handle"),
+    ],
+)
+def test_adversarial_review_reuses_the_resolved_migration_baseline(
+    tmp_path: Path, baseline: str, with_path: bool
+) -> None:
+    """Both fresh shells read the passed handle and ignore another invocation's session state."""
+    setup = tmp_path / "release-setup-handoff"
+    setup.mkdir()
+    (setup / "BRANCH").write_text("main\n", encoding="utf-8", newline="\n")
+    (setup / "DATE").write_text("2026-11-11\n", encoding="utf-8", newline="\n")
+    (setup / "BASELINE_REF").write_text("b" * 40 + "\n", encoding="utf-8", newline="\n")
+    pinned = setup / "baseline-first"
+    pinned.write_text(f"{baseline}\n", encoding="utf-8", newline="\n")
+    baseline_file = bash_path(pinned) if with_path else ""
+    expected = baseline if with_path else ""
+    (tmp_path / "release-range-handoff").write_text("HEAD~1..HEAD\n", encoding="utf-8", newline="\n")
+    classify = _text("modes/classify-truth-check.md")
+    resolver = bash_block_after(classify, "**Resolve the published baseline**")
+    resolved = _run(resolver, tmp_path, BASELINE_FILE=baseline_file)
+    assert resolved.returncode == 0, resolved.stderr
+    assert resolved.stdout.strip() == f"BASELINE_REF={expected}"
+    mode = _text("modes/adversarial-review.md")
+
+    boundaries = "git() { printf 'main\\n'; }\ndate() { printf '2026-11-12\\n'; }\n"
+    completed = _run(boundaries + bash_blocks(mode)[0], tmp_path, GATHER_FILE="", RANGE="", BASELINE_FILE=baseline_file)
+
+    assert completed.returncode == 0, completed.stderr
+    values = dict(line.split("=", 1) for line in completed.stdout.splitlines())
+    assert values["BASELINE_REF"] == expected
+    assert "<BASELINE_REF>" in mode, "the spawn prompt takes the printed baseline"
+    assert "<MIGRATION_REVIEW>" in mode, "the spawn prompt names the standalone migration guide"
+
+
+@_skip_shell_unavailable
+def test_breaking_extraction_sees_an_api_published_on_the_maintenance_branch(tmp_path: Path) -> None:
+    """A maintenance-only public API remains a Breaking candidate after the append marker advances."""
+    identity = "git -c user.name=Tester -c user.email=test@example.invalid"
+    api = tmp_path / "__init__.py"
+    api.write_text("", encoding="utf-8")
+    base = _run(f"git init -qb main && git add __init__.py && {identity} commit -qm base && git tag v1.0", tmp_path)
+    assert base.returncode == 0, base.stderr
+    api.write_text("def published_api():\n    return 1\n", encoding="utf-8")
+    shipped = _run(
+        f"git switch -qc maintenance && {identity} commit -qam ship && {identity} tag -am release v1.1", tmp_path
+    )
+    assert shipped.returncode == 0, shipped.stderr
+    expected = _run("git rev-parse HEAD", tmp_path).stdout.strip()
+    head = _run(f"git switch -q main && {identity} commit --allow-empty -qm current", tmp_path)
+    assert head.returncode == 0, head.stderr
+    setup = _run('python "${CLAUDE_PLUGIN_ROOT}/bin/release_setup.py"', tmp_path)
+    assert setup.returncode == 0, setup.stderr
+    baseline_file = setup.stdout.strip().removeprefix("BASELINE_FILE=")
+    assert baseline_file
+    (tmp_path / "release-range-handoff").write_text("HEAD~1..HEAD\n", encoding="utf-8", newline="\n")
+    classify = _text("modes/classify-truth-check.md")
+
+    resolved = _run(
+        bash_block_after(classify, "**Resolve the published baseline**"), tmp_path, BASELINE_FILE=baseline_file
+    )
+    assert resolved.returncode == 0, resolved.stderr
+    assert resolved.stdout.strip() == f"BASELINE_REF={expected}"
+    extraction = next(block for block in bash_blocks(classify) if "extract_changed_symbols.py" in block)
+    result = _run(extraction, tmp_path, BASELINE_FILE=baseline_file)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "published_api"
+
+
+@_skip_shell_unavailable
+def test_shared_setup_hands_each_release_its_own_published_commit(tmp_path: Path) -> None:
+    """Two releases in the same session can still classify against the commit pinned by their own setup."""
+    identity = "git -c user.name=Tester -c user.email=test@example.invalid"
+    initialized = _run(f"git init -qb main && {identity} commit --allow-empty -qm first && git tag v1.0", tmp_path)
+    assert initialized.returncode == 0, initialized.stderr
+    first_commit = _run("git rev-parse HEAD", tmp_path).stdout.strip()
+    (tmp_path / "release-mode-handoff").write_text("prepare\n", encoding="utf-8", newline="\n")
+    skill = _text()
+    setup = bash_block_after(skill, "Extracted to `bin/release_setup.py`")
+    first = _run(setup, tmp_path)
+    assert first.returncode == 0, first.stderr
+    first_path = next(
+        line.removeprefix("BASELINE_FILE=") for line in first.stdout.splitlines() if line.startswith("BASELINE_FILE=")
+    )
+
+    advanced = _run(f"{identity} commit --allow-empty -qm second && git tag v2.0", tmp_path)
+    assert advanced.returncode == 0, advanced.stderr
+    second_commit = _run("git rev-parse HEAD", tmp_path).stdout.strip()
+    second = _run(setup, tmp_path)
+    assert second.returncode == 0, second.stderr
+    second_path = next(
+        line.removeprefix("BASELINE_FILE=") for line in second.stdout.splitlines() if line.startswith("BASELINE_FILE=")
+    )
+    assert first_path != second_path
+
+    classify = bash_block_after(_text("modes/classify-truth-check.md"), "**Resolve the published baseline**")
+    assert _run(classify, tmp_path, BASELINE_FILE=first_path).stdout.strip() == f"BASELINE_REF={first_commit}"
+    assert _run(classify, tmp_path, BASELINE_FILE=second_path).stdout.strip() == f"BASELINE_REF={second_commit}"
+
+    handoff = next(line for line in skill.splitlines() if line.startswith("**Published baseline handoff**"))
+    assert "literal path" in handoff
+    assert "another release invocation" in handoff
+
+
+@_skip_shell_unavailable
 def test_adversarial_review_stops_without_a_range(tmp_path: Path) -> None:
     """A missing range cannot expand the completeness check to the entire repository history."""
     completed = _run(bash_blocks(_text("modes/adversarial-review.md"))[0], tmp_path, RANGE="", GATHER_FILE="")

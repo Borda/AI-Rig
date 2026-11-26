@@ -242,6 +242,19 @@ class TestRenderedTemplates:
         assert is_allowed(result)
         assert "updatedInput" not in result["hookSpecificOutput"]
 
+    @pytest.mark.parametrize("vector", vector_params("quoted_data"))
+    def test_rendered_template_preserves_quoted_data(
+        self, plugin_root: Path, run_blueprint: Callable[..., dict], vector: dict
+    ) -> None:
+        """Keep quoted data in the template's source hash and in its installed digest."""
+        template = bbm.normalize(f"{BOOTSTRAP}\n{vector['reviewed']}")
+        rendered = renderer.render_document(template, plugin_root)
+        variant = renderer.render_document(f"{BOOTSTRAP}\n{vector['variant']}", plugin_root)
+        manifest = _rendered_manifest(plugin_root, template)
+
+        assert is_allowed(run_blueprint(rendered, manifest=manifest)) is vector.get("allow_reviewed", True)
+        assert run_blueprint(variant) == {}
+
     @pytest.mark.parametrize("alteration", ["other-root", "extra-argument", "source-token"])
     def test_altered_command_misses(
         self, plugin_root: Path, run_blueprint: Callable[..., dict], alteration: str
@@ -557,6 +570,29 @@ class TestSharedVectors:
         collide with a manifest digest.
         """
         assert hook_js("normalize", vector["input"]) == vector["expected"]
+
+    @pytest.mark.parametrize("vector", vector_params("quoted_data"))
+    def test_quoted_data_has_distinct_digest(self, hook_js: Callable[[str, object], object], vector: dict) -> None:
+        """Use the generator's exact UTF-8 digest for each distinct quoted argument."""
+        reviewed = hook_js("normalize", vector["reviewed"])
+        variant = hook_js("normalize", vector["variant"] + "  # note")
+        reviewed_digest = hook_js("sha256Text", reviewed)
+        variant_digest = hook_js("sha256Text", variant)
+
+        assert reviewed_digest != variant_digest
+        assert reviewed_digest == bbm.sha256_text(vector["reviewed"])
+        assert variant_digest == bbm.sha256_text(vector["variant"])
+
+    @pytest.mark.parametrize("vector", vector_params("quoted_data"))
+    def test_quoted_data_must_match_manifest(self, run_blueprint: Callable[..., dict], vector: dict) -> None:
+        """Require a matching digest and a passing danger check before allowing quoted commands."""
+        reviewed = bbm.normalize(vector["reviewed"])
+        manifest = _manifest_bytes({"skills/demo/SKILL.md:1": reviewed})
+
+        result = run_blueprint(vector["reviewed"] + "  # note", manifest=manifest)
+
+        assert is_allowed(result) is vector.get("allow_reviewed", True)
+        assert run_blueprint(vector["variant"]) == {}
 
     @pytest.mark.parametrize("vector", vector_params("split_logical_commands"))
     def test_split_logical_commands(self, hook_js: Callable[[str, object], object], vector: dict) -> None:

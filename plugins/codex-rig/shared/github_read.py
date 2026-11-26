@@ -13,7 +13,7 @@ Permit audited built-in views, REST GET, and GraphQL queries only; never inspect
 permit remote mutation. The fallback is restricted to public
 ``https://api.github.com``
 endpoints and is considered
-only for classified authentication, network, or rate-limit failures.
+only for classified authentication, network, or rate-limit failures on non-paginated requests.
 
 ## Usage
 
@@ -36,8 +36,9 @@ metadata. The CLI writes successful bytes exactly to ``--out``, except Actions j
 ANSI formatting removed, CRLF normalized, and remaining terminal controls escaped. A job-log GET rejected by gh's
 escape-sequence guard retries once with its output compatibility flag, always through captured streams. On failure it
 emits the stable code followed by
-available safe JSON diagnostics, including a reason for organization policies forbidding classic personal access tokens;
-it never includes tokens or raw command output. A policy refusal remains terminal and cannot activate public fallback.
+available safe JSON diagnostics, including ``unknown-json-field`` for unsupported gh JSON fields and a reason for
+organization policies forbidding classic personal access tokens. It never includes tokens or raw command output.
+Neither an unknown field nor a policy refusal can activate public fallback.
 
 ## Failure
 
@@ -74,6 +75,8 @@ PUBLIC_GITHUB_API_HOST = "api.github.com"
 VIEW_RESOURCE_COMMANDS = frozenset({"gist", "issue", "pr", "project", "release", "repo", "ruleset", "run", "workflow"})
 #: Job logs are text; workflow-run log endpoints instead return binary ZIP archives.
 JOB_LOG_ENDPOINT = re.compile(r"/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/jobs/[1-9][0-9]*/logs")
+# An unquoted field name can itself contain words used by transport classifiers.
+UNKNOWN_JSON_FIELD = re.compile(rb"^Unknown JSON field:[ \t]*[^ \t\r\n]", re.IGNORECASE | re.MULTILINE)
 # Git pads each fetch status column independently according to the displayed refs.
 NON_FAST_FORWARD_LINE = r"^[ \t]*! \[rejected\][ \t]+\S+[ \t]+->[ \t]+(\S+)[ \t]+\(non-fast-forward\)\r?$"
 # Keep the native destination distinct from other branch names, worktree paths and lock diagnostics.
@@ -158,16 +161,16 @@ def _is_read_only_rest_api(arguments: list[str]) -> bool:
             explicit_get = True
             index += 2
             continue
-        if argument == "--cache":
-            if index + 1 >= len(arguments):
+        if argument in {"--cache", "--hostname"}:
+            # A caller verifying a github.com identity can override gh's cwd- or GH_HOST-derived host.
+            if index + 1 >= len(arguments) or (argument == "--hostname" and arguments[index + 1] != "github.com"):
                 return False
             index += 2
             continue
         if argument in {"-f", "-F"}:
-            if index + 1 >= len(arguments) or "=" not in arguments[index + 1]:
-                return False
-            _, _, value = arguments[index + 1].partition("=")
-            if argument == "-F" and value.startswith("@"):
+            field = arguments[index + 1] if index + 1 < len(arguments) else ""
+            _, separator, value = field.partition("=")
+            if not separator or (argument == "-F" and value.startswith("@")):
                 return False
             has_fields = True
             index += 2
@@ -231,6 +234,8 @@ def _diagnostic_message_text(stderr: bytes) -> str:
 
 def github_failure_class(stderr: bytes) -> str:
     """Classify a GitHub CLI failure without persisting its output."""
+    if UNKNOWN_JSON_FIELD.search(stderr):
+        return "github-command-failed"
     text = _diagnostic_message_text(stderr)
     # An explicit policy refusal outranks words in the organization name, such as "tls".
     if "forbids access via a personal access token (classic)" in text:
@@ -243,6 +248,11 @@ def github_failure_class(stderr: bytes) -> str:
         return "github-auth"
     if "graphql:" in text and "could not resolve to a " in text:
         return "github-not-found"
+    return _common_failure_class(text)
+
+
+def _common_failure_class(text: str) -> str:
+    """Classify transport and authorization messages using sanitized diagnostic text."""
     if any(
         token in text
         for token in (
@@ -287,22 +297,26 @@ def github_failure_class(stderr: bytes) -> str:
     return "github-command-failed"
 
 
+def _network_failure_reason(stderr: bytes) -> str:
+    """Refine a network failure using only sanitized diagnostic text."""
+    text = _diagnostic_message_text(stderr)
+    if any(token in text for token in ("could not resolve host", "name resolution", "no such host")):
+        return "dns"
+    if "connection refused" in text:
+        return "connection-refused"
+    if "connection reset" in text:
+        return "connection-reset"
+    if any(token in text for token in ("deadline exceeded", "i/o timeout", "client.timeout exceeded")):
+        return "timeout"
+    return "tls" if "tls" in text else "network"
+
+
 def github_failure_reason(stderr: bytes, failure_class: str) -> str:
     """Return a safe actionable subtype without retaining GitHub CLI stderr."""
-    text = stderr.decode("utf-8", errors="replace").casefold()
+    if UNKNOWN_JSON_FIELD.search(stderr):
+        return "unknown-json-field"
     if failure_class == "github-network":
-        text = _diagnostic_message_text(stderr)
-        if any(token in text for token in ("could not resolve host", "name resolution", "no such host")):
-            return "dns"
-        if "connection refused" in text:
-            return "connection-refused"
-        if "connection reset" in text:
-            return "connection-reset"
-        if any(token in text for token in ("deadline exceeded", "i/o timeout", "client.timeout exceeded")):
-            return "timeout"
-        if "tls" in text:
-            return "tls"
-        return "network"
+        return _network_failure_reason(stderr)
     if failure_class == "github-rate-limit":
         return "rate-limit"
     if failure_class == "github-auth":
@@ -313,27 +327,27 @@ def github_failure_reason(stderr: bytes, failure_class: str) -> str:
         return "permission"
     if failure_class == "github-not-found":
         return "not-found"
-    if failure_class == "github-command-failed":
-        if "the response contains terminal escape sequences" in text:
-            return "terminal-escape-sequences-refused"
-        # Match Git's local diagnostic grammar, never branch names or arbitrary prose alone.
-        local_reasons = (
-            (
-                r"^error: your local changes to the following files would be overwritten by (?:checkout|merge):$",
-                "local-changes-overwritten",
-            ),
-            (
-                r"^error: the following untracked working tree files would be overwritten by (?:checkout|merge):$",
-                "local-untracked-files-overwritten",
-            ),
-            (r"^fatal: not possible to fast-forward, aborting\.$", "local-fast-forward-unavailable"),
-        )
-        for pattern, reason in local_reasons:
-            if re.search(pattern, text, flags=re.MULTILINE):
-                return reason
-        for reason, pattern in CHECKOUT_REF_ERRORS.items():
-            if re.search(pattern, text, flags=re.MULTILINE):
-                return reason
+    return _command_failure_reason(stderr) if failure_class == "github-command-failed" else "unclassified"
+
+
+def _command_failure_reason(stderr: bytes) -> str:
+    """Match CLI escape refusal or Git's local diagnostic grammar without retaining subjects."""
+    text = stderr.decode("utf-8", errors="replace").casefold()
+    if "the response contains terminal escape sequences" in text:
+        return "terminal-escape-sequences-refused"
+    local_reasons = {
+        "local-changes-overwritten": (
+            r"^error: your local changes to the following files would be overwritten by (?:checkout|merge):$"
+        ),
+        "local-untracked-files-overwritten": (
+            r"^error: the following untracked working tree files would be overwritten by (?:checkout|merge):$"
+        ),
+        "local-fast-forward-unavailable": r"^fatal: not possible to fast-forward, aborting\.$",
+        **CHECKOUT_REF_ERRORS,
+    }
+    for reason, pattern in local_reasons.items():
+        if re.search(pattern, text, flags=re.MULTILINE):
+            return reason
     return "unclassified"
 
 
@@ -632,11 +646,12 @@ def read_with_fallback(
     fallback_url: FallbackUrl | None = None,
     open_url: OpenUrl = urlopen,
 ) -> tuple[bytes, str]:
-    """Prefer authenticated gh, retaining safe diagnostics when public fallback fails identically."""
+    """Prefer authenticated gh and use public fallback only when a single response can satisfy the read."""
     try:
         return run_gh_read(run, argv, timeout=timeout, label=label), "gh"
     except GitHubReadError as error:
-        if not _may_use_public_fallback(error):
+        # The public transport makes one GET and cannot recover a failed all-pages read.
+        if "--paginate" in argv or not _may_use_public_fallback(error):
             raise
         resolved_fallback_url = fallback_url() if callable(fallback_url) else fallback_url
         if resolved_fallback_url is None:

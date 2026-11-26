@@ -895,6 +895,11 @@ class TestApiFailsClosed:
             ),
             pytest.param("gh api graphql -F query=@q.graphql", "does not show", id="graphql-query-file"),
             pytest.param('gh api graphql -f query="$Q"', "query", id="graphql-variable-query"),
+            pytest.param(
+                'gh api graphql -f query="query { viewer { $FIELDS } }"',
+                "does not show",
+                id="graphql-runtime-selection",
+            ),
             pytest.param('gh api graphql -f query="$(cat q.graphql)"', "does not show", id="graphql-substituted-query"),
             pytest.param("gh api graphql --input body.json", "--input", id="graphql-input"),
             pytest.param("gh api repos/o/r --foo", "--foo", id="unknown-long-option"),
@@ -1077,6 +1082,38 @@ class TestReadsPass:
             pytest.param("gh api -H 'Accept: application/vnd.github+json' repos/o/r -i", id="api-get-header"),
             pytest.param("gh api graphql -f query='query { viewer { login } }'", id="graphql-query"),
             pytest.param("gh api graphql -f query='{ viewer { login } }'", id="graphql-shorthand-query"),
+            pytest.param(
+                "gh api graphql -f 'query=query { search(query: \"subscription\") { count } }'", id="graphql-string"
+            ),
+            pytest.param("gh api graphql -f 'query=query mutation { subscription }'", id="graphql-name"),
+            pytest.param("gh api graphql -f 'query=query { force: viewer { login } }'", id="graphql-force-alias"),
+            pytest.param(
+                "gh api graphql -f 'query=query Q($force: Boolean) { f(flag: $force) }'", id="graphql-force-variable"
+            ),
+            pytest.param("gh api graphql -f 'query=# mutation\nquery { viewer { login } }'", id="graphql-comment"),
+            pytest.param(
+                """Gh api graphql -f 'query={ search(query:"""
+                + '"""mutation { force: true }"""'
+                + """) { count } }'""",
+                id="graphql-block-string",
+            ),
+            pytest.param("gh api graphql -f 'query=query Q($n: Int!) { f(n: $n) }'", id="graphql-literal-variable"),
+            pytest.param(
+                "gh api graphql -f query='query Q($n: Int!) { f(n: $n) }' -F n=\"$NUM\" && gh pr view 1",
+                id="graphql-separate-query-field-in-chain",
+            ),
+            pytest.param(
+                "gh api graphql -iFquery='query Q($n: Int!) { f(n: $n) }' -F n=\"$NUM\" | cat",
+                id="graphql-attached-query-field-in-pipeline",
+            ),
+            pytest.param(
+                "gh --raw-field=query='query Q($n: Int!) { f(n: $n) }' api graphql -F n=\"$NUM\"; :",
+                id="graphql-inline-long-field-before-api",
+            ),
+            pytest.param(
+                "bash -c \"gh api graphql --field 'query=query Q(\\$n: Int!) { f(n: \\$n) }' -F n=1\"",
+                id="graphql-separate-long-field-in-nested-shell",
+            ),
             pytest.param(
                 "gh api graphql -f query='query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){id}}'"
                 " -f owner=o -F repo=r",
@@ -1472,6 +1509,32 @@ class TestOneTimeApproval:
 class TestForceUpdateNeverApproved:
     """A gh force update to remote history is blocked even with a token for its exact text (no force to a remote)."""
 
+    @pytest.mark.parametrize("ignored", [",", "# comment\n", "\t,\r\n", "\ufeff"])
+    def test_ignored_graphql_tokens_do_not_hide_force(self, guard, checkout: Path, ignored: str) -> None:
+        """GraphQL ignored tokens leave the force argument intact in the hook's policy decision."""
+        command = f"gh api graphql -f 'query=mutation {{ m(force{ignored}: true) {{ id }} }}'"
+        result = guard(_call(command, checkout))
+        assert result.returncode == 2, result.stderr
+        assert "gh force update blocked" in result.stderr
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            pytest.param("mutation { m(input: {force: false}) { id } }", id="graphql-force-false"),
+            pytest.param(
+                "mutation M($force: Boolean) { force: m(force: false, flag: $force) { id } }",
+                id="graphql-force-false-with-other-names",
+            ),
+        ],
+    )
+    def test_literal_false_force_can_be_approved(self, guard, gh_write_token, checkout: Path, query: str) -> None:
+        """An inline GraphQL mutation with literal false uses ordinary single-use approval."""
+        command = f"gh api graphql -f 'query={query}'"
+        token = gh_write_token(checkout, command)
+        result = guard(_call(command, checkout))
+        assert result.returncode == 0, result.stderr
+        assert not token.exists()
+
     @pytest.mark.parametrize(
         "command",
         [
@@ -1490,6 +1553,14 @@ class TestForceUpdateNeverApproved:
                 id="graphql-force",
             ),
             pytest.param("gh api graphql -F query=@update.graphql", id="graphql-query-file"),
+            pytest.param(
+                "gh api graphql --field=query=\"$DOC\" -f 'name=$literal'; gh pr view 1",
+                id="graphql-runtime-query-with-literal-sibling",
+            ),
+            pytest.param(
+                "gh api graphql -f 'query=mutation { m(force # ignored\n, : true) { id } }'; :",
+                id="graphql-ignored-tokens-with-approval",
+            ),
             pytest.param("gh issue close 3; gh repo sync --force", id="force-after-another-write"),
             pytest.param(GRAPHQL_NESTED_FORCE, id="graphql-nested-variable-force"),
             pytest.param(GRAPHQL_LIST_FORCE, id="graphql-nested-list-force"),
@@ -1662,6 +1733,8 @@ class TestFilesUnchanged:
         [
             pytest.param("gh issue comment 3 --body-file c.md", "c.md", id="body-file"),
             pytest.param("gh issue comment 3 --body-file=c.md", "c.md", id="body-file-attached"),
+            pytest.param("gh issue comment 3 --body-file -draft.md", "-draft.md", id="option-shaped-body-file"),
+            pytest.param("gh pr comment 3 -F -draft.md", "-draft.md", id="option-shaped-short-body-file"),
             pytest.param("gh pr comment 3 -F c.md", "c.md", id="short-body-file"),
             pytest.param("gh release create v1 --notes-file c.md", "c.md", id="notes-file"),
             pytest.param("gh api repos/o/r/issues -F title=x -F body=@c.md", "c.md", id="api-field-file"),

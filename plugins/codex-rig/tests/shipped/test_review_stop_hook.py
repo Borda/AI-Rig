@@ -1598,6 +1598,82 @@ def test_released_remediation_claims_require_reacquisition_before_edits(standalo
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize(
+    ("case", "recover"),
+    [
+        pytest.param("retained", True, id="released-original-claims"),
+        pytest.param("wrong-root", False, id="unrelated-storage"),
+        pytest.param("wrong-number", False, id="different-target"),
+        pytest.param("wrong-owner", False, id="unrelated-writer"),
+        pytest.param("rejected-root", False, id="storage-lookup-failed"),
+        pytest.param("late-rejection", False, id="confirmation-failed"),
+        pytest.param("steered", False, id="user-stopped"),
+        pytest.param("scope-menu", False, id="scope-decision-pending"),
+    ],
+)
+def test_remediation_allocation_without_storage_lookup_recovers_confirmation(
+    standalone_receipts, case: str, recover: bool
+) -> None:
+    """A retained Git-admin root needs confirmation before the released remediation claims can support further work."""
+    payload, start, prepare, caller, reports, target, command, root = standalone_receipts
+    payload["last_assistant_message"] = (
+        "All / Required / Suggestions / Custom selection" if case == "scope-menu" else payload["last_assistant_message"]
+    )
+    writer = str(caller / ".git/codex-review-writers" / ("1" * 64) / "codex-review-slot")
+    slot = str(caller / ".git/codex-review-targets" / hashlib.sha256(target.encode()).hexdigest() / "codex-review-slot")
+    writer_owner = "another" if case == "wrong-owner" else "own"
+    requested_root = caller / "other" if case == "wrong-root" else reports
+    pr_number = 13 if case == "wrong-number" else 12
+    failed_lookup = command(
+        caller, "review_code_safety", f'report-root --checkout "{caller}" --pr-url {target}', "no matching remote", 1
+    )
+    records = [
+        *start,
+        command(
+            caller,
+            "review_checkout_slot",
+            f'acquire --checkout "{caller}" --writer --owner {writer_owner}',
+            json.dumps({"status": "acquired", "slot": writer, "owner": writer_owner}),
+        ),
+        command(
+            caller,
+            "review_checkout_slot",
+            f'acquire --checkout "{caller}" --target {target} --owner own',
+            json.dumps({"status": "acquired", "slot": slot, "owner": "own"}),
+        ),
+        *([failed_lookup] if case == "rejected-root" else []),
+        command(
+            caller,
+            "create_run",
+            f'--skill code-remediate --pr-number {pr_number} --root "{requested_root}"',
+            str(requested_root / "code-remediate/staging"),
+        ),
+        command(
+            caller,
+            "review_checkout_slot",
+            f'release --slot "{slot}" --owner own',
+            json.dumps({"status": "released", "slot": slot, "owner": None}),
+        ),
+        command(
+            caller,
+            "review_checkout_slot",
+            f'release --slot "{writer}" --owner {writer_owner}',
+            json.dumps({"status": "released", "slot": writer, "owner": None}),
+        ),
+    ]
+    steering = {"type": "response_item", "payload": {"type": "message", "role": "user", "content": "Stop"}}
+    records.extend({"steered": [steering], "late-rejection": [failed_lookup]}.get(case, []))
+    response = HOOK.evaluate(payload, records, root)
+    assert response.get("decision") == ("block" if recover else None)
+    reason = response.get("reason", "")
+    assert ("report-root" in reason) is recover
+    assert ("original invocation ID" in reason) is recover
+    assert ("explicit +review" in reason) is recover
+    confirmed = HOOK.evaluate(payload, [*records, prepare], root)
+    assert ("Continue remediation selection" in confirmed.get("reason", "")) is recover
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize("use_root", [True, False])
 def test_original_remediation_from_checkout_subdirectory(standalone_receipts, use_root: bool) -> None:
     """Original-checkout remediation keeps its acquired claim through finalization from either session directory."""
@@ -1664,14 +1740,25 @@ def test_pr_admission_stays_bound_across_exclusivity_and_completion(standalone_r
     complete = command(caller, "find-review-report", f'--complete-run "{run}"', "Validated review.")
     active = [*start, acquire, prepare, writer_acquire, writer_release, create]
     assert "Continue the read-only review" in HOOK.evaluate(payload, active, root)["reason"]
+    early_release = HOOK.evaluate(payload, [*active, release], root)
+    assert early_release["decision"] == "block"
+    recovery = early_release["reason"]
+    assert "reacquire" in recovery.lower()
+    assert "retained locator" in recovery
+    assert "original owner ID" in recovery
+    assert "PR State Preflight" in recovery
+    assert "reverify" in recovery
+    assert "--complete-run" in recovery
+    assert "stdout" in recovery
+    assert "verbatim" in recovery
+    assert "reacquire" not in HOOK.evaluate(payload, [*active, release, acquire], root)["reason"].lower()
     take_exclusive = operation("acquire", f'--checkout "{caller}"', exclusive, "own")
     release_exclusive = operation("release", f'--slot "{exclusive}"', exclusive, None)
     assert HOOK.evaluate(payload, [*active, take_exclusive], root) == {}
+    exclusive_ended = [*active, release, take_exclusive, release_exclusive]
+    assert "released PR slot" not in HOOK.evaluate(payload, exclusive_ended, root)["reason"]
     transitioned = [
-        *active,
-        release,
-        take_exclusive,
-        release_exclusive,
+        *exclusive_ended,
         operation("acquire", f'--slot "{slot}"', slot, "own"),
         promote,
         complete,
@@ -3233,6 +3320,69 @@ def test_answered_continue_restores_review_recovery(
     answered_question[1]["payload"]["item"]["arguments"]["question"] = question
     records.extend(answered_question)
     assert HOOK.evaluate(payload, records, "/plugin").get("decision") == expected
+
+
+@pytest.fixture
+def review_recovery_question(answered_question) -> list[dict]:
+    """Supply the host receipts for the documented three-option review decision."""
+    item = answered_question[1]["payload"]["item"]
+    item["arguments"].update(
+        question="How should we continue the review of https://github.com/acme/widgets/pull/12?",
+        options=["New review", "Resume last one", "Stop"],
+    )
+    item["result"]["structuredContent"]["answer"] = "New review"
+    return answered_question
+
+
+@pytest.mark.parametrize(
+    ("answer", "decision", "after_original_completion"),
+    [
+        pytest.param("New review", "block", "block", id="start-fresh"),
+        pytest.param("Resume last one", "block", None, id="resume-retained"),
+        pytest.param("Stop", None, None, id="stop-review"),
+    ],
+)
+def test_incomplete_review_decision_respects_native_choice(
+    review_state, review_recovery_question, answer: str, decision: str | None, after_original_completion: str | None
+) -> None:
+    """The native recovery menu reopens a review only when the user selects a continuing route."""
+    payload, records = review_state
+    item = review_recovery_question[1]["payload"]["item"]
+    item["result"]["structuredContent"]["answer"] = answer
+    active = [*records, *review_recovery_question]
+    assert HOOK.evaluate(payload, active, "/plugin").get("decision") == decision
+    finish_original = command_record(
+        '"/plugin/bin/python" "/plugin/shared/find-review-report.py" --complete-run .reports/codex/code-review/run-a'
+    )
+    assert HOOK.evaluate(payload, [*active, finish_original], "/plugin").get("decision") == after_original_completion
+    promote_original = command_record(
+        '"/plugin/bin/python" "/plugin/shared/create_run.py" --skill code-review '
+        "--promote-pr-run .reports/codex/code-review/run-a",
+        ".reports/codex/code-review/pr-12/run-001",
+    )
+    finish_promoted = command_record(
+        '"/plugin/bin/python" "/plugin/shared/find-review-report.py" --complete-run .reports/codex/code-review/pr-12/run-001'
+    )
+    result = HOOK.evaluate(payload, [*active, promote_original, finish_promoted], "/plugin")
+    assert result.get("decision") == after_original_completion
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_new_review_completes_with_replacement_run(review_state, review_recovery_question, nested: bool) -> None:
+    """Choosing a new review retires the old run when its replacement is allocated and completed."""
+    payload, records = review_state
+    base = ".reports/codex/code-review"
+    allocator = '"/plugin/bin/python" "/plugin/shared/create_run.py" --skill code-review'
+    records[2] = command_record(f"{allocator} --pr-number 12", f"{base}/run-a")
+    records[2:2] = [create_run_record("code-remediate")] if nested else []
+    allocated = [*records, *review_recovery_question, command_record(f"{allocator} --pr-number 12", f"{base}/run-b")]
+    assert HOOK.evaluate(payload, allocated, "/plugin")["decision"] == "block"
+    run = f"{base}/pr-12/run-002"
+    promoted = command_record(f"{allocator} --promote-pr-run {base}/run-b", run)
+    finish = command_record(f'"/plugin/bin/python" "/plugin/shared/find-review-report.py" --complete-run {run}')
+    completed = HOOK.evaluate(payload, [*allocated, promoted, finish], "/plugin")
+    assert completed.get("decision") == ("block" if nested else None)
+    assert ("Continue remediation selection" in completed.get("reason", "")) is nested
 
 
 @pytest.mark.parametrize("answer", ["Skip", "Stop", "Deny", "", "continue"])

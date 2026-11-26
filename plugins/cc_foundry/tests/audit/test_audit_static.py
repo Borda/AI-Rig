@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 from _file_modes import _file_modes_supported
 from _hook_env import _symlinks_supported
+from _worker_shared import shared_artifact
 
 _MOD_PATH = Path(__file__).resolve().parent.parent.parent / "bin" / "audit_static.py"
 _spec = importlib.util.spec_from_file_location("audit_static", _MOD_PATH)
@@ -136,17 +137,19 @@ def _seed_defective_plugin(root: Path) -> Path:
 
 
 @pytest.fixture(scope="module")
-def seeded_jsonl(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def seeded_jsonl(tmp_path_factory: pytest.TempPathFactory, worker_id: str) -> Path:
     """Run every checker through the CLI once over the seeded tree and retain the JSONL output.
 
     This is the one deliberate full-registry run: every checker, including the whole-repo ones, executes its real
-    subprocess here, so the per-case tests below can stay cheap.
+    subprocess here, so the per-case tests below can stay cheap. One worker runs it and the others read its output.
     """
-    root = tmp_path_factory.mktemp("seeded-audit")
-    plugins = _seed_defective_plugin(root)
-    out = root / "static.jsonl"
-    assert aud.main(["--scan-dir", str(plugins), "--jsonl", str(out)]) == 1
-    return out
+
+    def build(out: Path) -> None:
+        """Seed the defective plugin and write the full-registry JSONL to ``out``."""
+        plugins = _seed_defective_plugin(tmp_path_factory.mktemp("seeded-audit"))
+        assert aud.main(["--scan-dir", str(plugins), "--jsonl", str(out)]) == 1
+
+    return shared_artifact(tmp_path_factory, worker_id, "seeded-audit-static.jsonl", build)
 
 
 @pytest.fixture(scope="module")

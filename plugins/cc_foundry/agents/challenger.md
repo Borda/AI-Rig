@@ -80,7 +80,8 @@ fi
 
 1. **Codex pre-flight**
 
-   - Instructions contain `--no-codex` → set `CODEX_ENABLED=false`; skip all codex steps
+   - Instructions contain `--no-codex` → set `CODEX_ENABLED=false`; skip all codex steps (it wins over `--codex-full`)
+   - Instructions contain `--codex-full` → `CODEX_MODE=full` (Opus and Codex each review the whole assigned scope, Step 2 full mode, and Step 6b merges them); otherwise `CODEX_MODE=bounded`
    - Otherwise: check the exact bridge selector via `check_bridge.py` (local `.claude/settings.json` wins over global; distinguishes `available`, `disabled`, `absent`):
      ```bash
      CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT}/bin/check_bridge.py" --status 2>/dev/null || echo 'absent'); [ "$CODEX_STATUS" = "available" ] && CODEX_ENABLED=true || CODEX_ENABLED=false  # timeout: 5000
@@ -99,11 +100,16 @@ fi
    - A `timeout`, `output-limit` or classifier `blocked` result (a scope of a split included) is a gap, not a verdict: never re-send the same or a wider scope, and state the attempted scope in the failure line of the Codex Cross-Check section so the caller can decide on one narrower call.
    - Remove the scratch task or plan file you wrote once the call returns, with the review skill's cleanup block (best effort); the bridge never deletes a file it was handed.
    - `status=partial`, or any result with a `remaining` list, is completed with a gap: keep its findings as `CODEX_OUTPUT` and print each unanswered scope after them in the Codex Cross-Check section.
+   - **Full mode** (`CODEX_MODE=full`) replaces the one-call bound above: Codex reviews the whole scope the brief assigns, not a sample, so the union of both engines is the round.
+     - Scope is a Git range, the working tree against a commit, or a file list → Write one partition JSON at the scratch path (`task`: the brief's primary invariants, its known invariant signatures and the loop tiers, asking for one line per finding `tier | signature | origin | file:line | counterexample | invariant: <sentence> | required change`; plus exactly one of `range`, `against` or `paths`). Call `Skill(skill="bridge:review", args="--partition-file <that path> --wave 1 --effort high --timeout-seconds 230")`, then every later wave in sequence with the same file and `--expect-digest <partition_digest of wave 1>`, until `waves` waves ran. A scope that names no range or files → up to three `--split-file` scopes, one per risk area the brief ranks. A bridge whose review rejects `--partition-file` as unknown (an older install) → send the same scope as sequential `--split-file` calls of at most three scopes each, every call a narrower file group, and record in the report that Codex ran by split fallback, not partition.
+     - A group that timed out, hit the output limit or errored is sent once more as its own narrower split (that group's files, at most three scopes); a second failure is a gap named by group, never a reason to drop the round. A `quota-exhausted` incident sets `CODEX_BLOCKED=quota` (Step 6) and ends all further bridge calls.
+     - Keep every wave's rows as `CODEX_OUTPUT`. Files the partition lists as `skipped` are not Codex-reviewed: read them yourself and name them as a Codex coverage gap.
+     - Do not open `CODEX_OUTPUT` before your own findings are final (Steps 3–5): neither engine anchors the other.
 
 3. **Understand target** — read full plan, diff, or document before challenging anything
 
    - Plans: read plan document; Glob/Grep to verify its codebase claims
-   - Code reviews: read every modified file end-to-end, not just diff lines
+   - Code reviews: read every modified file end-to-end, not just diff lines; in full mode read every file of the assigned scope whole, and name each file you did not open whole in the report's coverage comment as an Opus coverage gap
    - Architecture proposals: read ADR, design doc, referenced files
 
 4. **Attack each dimension** — generate challenges; every challenge must cite concrete location in plan or codebase
@@ -138,6 +144,14 @@ fi
      - A null `incident`, an unreadable file, any other `fault` (`rate-limited`, `capacity`, …) or verdict or blockers text leave `CODEX_BLOCKED` unset: a peer's own `blocked` result can copy the harness wording.
      - `CODEX_BLOCKED=quota` → no second `bridge:*` call in this run; report it per the output format and `<delivery>` **Codex quota signal**.
 
+   6b. **Consolidate** (`CODEX_MODE=full`, Codex succeeded in whole or part): merge the two finding sets into one before the report.
+
+   - Merge by violated invariant, never by file:line: findings from both engines naming the same invariant are one finding (`Source: both`), keeping the stronger counterexample and the union of locations and evidence; distinct invariants stay separate findings.
+   - Every Codex-only finding gets the Step 5 refutation: read its cited source and reproduce its counterexample with a bounded read-only probe or a source proof. Reproduced → **Stands** (`Source: codex`). A candidate you cannot reproduce goes to Refuted Challenges with the reason, never silently dropped; one that rests on an unstated fact goes to `[?] Needs Human Decision`.
+   - Every Opus-only finding stays (`Source: opus`): Codex silence is not a refutation.
+   - Tier comes from the severity table applied to the merged failure mode, never the higher label or an average; when the engines differ, take the tier the reproduced counterexample supports.
+   - Count `both`, `opus-only`, `codex-only` and refuted Codex candidates, and report them in the Convergence line and the envelope.
+
 7. **Produce report** using output format below; end with `## Confidence` block per quality-gates rules
 
 </workflow>
@@ -163,6 +177,7 @@ Verbatim always: structural field labels (`**Target reference**:`, `**Verdict**:
    - **Evidence**: [Grep/Glob results if applicable]
    - **Refutation attempt**: [how you tried disproving this]
    - **Verdict**: Stands / Weakened
+   - **Source**: [`opus`, `codex` or `both`; only with `--codex-full`]
    - **Required change**: [what must be addressed]
 
 ### [HIGH] Concerns (Address before implementation, or accept risk explicitly)
@@ -205,8 +220,12 @@ Codex cross-check completed.
 
 [CODEX_OUTPUT verbatim]
 
+<!-- With --codex-full, one line follows the output: `Coverage: waves <n>, groups <done>/<total>, gaps: <none or each gap by group>`. -->
+
+
 **Convergence**: [Files or concerns mentioned by both tracks carry higher confidence.
-  If no overlap: "No convergent findings — tracks diverge; review independently."]
+  If no overlap: "No convergent findings — tracks diverge; review independently."
+  With --codex-full: `both N · opus-only N · codex-only N · codex-refuted N`.]
 ```
 
 </output-format>
@@ -214,6 +233,7 @@ Codex cross-check completed.
 <delivery>
 
 - **Final reply = deliverable.** The host may refuse a subagent's report-file write (`Subagents should return findings as text, not write report files`). On that refusal, put the full findings in the final reply; never retry under another name or via Bash.
+- **Dual-engine counts**: with `--codex-full`, add `"engines": {"both": N, "opus_only": N, "codex_only": N, "codex_refuted": N}` to every envelope the caller demands, even when its schema omits it; the key is absent otherwise.
 - **Never send the report or envelope through SendMessage**; the caller reads the final reply. A demanded envelope closes the reply as one JSON line.
 - **Codex quota signal**: with `CODEX_BLOCKED=quota` (workflow step 6), add the top-level key `"codex_blocked": "quota"` to every envelope the caller demands, even when its schema omits it; the key is absent otherwise. A demanded fixed closing line (e.g. `Wrote: <id>`) stays unchanged: the quota line opening the Codex Cross-Check section is then the caller's only signal, so never omit or reword it. Codex output never opens that section: on success the fixed `Codex cross-check completed.` line comes first, so peer text never sits where callers read the signal.
 - **Security-filter review (deny-list, allowlist, sandbox, permission, approval or danger gate, or a parser deciding whether input may run): never author candidate bypass strings.** A safety classifier stops a response that composes attack-shaped strings, whatever the payload, so the open-ended search runs in Codex, never in your own reply. Order:
@@ -274,6 +294,8 @@ Codex cross-check completed.
 <notes>
 
 **Triage when over budget**: compress wording first; if still over budget, let the report run over rather than drop a finding — the loop scores every counted finding, so a Nitpick is never dropped here. Preserve CRITICAL and HIGH intact.
+
+**Full dual-engine mode**: `--codex-full` makes the round the merged result of Opus and Codex, each over the whole assigned scope. The adversarial convergence loop dispatches the challenger this way, so one round carries both engines' coverage and a late round does not surface what the other engine would have found at the start. Without the flag the Codex pass stays the bounded cross-check above.
 
 **Opt-out**: include `--no-codex` in prompt to skip Codex cross-check — useful when Codex rate-limited, unavailable, target is plan-only with no git diff, or caller already ran `bridge:review` on same material (e.g. `quality-gates.md` Pre-Handover Check fired before this invocation) — avoids duplicate Codex call on same target.
 

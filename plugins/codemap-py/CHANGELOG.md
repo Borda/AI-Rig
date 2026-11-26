@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.46.0
+
+- New `codemap-py context` command gives review, resolve and remediation workflows a `diff-impact` answer tied to the source they reviewed.
+  - The command reads source without executing it, keeps scan artifacts outside the checkout and probes Git without refreshing its index. With `--expect-head`, a wrong commit, unreadable checkout status or changed indexed Python, including untracked files, yields `head-mismatch` without a fallback. A request without that flag describes the working tree and uses a separate index so its evidence cannot be reused for a commit-bound review.
+  - The JSON record names a specific cause when structural evidence is unavailable. Eligible failures include a low-confidence list of candidate importers and references. If the command refuses the request before writing a record, consumers can distinguish `context-request-invalid` from a failed query and reserve the legacy route for a launcher without `context`.
+- The native Codex question server rejects malformed UTF-8 or oversized JSONL frames individually, allowing the next request to proceed.
+
 ## 0.45.3
 
 - The index and telemetry directory checks compare paths without the Windows extended-length prefix, so concurrent scans on native Windows no longer fail with "index directory escapes project root" when one writer creates the directory while another resolves it.

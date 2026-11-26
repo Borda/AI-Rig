@@ -32,6 +32,13 @@ def bash_path(path: str | Path) -> str:
     return subprocess.check_output(["cygpath", "-u", str(path)], text=True).strip()
 
 
+def native_path(shell_path: str) -> Path:
+    """Return a path a Git Bash block printed as a native path, unchanged elsewhere."""
+    if sys.platform != "win32":
+        return Path(shell_path)
+    return Path(subprocess.check_output(["cygpath", "-w", shell_path], text=True).strip())
+
+
 def bash_blocks(text: str) -> list[str]:
     """Return the body of every fenced ``bash`` block in ``text``, found line by line, in file order."""
     blocks: list[str] = []

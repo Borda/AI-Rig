@@ -52,3 +52,35 @@ def test_review_instructions_name_every_file_only_field(path: Path, needle: str)
     line = _line_with(path, needle)
     assert [name for name in _hook_file_only_fields() if f"`{name}`" not in line] == []
     assert "[#N](<Link value>)" in line or "`[#N](<Link value>)`" in line
+
+
+def test_selected_reuse_delivers_the_normal_report_with_saved_provenance() -> None:
+    """Reusing a published review enters the same final reply as a fresh review, even after a push."""
+    preflight = _SKILL.parent / "modes" / "preflight.md"
+    request = _line_with(preflight, "show the last completed report selects (b)")
+    assert "using `PRIOR_REPORT`" in request
+    assert "newer unpublished run" in request
+    reuse = _line_with(preflight, "Selected (b)")
+    assert "Step 5b" in reuse
+    assert "Step 7b" in reuse
+    assert "no-question" in reuse
+    provenance = _line_with(preflight, "unreviewed")
+    assert "PRIOR_SHA" in provenance
+    assert "HEAD_SHA" in provenance
+    assert "print its path and stop" not in _line_with(preflight, "(b) Reuse")
+
+
+def test_explicit_fresh_review_collects_current_discussion_on_the_same_commit() -> None:
+    """An unchanged SHA cannot divert a requested re-review of new online comments to saved evidence."""
+    preflight = _SKILL.parent / "modes" / "preflight.md"
+    request = _line_with(preflight, "An explicit request for a fresh full review")
+    assert "selects (a) directly" in request
+    assert "unchanged head" in request
+    rerun = _line_with(preflight, "A fresh full PR review with no usable prior report or after selecting (a)")
+    assert "conversation collection block" in rerun
+    text = preflight.read_text(encoding="utf-8")
+    for source in ("review-bodies", "inline-comments", "general-comments"):
+        assert source in text
+    assert "github-review-parsing.md" in text
+    assert "conversation-coverage.txt" in text
+    assert "An empty conversation file is unavailable" in text

@@ -31,6 +31,7 @@ Usage:
     python dev_test_targets.py --pytest-cmd "$PYTEST_CMD" --run           # select, then run in the same call
     python dev_test_targets.py --pytest-cmd "$PYTEST_CMD" --run --record-dir "$DEV_DIR"   # plus a run record
     python dev_test_targets.py --skill fix --run                          # sentinels instead of the two arguments above
+    python dev_test_targets.py --skill fix --run --env "$ENV_RECEIPT"      # retry with provisioned Python
 
 ``--skill NAME`` replaces ``--pytest-cmd`` and ``--record-dir`` for the three loop skills: the script reads the
 ``dev-pytest-cmd`` sentinel (runner detection) and records into the directory the ``dev-NAME-dev-dir`` sentinel holds,
@@ -46,6 +47,8 @@ lines), so a loop cycle costs one tool call instead of a select call plus a run 
 ``DIR/test-targets.jsonl`` (UTC time, changed files, selected tests, why each was selected — codemap, heuristic, or
 changed — codemap usage and fallbacks, codemap's ``not_covered`` caveats, exit code, log path), and with ``--run``
 the full runner output goes to ``DIR/test-targets-<UTC time>.log`` while the terminal shows its last 40 lines.
+``--run --env RECEIPT`` uses the receipt's interpreter for direct pytest commands and adds ``env_receipt`` to the
+run record. Its log has a separate suffix so it preserves the original run's output.
 
 Failure: Invalid command inputs fail before execution; selection failures never imply successful tests.
 
@@ -132,11 +135,12 @@ def _run(args: list[str], cwd: Path, timeout: int = 60) -> tuple[int, str]:
     """
     try:
         proc = subprocess.run(  # noqa: S603 - argv list, no shell
-            args, cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False, encoding="utf-8"
+            args, cwd=cwd, capture_output=True, timeout=timeout, check=False
         )
     except (OSError, subprocess.SubprocessError):
         return 1, ""
-    return proc.returncode, proc.stdout
+    output = os.fsdecode(proc.stdout) if "-z" in args else proc.stdout.decode("utf-8")
+    return proc.returncode, output
 
 
 def is_test_file(path: str) -> bool:
@@ -188,11 +192,19 @@ def changed_files(repo: Path, base: str | None) -> list[str]:
     Returns:
         Sorted unique POSIX paths of changed ``.py`` files that still exist.
     """
-    outputs = [_run(["git", "diff", "--name-only", "HEAD", "--"], repo)[1]]
-    outputs.append(_run(["git", "ls-files", "--others", "--exclude-standard"], repo)[1])
+    commands = [
+        ["diff", "--name-only", "-z", "HEAD", "--"],
+        ["ls-files", "-z", "--others", "--exclude-standard", "--"],
+    ]
     if base:
-        outputs.append(_run(["git", "diff", "--name-only", f"{base}...HEAD", "--"], repo)[1])
-    names = {line.strip() for out in outputs for line in out.splitlines() if line.strip()}
+        commands.append(["diff", "--name-only", "-z", f"{base}...HEAD", "--"])
+    names = set()
+    for command in commands:
+        code, output = _run(["git", *command], repo)
+        if code:
+            ref = f" against {base!r}" if base and f"{base}...HEAD" in command else ""
+            raise ValueError(f"git {command[0]}{ref} failed (exit {code})")
+        names.update(output.split("\0"))
     return sorted(name for name in names if name.endswith(".py") and (repo / name).is_file())
 
 
@@ -394,7 +406,8 @@ def record(record_dir: Path, payload: dict[str, object], exit_code: int | None, 
 def _repo_root() -> Path | None:
     """Return the enclosing git work tree root, or ``None`` outside one."""
     code, out = _run(["git", "rev-parse", "--show-toplevel"], Path.cwd())
-    return Path(out.strip()) if code == 0 and out.strip() else None
+    root = out.removesuffix("\n").removesuffix("\r") if os.name == "nt" else out.removesuffix("\n")
+    return Path(root) if code == 0 and root else None
 
 
 def _error(message: str) -> int:
@@ -482,7 +495,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--save-failures", help="save failed node IDs from the checked record's full log")
     parser.add_argument("--run", action="store_true", help="run the selected tests after printing the plan")
     parser.add_argument("--record-dir", help="append a selection record (and keep the full run log) in this dir")
-    return parser.parse_args(argv)
+    args = sys.argv[1:] if argv is None else argv
+    # Keep ordinary help, usage errors, and option abbreviations unchanged.
+    if any(arg == "--env" or arg.startswith("--env=") for arg in args):
+        parser.add_argument("--env", metavar="RECEIPT", help="run pytest with the provisioned interpreter")
+    return parser.parse_args(args, namespace=argparse.Namespace(env=None))
 
 
 def _configure_skill(args: argparse.Namespace) -> bool:
@@ -508,6 +525,8 @@ def _validate_inputs(args: argparse.Namespace) -> int:
     # Plan mode only prints the command, but a caller may run it verbatim, so it faces the runner's own allowlist.
     if not run_pytest_short.is_allowed_pytest_cmd(args.pytest_cmd.strip()):
         return _error(f"--pytest-cmd is not an allowlisted pytest runner: {args.pytest_cmd.strip()!r}")
+    if args.env is not None and not run_pytest_short.is_allowed_pytest_cmd(args.pytest_cmd.strip(), provisioned=True):
+        return _error("--env requires pytest or python -m pytest")
     if args.record_dir and not run_pytest_short.within_run_directory(args.record_dir):
         return _error("--record-dir resolves outside the active run directory")
     values = [args.base] if args.base else list(args.files or [])
@@ -533,6 +552,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
+    if args.env is not None and (not args.run or args.check_record):
+        return _error("--env requires a selector --run")
     if args.check_record:
         return _check_record(args.check_record, args.expect_exit, args.save_failures)
     codemap_enabled = _configure_skill(args)
@@ -552,8 +573,12 @@ def _run_plan(args: argparse.Namespace, plan: TargetPlan) -> int:
     """Print the selection and append its execution outcome and full-log location."""
     payload = render(plan, args.pytest_cmd.strip())
     record_dir = Path(args.record_dir) if args.record_dir else None
+    if args.env is not None:
+        _verify_retry_targets(payload["tests"], record_dir, args.tests_from)
     log = record_dir / f"test-targets-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.log" if record_dir else None
     if log:
+        if args.env is not None:
+            log = log.with_stem(f"{log.stem}-env-{time.time_ns()}")
         payload["log"] = log.as_posix() if args.run and payload["tests"] else None
     print(json.dumps(payload), flush=True)
     if not args.run or not payload["tests"]:
@@ -563,10 +588,33 @@ def _run_plan(args: argparse.Namespace, plan: TargetPlan) -> int:
     runner_args = [args.pytest_cmd.strip(), *payload["tests"]]
     if log:
         runner_args += ["--tail-n", "40", "--log", str(log)]
+    if args.env is not None:
+        runner_args += ["--env", args.env]
     code = run_pytest_short.main(runner_args)
     if record_dir:
+        if args.env is not None:
+            payload["env_receipt"] = Path(args.env).as_posix()
         record(record_dir, payload, code, log)
     return code
+
+
+def _verify_retry_targets(tests: list[str], record_dir: Path | None, fixed: str | None) -> None:
+    """Require the original ordered selection or an explicit frozen target list."""
+    if not tests:
+        raise ValueError("provisioned retry selected no tests")
+    if record_dir is None:
+        if not fixed:
+            raise ValueError("provisioned retry requires the original --record-dir or frozen --tests-from")
+        return
+    ledger = record_dir / "test-targets.jsonl"
+    if not run_pytest_short.within_run_directory(str(ledger)):
+        raise ValueError("selection record resolves outside the active run directory")
+    try:
+        original = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    except (OSError, ValueError, IndexError) as exc:
+        raise ValueError("provisioned retry has no readable original target record") from exc
+    if not isinstance(original, dict) or original.get("exit") is None or original.get("tests") != tests:
+        raise ValueError("provisioned retry does not match the original ordered targets")
 
 
 if __name__ == "__main__":

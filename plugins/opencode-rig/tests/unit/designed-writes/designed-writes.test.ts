@@ -1,6 +1,7 @@
 /** Designed Git writes: the review fetch/worktree forms and owned-path staging. */
 import { describe, expect, it } from "vitest"
 import { designedWriteSafe } from "../../../src/designed-writes.ts"
+import { Project } from "../../helpers/harness.ts"
 
 const CONTEXT = { projectRoot: "/repo", tempRoot: "/tmp" }
 const SHA = "0123456789abcdef0123456789abcdef01234567"
@@ -13,11 +14,47 @@ describe("designed Git writes", () => {
     `git worktree add --detach /tmp/opencode/review-pr563 ${SHA}`,
     "git worktree remove /tmp/opencode/review-pr563",
     "git worktree remove --force /tmp/opencode/review-other",
-    "git add src/a.ts tests/b.ts",
-    "git add -- src/a.ts",
-    "git add src/a..b.ts",
   ])("accepts %s", (command) => {
     expect(designedWriteSafe(command, CONTEXT)).toEqual({ ok: true })
+  })
+
+  it.each(["git add src/a.ts tests/b.ts", "git add -- src/a.ts", "git add src/a..b.ts", "git add src"])(
+    "accepts ordinary paths within a repository: %s",
+    (command) => {
+      const project = Project.withCommit({ "src/a.ts": "a", "src/a..b.ts": "b", "tests/b.ts": "c" })
+      expect(designedWriteSafe(command, { projectRoot: project.root })).toEqual({ ok: true })
+    },
+  )
+
+  it.each([
+    "src/.env",
+    "src/nested/.env.local",
+    "src/nested/.ssh/config",
+    "src/nested/.aws/config",
+    "src/nested/.docker/config.json",
+    "src/nested/.npmrc",
+    "src/nested/.pypirc",
+    "src/nested/.netrc",
+    "src/nested/.envrc",
+    "src/nested/tls.key",
+    "src/nested/client.PEM",
+    "src/nested/credentials.json",
+    "src/nested/id_ed25519",
+  ])("refuses to stage a directory containing %s", (path) => {
+    const project = Project.withCommit()
+    project.write(path, "placeholder\n")
+    expect(designedWriteSafe("git add -- src", { projectRoot: project.root }).ok).toBe(false)
+  })
+
+  it("allows an ignored untracked file but refuses an already tracked credential", () => {
+    const project = Project.withCommit({ "src/a.ts": "a", "src/.env.tracked": "old" })
+    project.write(".gitignore", ".env*\n")
+    project.write("src/.env.tracked", "changed")
+    project.write("src/nested/.env.ignored", "ignored")
+    project.write("src/nested/a.ts", "a")
+    const context = { projectRoot: project.root }
+    expect(designedWriteSafe("git add src/nested", context).ok).toBe(true)
+    expect(designedWriteSafe("git add src", context).ok).toBe(false)
   })
 
   it.each([

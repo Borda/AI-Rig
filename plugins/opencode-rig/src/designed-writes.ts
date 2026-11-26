@@ -6,13 +6,13 @@
  * builder stages owned paths. Each form is a whole simple command with a
  * literal shape; anything else falls back to the normal guardrail decision.
  *
- * The model is stateless: it reads the command text, the project root and the
- * host temp root only.
+ * Staging expands literal operands against the index and current working tree.
  */
 
 import { tmpdir } from "node:os"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 import { isReviewWorktree } from "./trust.ts"
+import { runGit } from "./util/git.ts"
 
 export interface DesignedWriteVerdict {
   readonly ok: boolean
@@ -49,24 +49,22 @@ function reviewPath(value: string, context: DesignedWriteContext): boolean {
   return isAbsolute(value) && literalPath(value) && isReviewWorktree(value, context.tempRoot)
 }
 
+/** Identify credential-shaped names anywhere within a staging path. */
+function protectedPath(path: string): boolean {
+  return path
+    .split("/")
+    .some((name) =>
+      /^(?:\.ssh|\.aws|\.docker|\.npmrc|\.pypirc|\.netrc|\.envrc|\.env(?:\..*)?)$|\.(?:pem|key|p12|pfx|jks)$|credential|^id_(?:rsa|ed25519|ecdsa|dsa)/i.test(
+        name,
+      ),
+    )
+}
+
 /** Prove a staging operand is an ordinary literal path inside the project. */
 function stagedPath(value: string, context: DesignedWriteContext): boolean {
-  if (!value || value === "." || value === ".." || value.startsWith("-") || value.startsWith("~")) return false
-  if (/^[A-Za-z]:/.test(value)) return false
-  const segments = value.split(/[\\/]/)
-  const name = (segments.at(-1) ?? "").toLowerCase()
-  if (
-    segments.some((segment) => [".ssh", ".aws", ".docker", ".npmrc", ".pypirc"].includes(segment.toLowerCase())) ||
-    /^\.env(?:$|\.)/.test(name) ||
-    name === ".netrc" ||
-    name === ".envrc" ||
-    /\.(?:pem|key|p12|pfx|jks)$/.test(name) ||
-    /credential/.test(name) ||
-    /^id_(?:rsa|ed25519|ecdsa|dsa)/.test(name)
-  )
-    return false
-  if (!literal(value) || value.startsWith(":") || value.split(/[\\/]/).includes("..")) return false
-  if (isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value)) return false
+  if (!value || value.startsWith("~") || value.startsWith(":") || /^[A-Za-z]:/.test(value)) return false
+  if (!literal(value) || isAbsolute(value) || value.split("/").includes("..")) return false
+  if (protectedPath(value)) return false
   const path = resolve(context.projectRoot, value)
   const rel = relative(context.projectRoot, path)
   return Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel)
@@ -106,6 +104,17 @@ function addSafe(tokens: string[], context: DesignedWriteContext): DesignedWrite
     return { ok: false, reason: "not the owned-path staging form" }
   if (!operands.every((token) => stagedPath(token, context)))
     return { ok: false, reason: "staging operand is not a literal project path" }
+  // Git supplies the same recursive pathspec coverage as add. Include tracked
+  // files even when a later ignore rule matches, and omit ignored untracked files.
+  const candidates = runGit(
+    context.projectRoot,
+    ["--literal-pathspecs", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", ...operands],
+    { maxBuffer: 4_000_000 },
+  )
+  if (candidates.error || candidates.status !== 0)
+    return { ok: false, reason: "cannot prove the paths selected for staging" }
+  if (candidates.stdout.toString("utf8").split("\0").some(protectedPath))
+    return { ok: false, reason: "staging would select a protected path" }
   return { ok: true }
 }
 

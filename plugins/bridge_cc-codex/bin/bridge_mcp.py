@@ -307,7 +307,7 @@ def _request_from_arguments(verb: str, arguments: dict[str, Any], trusted_worksp
     if isinstance(depth, bool) or not isinstance(depth, int) or depth < 0:
         raise ValueError("depth must be a non-negative integer")
     timeout = arguments.get("timeout_seconds", DEFAULT_TIMEOUTS[verb])
-    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 0 < timeout < math.inf:
         raise ValueError("timeout_seconds must be a finite positive number")
     maximum_timeout = MAX_MCP_TIMEOUT_SECONDS_BY_VERB[verb]
     if timeout > maximum_timeout:
@@ -687,9 +687,8 @@ class BridgeServer(QuestionServer):
 
 def serve() -> int:
     """Serve strict native stdio with initially unbound workspace authority."""
-    sys.stdin.reconfigure(encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
-    BridgeServer(sys.stdout, sys.stderr).run(sys.stdin)
+    BridgeServer(sys.stdout, sys.stderr).run(sys.stdin.buffer)
     return 0
 
 

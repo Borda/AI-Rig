@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -45,6 +46,18 @@ def _dispatch() -> tuple[str, str]:
     blocks = bash_blocks(text)
     block = next(block for block in blocks if "_CONSOLIDATOR_INSTRUCTIONS=" in block)
     return text, block
+
+
+def test_dispatch_and_consolidator_return_the_same_envelope() -> None:
+    """New claim IDs survive the parent's compact-return instruction and reach validation."""
+    dispatch, _ = _dispatch()
+    prompt = (_SKILL.parent / "templates/consolidator-prompt.md").read_text(encoding="utf-8")
+    requested = next(line.partition(": ")[2] for line in dispatch.splitlines() if line.startswith("Return ONLY"))
+    declared = next(line for line in prompt.splitlines() if line.startswith('{"status":'))
+    assert requested == declared
+    example = json.loads(requested.replace(":N", ":0").replace("0.N", "0.9"))
+    assert example["new_claims"] == ["<candidate_id>"]
+    assert any("array (empty when none)" in line for line in prompt.splitlines() if "`new_claims`" in line)
 
 
 @dataclass

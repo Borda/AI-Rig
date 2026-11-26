@@ -1093,6 +1093,28 @@ class TestDerivedMetadata:
         with pytest.raises(HELPER.DeriveError, match="parallel-approval-plan-digest-mismatch"):
             HELPER.derive_metadata(run, copy.deepcopy(result["metadata"]))
 
+    @pytest.mark.parametrize(
+        ("authored", "canonical"),
+        [
+            pytest.param(" Unresolved ", "unresolved", id="unresolved"),
+            pytest.param("Needs-Clarification", "needs-clarification", id="needs-clarification"),
+            pytest.param("Implemented", "implemented", id="implemented"),
+        ],
+    )
+    def test_renders_admitted_resolution_status_canonically(
+        self, valid_run: tuple[Path, dict], authored: str, canonical: str
+    ) -> None:
+        """Use the same admitted resolution status in counts, item records, and rendered rows."""
+        run, result = valid_run
+        metadata = result["metadata"]
+        metadata["final_resolution_table"]["items"][0]["resolution_status"] = authored
+
+        ledger = HELPER.render_ledger(run, metadata)
+
+        assert metadata["final_resolution_table"]["items"][0]["resolution_status"] == canonical
+        assert metadata["final_resolution_table"]["resolution_status_counts"][canonical] == 1
+        assert f"| {canonical} |" in ledger.read_text(encoding="utf-8")
+
 
 def test_skill_routes_bookkeeping_through_the_derivation_helper() -> None:
     """Keep the remediation skill on derived workplan sections, one-call finalize, and one-pass validation.
@@ -1183,7 +1205,7 @@ class TestReviewFinalize:
         assert b"- Report: " in finished.stdout
         assert b"| Report |" not in finished.stdout
         finalized_report = report.read_bytes()
-        assert HELPER.main(argv) == 0
+        assert HELPER.main(argv) == 0, capsys.readouterr().out
         assert report.read_bytes() == finalized_report
 
     @pytest.mark.parametrize(
@@ -1271,8 +1293,8 @@ class TestReviewFinalize:
         """Canonical blocker facts survive stale presentation through completion and report admission.
 
         The fallback drafts and the notes table carry a stale proposal, title and evidence; finalize must restore the
-        canonical text, the review finder must then complete the run and accept the result, and a rerun must be byte-
-        stable. Finalize, completion and rerun are one lifecycle over real subprocesses.
+        canonical text, the review finder must then complete the run and accept the result, and a refused rerun must
+        preserve the notes. Finalize, completion and rerun are one lifecycle over real subprocesses.
         """
         run = assessed_pr
         prepared = _finalize_parent_fallback(run)
@@ -1295,6 +1317,7 @@ class TestReviewFinalize:
         argv = ["finalize", "--skill", "code-review", "--parent-thread-id", "thread", "--run", str(run)]
         argv += ["--metadata", str(run / "fallback-drafts/metadata.json"), "--handoff", str(draft)]
         argv += ["--status", "fail", "--confidence", "0.95", "--artifact-path", str(result_path), "--promote"]
+        argv += ["--extra-checks-failed", "verification-readiness,independent-review-coverage"]
 
         assert HELPER.main(argv) == 0, capsys.readouterr().out
         summary = json.loads(capsys.readouterr().out)
@@ -1498,6 +1521,51 @@ class TestReviewActionDerivation:
 
 class TestFinalizePromotion:
     """Protect one-call finalization of remediation runs from judgement-only drafts."""
+
+    def test_failed_retry_preserves_the_promoted_handoff(
+        self,
+        valid_run: tuple[Path, dict[str, object]],
+        tmp_path_factory: pytest.TempPathFactory,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Keep a previously validated delivery readable when a second finalization is attempted."""
+        run, result = valid_run
+        drafts = tmp_path_factory.mktemp("drafts")
+        exit_code, summary = _finalize_judgement_drafts(run, result, drafts, "codex", capsys)
+        _assert_promoted_for_owner(run, exit_code, summary, "codex")
+        paths = [
+            run / name for name in ("result.json", "final-handoff.json", "final.md", "final-handoff.validation.json")
+        ]
+        before = [path.read_bytes() for path in paths]
+
+        exit_code, summary = _finalize_judgement_drafts(run, {**result, "confidence": 7.0}, drafts, "user", capsys)
+
+        assert exit_code == 1
+        assert summary["status"] == "fail"
+        assert [path.read_bytes() for path in paths] == before
+        VALIDATOR.validate("code-remediate", run, run / "result.json")
+
+    @pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="file symlinks unavailable")
+    def test_candidate_symlink_cannot_create_a_result(
+        self,
+        valid_run: tuple[Path, dict[str, object]],
+        tmp_path_factory: pytest.TempPathFactory,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Refuse a linked candidate entry before it can create an unvalidated canonical result."""
+        run, result = valid_run
+        candidate = run / "result.candidate.json"
+        canonical = run / "result.json"
+        candidate.unlink()
+        candidate.symlink_to(canonical)
+        result["metadata"]["unresolved_summary"]["selected_items_total"] = 0
+
+        exit_code, summary = _finalize_judgement_drafts(run, result, tmp_path_factory.mktemp("drafts"), "codex", capsys)
+
+        assert not canonical.exists()
+        assert not canonical.is_symlink()
+        assert candidate.is_symlink()
+        assert (exit_code, summary["steps"][-1]["code"]) == (1, "artifact-output-redirected:result.candidate.json")
 
     @pytest.mark.parametrize("version", [True, 0, 2, "1", None])
     def test_publication_contract_version_requires_supported_integer(self, tmp_path: Path, version: object) -> None:

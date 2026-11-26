@@ -136,8 +136,11 @@ FINAL_HANDOFF_FILENAMES = {
 EXPECTED_GATE_IDS = {"lint", "format", "types", "tests", "review"}
 #: Gate statuses that count as a failed check.
 FAILING_GATE_STATUSES = {"fail", "missing-command", "timeout"}
-#: All gate statuses gates.json may record.
-VALID_GATE_STATUSES = {"pass", "fail", "missing-command", "not-applicable", "timeout"}
+#: All gate statuses gates.json may record; ``refused`` marks a gate the source guard stopped before it executed.
+VALID_GATE_STATUSES = {"pass", "fail", "missing-command", "not-applicable", "timeout", "refused"}
+#: Shape of the cause a top-level gates.json ``refusal`` names. The gate runner owns the closed list of source causes;
+#: the validator checks only the namespace so a new runner cause never invalidates otherwise valid evidence.
+GATE_REFUSAL_CAUSE = re.compile(r"source-[a-z]+(?:-[a-z]+)*")
 #: Parent guard that can fail an otherwise passing structured pytest child.
 TRACKED_MEMBERSHIP_GUARD = "tracked-source-inventory-changed"
 #: Gate ids, in order, that a code-review result must list as not-applicable when gates were unavailable.
@@ -815,22 +818,12 @@ def _validate_final_handoff(
                 if result["status"] != "pass" and not isinstance(metadata.get("unresolved_summary"), dict):
                     raise SystemExit("remediation-commit-result-blocked")
                 # Explicit deferment outside the plan is not required closure; inconsistent counts still block.
-                _validate_code_remediate_unresolved_summary(metadata, out_dir)
                 _validate_code_remediate_scope_selection(metadata, out_dir)
                 _validate_code_remediate_final_resolution_table(metadata, out_dir)
+                _validate_code_remediate_unresolved_summary(metadata, out_dir)
                 unresolved = metadata["unresolved_summary"]
-                selectable = [item for item in metadata["final_resolution_table"]["items"] if item["selectable"]]
                 selected_indexes = metadata["resolution_scope"]["selected_indexes"]
-                selected_items = [item for index, item in enumerate(selectable, 1) if index in selected_indexes]
-                open_items = [
-                    item
-                    for item in selected_items
-                    if item["resolution_status"].strip().casefold()
-                    in {
-                        "unresolved",
-                        "needs-clarification",
-                    }
-                ]
+                selected_items, open_items = _selected_remediation_outcomes(metadata)
                 if len(selected_items) != len(selected_indexes) or unresolved["selected_items_total"] != len(
                     selected_items
                 ):
@@ -841,8 +834,7 @@ def _validate_final_handoff(
                 closure_blocked = (
                     unresolved["selected_items_unresolved"] != len(open_items)
                     or any(
-                        item["resolution_status"].strip().casefold() != "unresolved"
-                        or not item["resolved_how"].startswith("Deferred: ")
+                        item["resolution_status"] != "unresolved" or not item["resolved_how"].startswith("Deferred: ")
                         for item in open_items
                     )
                     or unresolved["selected_items_unresolved"] != unresolved["user_deferred_items"]
@@ -1249,7 +1241,8 @@ def _validate_gate_evidence(
     if local:
         _validate_local_gate_receipt(out_dir, source, mirror_root=mirror_root)
     for check in gates["checks"]:
-        if check["status"] != "not-applicable":
+        # A refused gate never executed, so it has no execution artifacts to bind.
+        if check["status"] not in {"not-applicable", "refused"}:
             _validate_gate_artifacts(
                 out_dir, check, source if local else None, damaged_inventory_paths, damaged_log_paths
             )
@@ -1290,6 +1283,27 @@ def _validate_gate_summaries(out_dir: Path, gates: dict[str, Any], checks: list[
             raise SystemExit(f"gate-summary-mismatch:{name}")
 
 
+def _validate_gate_refusal(gates: dict[str, Any], refused_ids: list[str]) -> None:
+    """Bind refused gate rows to one top-level source refusal and its ``checks_refused`` list.
+
+    A refusal record may also accompany ordinary failed rows from producers that predate refused rows; refused rows,
+    however, always need the record and an exact ``checks_refused`` list in row order.
+    """
+    refusal = gates.get("refusal")
+    if refusal is not None and (
+        not isinstance(refusal, dict)
+        or not isinstance(refusal.get("cause"), str)
+        or GATE_REFUSAL_CAUSE.fullmatch(refusal["cause"]) is None
+        or not isinstance(refusal.get("reason"), str)
+        or not refusal["reason"].strip()
+    ):
+        raise SystemExit("gate-refusal-invalid")
+    if refused_ids and refusal is None:
+        raise SystemExit("gate-refused-without-refusal")
+    if (refused_ids or "checks_refused" in gates) and gates.get("checks_refused") != refused_ids:
+        raise SystemExit("gate-refused-list-mismatch")
+
+
 def _validate_gates(
     out_dir: Path,
     *,
@@ -1324,6 +1338,7 @@ def _validate_gates(
         raise SystemExit("gates-missing-check-details")
     seen_ids: set[str] = set()
     failing_ids: list[str] = []
+    refused_ids: list[str] = []
     for index, check in enumerate(checks):
         if not isinstance(check, dict):
             raise SystemExit(f"gate-check-not-object:{index}")
@@ -1340,13 +1355,15 @@ def _validate_gates(
             raise SystemExit(f"gate-check-invalid-status:{index}:{check['status']!r}")
         if not isinstance(check.get("exit_code"), int):
             raise SystemExit(f"gate-check-invalid-exit-code:{index}")
-        if check["status"] in {"missing-command", "not-applicable", "timeout"}:
+        if check["status"] in {"missing-command", "not-applicable", "timeout", "refused"}:
             reason = check.get("reason")
             if not isinstance(reason, str) or not reason.strip():
                 raise SystemExit(f"gate-check-missing-reason:{index}")
         if check["status"] in FAILING_GATE_STATUSES:
             failing_ids.append(check_id)
-        expected_exit_codes = {"pass": 0, "missing-command": 127, "not-applicable": 0, "timeout": 124}
+        if check["status"] == "refused":
+            refused_ids.append(check_id)
+        expected_exit_codes = {"pass": 0, "missing-command": 127, "not-applicable": 0, "timeout": 124, "refused": 0}
         expected_exit = expected_exit_codes.get(check["status"])
         if expected_exit is not None and check["exit_code"] != expected_exit:
             raise SystemExit(f"gate-check-exit-status-mismatch:{index}")
@@ -1396,8 +1413,13 @@ def _validate_gates(
                 raise SystemExit(f"gate-check-missing-log:{index}:{key}")
     if seen_ids != EXPECTED_GATE_IDS:
         raise SystemExit("gate-check-id-set-mismatch")
+    _validate_gate_refusal(gates, refused_ids)
     expected_status = (
-        "timeout" if any(check["status"] == "timeout" for check in checks) else "fail" if failing_ids else "pass"
+        "timeout"
+        if any(check["status"] == "timeout" for check in checks)
+        else "fail"
+        if failing_ids or refused_ids
+        else "pass"
     )
     if gates.get("status") != expected_status:
         raise SystemExit("gates-status-mismatch")
@@ -1437,6 +1459,14 @@ def _reconcile_result_with_gates(result: dict[str, Any], gates: dict[str, Any], 
         raise SystemExit("result-pass-with-failed-gates")
     if gates["status"] == "timeout" and result["status"] != "timeout":
         raise SystemExit("result-status-timeout-mismatch")
+    if gates.get("checks_refused") and "source-refused" not in result["checks_failed"]:
+        raise SystemExit("result-refused-gates-unnamed")
+    metadata = result.get("metadata")
+    if skill == "code-review" and isinstance(metadata, dict) and "status_axes" in metadata:
+        # Imported only for Code Review, so a damaged axis table cannot break other skills' validation.
+        from review_status_axes import check_result_status_axes
+
+        check_result_status_axes(result, gates)
     if result["status"] == "pass":
         validate_pass(gates, skill=skill)
 
@@ -1585,19 +1615,22 @@ def _validate_confidence_recovery(result: dict[str, Any], skill: str) -> None:
     if not isinstance(remaining_limits, list) or not all(isinstance(item, str) for item in remaining_limits):
         raise SystemExit(f"{skill}-invalid-remaining-limits")
 
+    # A Code Review result carrying status axes names every failure cause; confidence never fails it by itself.
+    metadata = result.get("metadata")
+    gating = not (skill == "code-review" and isinstance(metadata, dict) and "status_axes" in metadata)
     if confidence <= 0.8:
-        if result["status"] == "pass":
+        if gating and result["status"] == "pass":
             raise SystemExit(f"{skill}-pass-confidence-not-acceptable")
-        if "confidence-not-acceptable" not in result["checks_failed"]:
+        if gating and "confidence-not-acceptable" not in result["checks_failed"]:
             raise SystemExit(f"{skill}-missing-confidence-not-acceptable-check")
         if status != "not-acceptable-failed":
             raise SystemExit(f"{skill}-confidence-status-should-fail")
         if not recovery_actions or not remaining_limits:
             raise SystemExit(f"{skill}-low-confidence-recovery-missing")
     elif confidence < 0.85:
-        if result["status"] == "pass":
+        if gating and result["status"] == "pass":
             raise SystemExit(f"{skill}-pass-confidence-very-questionable")
-        if "confidence-very-questionable" not in result["checks_failed"]:
+        if gating and "confidence-very-questionable" not in result["checks_failed"]:
             raise SystemExit(f"{skill}-missing-confidence-very-questionable-check")
         if status != "very-questionable":
             raise SystemExit(f"{skill}-confidence-status-should-be-very-questionable")
@@ -1818,7 +1851,8 @@ def _validate_code_remediate_incomplete_report_admission(
     elif (
         len(obligations) != 1
         or obligations[0].get("item_type") not in {"review-gate", "confidence-gap"}
-        or obligations[0].get("resolution_status") not in {"unresolved", "needs-clarification"}
+        or _canonical_resolution_status(obligations[0].get("resolution_status"))
+        not in {"unresolved", "needs-clarification"}
         or obligations[0].get("owner_status") not in {"unresolved", "deferred", "not-selected", "todo"}
         or obligations[0].get("triage_status") not in {"valid", "needs-clarification"}
     ):
@@ -3369,6 +3403,11 @@ def _normalize_rendered_detail(value: str) -> str:
     return re.sub(r"\s+", " ", value.replace(r"\|", "|").replace("`", "")).strip()
 
 
+def _canonical_resolution_status(value: object) -> str:
+    """Interpret the status spelling accepted by the remediation table."""
+    return value.strip().casefold() if isinstance(value, str) else ""
+
+
 def _validate_code_remediate_final_resolution_table(metadata: dict[str, Any], out_dir: Path) -> None:
     """Validate the final code-remediation table covers every ingested entry."""
     table = metadata.get("final_resolution_table")
@@ -3491,7 +3530,7 @@ def _validate_code_remediate_final_resolution_table(metadata: dict[str, Any], ou
             raise SystemExit("code-remediate-final-table-item-id-duplicate")
         item_ids.add(item_id)
         triage_status = item["triage_status"].strip().casefold()
-        resolution_status = item["resolution_status"].strip().casefold()
+        resolution_status = _canonical_resolution_status(item["resolution_status"])
         if triage_status not in CODE_REMEDIATE_TRIAGE_STATUSES:
             raise SystemExit("code-remediate-final-table-item-triage-status-invalid")
         if resolution_status not in CODE_REMEDIATE_RESOLUTION_STATUSES:
@@ -3597,6 +3636,20 @@ def _validate_code_remediate_final_resolution_table(metadata: dict[str, Any], ou
                 )
 
 
+def _selected_remediation_outcomes(
+    metadata: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build canonical selected outcomes while retaining authored spelling for artifact comparisons."""
+    indexes = set(metadata["resolution_scope"]["selected_indexes"])
+    selectable = (item for item in metadata["final_resolution_table"]["items"] if item["selectable"])
+    selected = [
+        {**item, "resolution_status": _canonical_resolution_status(item["resolution_status"])}
+        for index, item in enumerate(selectable, 1)
+        if index in indexes
+    ]
+    return selected, [item for item in selected if item["resolution_status"] in {"unresolved", "needs-clarification"}]
+
+
 def _validate_code_remediate_unresolved_summary(metadata: dict[str, Any], out_dir: Path) -> None:
     """Validate selected unresolved work is actionable and not overclaimed."""
     summary = metadata.get("unresolved_summary")
@@ -3624,9 +3677,8 @@ def _validate_code_remediate_unresolved_summary(metadata: dict[str, Any], out_di
         raise SystemExit("code-remediate-unresolved-summary-total-mismatch")
     scope = metadata.get("resolution_scope", {})
     if scope.get("presentation_version") in {2, 3, 4, 5}:
-        selectable = [item for item in metadata["final_resolution_table"]["items"] if item["selectable"]]
-        selected = [item for index, item in enumerate(selectable, 1) if index in scope["selected_indexes"]]
-        open_count = sum(item["resolution_status"] in {"unresolved", "needs-clarification"} for item in selected)
+        selected, open_items = _selected_remediation_outcomes(metadata)
+        open_count = len(open_items)
         if (
             counts["selected_items_total"] != len(selected)
             or counts["selected_items_unresolved"] != open_count
@@ -4662,12 +4714,9 @@ def _validate_code_remediate_scope_text(out_dir: Path) -> None:
 
 def _validate_code_remediate_pass_closure(result: dict[str, Any], metadata: dict[str, Any]) -> None:
     """Reject a passing remediation that still leaves required selected work open."""
-    resolution_scope = metadata["resolution_scope"]
     if result["status"] == "pass":
         summary = metadata["unresolved_summary"]
-        selectable = [item for item in metadata["final_resolution_table"]["items"] if item["selectable"]]
-        selected = [item for index, item in enumerate(selectable, 1) if index in resolution_scope["selected_indexes"]]
-        open_items = [item for item in selected if item["resolution_status"] in {"unresolved", "needs-clarification"}]
+        _, open_items = _selected_remediation_outcomes(metadata)
         if (
             summary["selected_items_unresolved"] != summary["user_deferred_items"]
             or not summary["all_local_actionable_items_closed"]
@@ -4801,6 +4850,14 @@ def _validation_steps(
     def gates() -> None:
         state["gates"] = _validate_gates(out_dir)
 
+    def require_review_axes() -> None:
+        """Require the axis block before a review result can qualify for promotion."""
+        if not state["candidate"] and result_path.parent.resolve() == out_dir.resolve():
+            return
+        metadata = state["result"].get("metadata")
+        if not isinstance(metadata, dict) or "status_axes" not in metadata:
+            raise SystemExit("status-axes-required")
+
     loaded, gated = ("result",), ("result", "gates")
     steps = [
         _ValidationStep("result", load),
@@ -4846,10 +4903,12 @@ def _validation_steps(
             _ValidationStep(
                 "required-artifacts", lambda: _validate_required_artifacts(skill, out_dir, state["result"]), loaded
             ),
-            _ValidationStep(
-                "confidence-recovery", lambda: _validate_confidence_recovery(state["result"], skill), loaded
-            ),
         )
+    )
+    if skill == "code-review":
+        steps.append(_ValidationStep("status-axes-required", require_review_axes, loaded))
+    steps.append(
+        _ValidationStep("confidence-recovery", lambda: _validate_confidence_recovery(state["result"], skill), loaded)
     )
     if skill == "release":
         steps.append(

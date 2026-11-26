@@ -546,7 +546,9 @@ class TestDirectPrepare:
         assert result.returncode == 0, result.stderr
         dispatch = read_json(run / "dispatch.json")
         routing = read_json(run / "review-routing.json")
-        messages = [call["arguments"]["message"] for call in dispatch["calls"]]
+        plan = read_json(run / "direct-plan.json")
+        pointers = [call["arguments"]["message"] for call in dispatch["calls"]]
+        messages = [(run / context["context_path"]).read_text(encoding="utf-8") for context in plan["contexts"]]
         malformed = [
             message
             for message in messages
@@ -560,6 +562,7 @@ class TestDirectPrepare:
         assert "waves" not in dispatch
         assert not (run / "inspection-plan.json").exists()
         assert not malformed
+        assert all("tasks/" in pointer and len(pointer) < 600 for pointer in pointers)
 
 
 @pytest.mark.integration
@@ -757,16 +760,20 @@ class TestDirectDelivery:
             pytest.param(OPAQUE_MESSAGE, "gAAAA-later-progress-reminder", id="followup"),
         ],
     )
-    def test_accepts_matching_opaque_delivery(
+    def test_rejects_opaque_delivery_for_a_pointer_plan(
         self, evidence: tuple[Path, Path], first_token: str, followup_token: str | None
     ) -> None:
-        """An encrypted delivery equal to the parent's dispatched message binds, even with a later reminder."""
+        """An encrypted delivery cannot show which pointer the parent supplied, so a pointer plan refuses it.
+
+        Saved plans that carried the whole task as the message keep accepting an opaque delivery.
+        """
         run, home = evidence
         _deliver_opaque(home, OPAQUE_MESSAGE, first_token, followup_token)
 
         result = _assemble_direct(run, home)
 
-        assert result.returncode == 0, result.stderr
+        assert result.returncode != 0
+        assert "review-direct-spawn-pointer-mismatch" in result.stderr
 
     @pytest.mark.parametrize(
         ("message", "first_token", "followup_token"),
@@ -1054,7 +1061,9 @@ class TestDirectRetry:
 
         assert retry_result.returncode == 0, retry_result.stderr
         retry = json.loads(retry_result.stdout)
-        assert "preserve every original finding as a reconciliation obligation" in retry["arguments"]["message"]
+        retry_task = (run / retry["context"]["context_path"]).read_text(encoding="utf-8")
+        assert "preserve every original finding as a reconciliation obligation" in retry_task
+        assert retry["context"]["context_path"] in retry["arguments"]["message"]
         assert (run / f"retry/{role}.manifest.json").read_bytes() == original
         assert (run / f"retry/{role}.summary.json").read_bytes() == original_summary
         _complete_direct_retry(home, partial_run.child, retry, partial_run.final)

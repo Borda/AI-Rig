@@ -828,6 +828,20 @@ class TestDirtyPreflightFinalization:
         assert _retained_bytes(unavailable) == before
         _assert_promoted_unavailable(unavailable, returncode, outcome)
 
+    def test_promotion_removes_the_incomplete_run_stub(self, tmp_path: Path) -> None:
+        """A promoted review result never sits beside a run-state stub that still says the run is incomplete."""
+        unavailable = _build_dirty_preflight_run(
+            tmp_path, dirty=["pkg/item.py"], changed=["pkg/item.py"], recorded=["pkg/item.py"]
+        )
+        run_state = _load_module(PLUGIN_ROOT / "skills/code-review/review_run_state.py", "review_run_state_promotion")
+        run_state.mark(unavailable.run_dir, "routed")
+
+        returncode, outcome = _finalize(unavailable, str(unavailable.result_path))
+
+        _assert_promoted_unavailable(unavailable, returncode, outcome)
+        assert not (unavailable.run_dir / "run-state.json").exists()
+        assert run_state.classify(unavailable.run_dir)["review_status"] == "unavailable"
+
     @pytest.mark.parametrize(
         ("dirty", "changed", "recorded", "status"),
         [

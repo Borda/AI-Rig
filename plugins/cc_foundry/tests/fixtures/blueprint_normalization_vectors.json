@@ -3724,6 +3724,11 @@
       "input": "echo \"line one\n# still inside\nline three\""
     },
     {
+      "expected": "printf '%s' 'open \t\n\n# literal \t\n",
+      "id": "unclosed-quote-preserves-the-remainder",
+      "input": "\n# note\nprintf '%s' 'open \t\n\n# literal \t\n"
+    },
+    {
       "expected": "cmd \\\n  --flag",
       "id": "continuation-kept-verbatim",
       "input": "cmd \\\n  --flag"
@@ -3737,6 +3742,74 @@
       "expected": "",
       "id": "empty-input",
       "input": ""
+    }
+  ],
+  "quoted_data": [
+    {
+      "id": "single-line-interior-spacing",
+      "reviewed": "printf '%s' 'a b'",
+      "variant": "printf '%s' 'a  b'"
+    },
+    {
+      "id": "single-quoted-trailing-blanks",
+      "reviewed": "printf '%s' 'first\nlast'",
+      "variant": "printf '%s' 'first \t\nlast'"
+    },
+    {
+      "id": "single-quoted-empty-lines",
+      "reviewed": "printf '%s' 'first\n\nlast'",
+      "variant": "printf '%s' 'first\n\n\nlast'"
+    },
+    {
+      "id": "double-quoted-trailing-blanks",
+      "reviewed": "printf '%s' \"first\nlast\"",
+      "variant": "printf '%s' \"first \t\nlast\""
+    },
+    {
+      "id": "double-quoted-whitespace-line",
+      "reviewed": "printf '%s' \"first\n\nlast\"",
+      "variant": "printf '%s' \"first\n \t\nlast\""
+    },
+    {
+      "id": "ansi-c-quoted-escaped-delimiter",
+      "reviewed": "printf '%s' $'first\\'\nlast'",
+      "variant": "printf '%s' $'first\\' \t\nlast'"
+    },
+    {
+      "allow_reviewed": false,
+      "id": "localized-double-quoted-text",
+      "reviewed": "printf '%s' $\"first\nlast\"",
+      "variant": "printf '%s' $\"first \t\nlast\""
+    },
+    {
+      "id": "nested-command-substitution",
+      "reviewed": "printf '%s' \"$(printf '%s' \"first\nlast\")\"",
+      "variant": "printf '%s' \"$(printf '%s' \"first \t\nlast\")\""
+    },
+    {
+      "id": "nested-command-substitution-literal-comment",
+      "reviewed": "printf '%s' \"$(printf '%s' \"first\nlast\")\"",
+      "variant": "printf '%s' \"$(printf '%s' \"first\n# literal\nlast\")\""
+    },
+    {
+      "id": "nested-parameter-expansion",
+      "reviewed": "printf '%s' \"${VALUE:-\"first\nlast\"}\"",
+      "variant": "printf '%s' \"${VALUE:-\"first \t\nlast\"}\""
+    },
+    {
+      "id": "arithmetic-expansion-with-command-substitution",
+      "reviewed": "printf '%s' \"$(( $(printf '%s' \"1\n+ 2\") ))\"",
+      "variant": "printf '%s' \"$(( $(printf '%s' \"1 \t\n+ 2\") ))\""
+    },
+    {
+      "id": "backtick-substitution",
+      "reviewed": "printf '%s' `printf '%s' 'first\nlast'`",
+      "variant": "printf '%s' `printf '%s' 'first \t\nlast'`"
+    },
+    {
+      "id": "backticks-inside-double-quotes",
+      "reviewed": "printf '%s' \"`printf '%s' \"first\nlast\"`\"",
+      "variant": "printf '%s' \"`printf '%s' \"first \t\nlast\"`\""
     }
   ],
   "split_logical_commands": [

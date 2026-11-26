@@ -6,7 +6,7 @@
 
 <!-- $CHANGE_SCOPE: lint-only | targeted | full (default=targeted; persisted to resolve-change-scope-${CSID} by dispatch-prelude.md effort classification or comment-dispatch.md, reloaded in 9.1) -->
 
-<!-- Output: lint fixes committed (if any), or BLOCKING_ISSUES found -->
+<!-- Output: lint fixes committed (if any), or BLOCKING_ISSUES found; $RUN_DIR/resolve-report.md incomplete stub + resolve-run-dir-${CSID} sentinel for Steps 10–11 -->
 
 ## Step 9: Lint and QA gate
 
@@ -38,6 +38,7 @@ Branch on the printed `BASE_FRESH`:
 ### 9.1: Lint and QA
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
 [ -n "$BASE_REF" ] && git check-ref-format --branch "$BASE_REF" >/dev/null 2>&1 || { echo "! BLOCKED — BASE_REF sentinel missing or invalid; refusing vacuous QA range"; exit 1; }
@@ -46,9 +47,14 @@ IFS= read -r CHANGE_SCOPE < "${TMPDIR:-/tmp}/resolve-change-scope-${CSID}" 2>/de
 case "$CHANGE_SCOPE" in lint-only|targeted|full) ;; *) CHANGE_SCOPE=targeted ;; esac
 # 9.0 restart re-enters this block in a fresh shell: the per-run IMPL_DIR keeps one run dir across entries
 [ -n "$RUN_DIR" ] || [ -z "$IMPL_DIR" ] || IFS= read -r RUN_DIR < "$IMPL_DIR/step9-run-dir" 2>/dev/null || RUN_DIR=""
+[ -n "$RUN_DIR" ] || IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/resolve-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
 [ -n "$RUN_DIR" ] || RUN_DIR=".reports/resolve/$(date -u +%Y-%m-%dT%H-%M-%SZ)"  # expand $RUN_DIR to literal value in prompts below — agents receive text, not shell context
 mkdir -p "$RUN_DIR" # timeout: 5000
 [ -z "$IMPL_DIR" ] || echo "$RUN_DIR" > "$IMPL_DIR/step9-run-dir"
+echo "$RUN_DIR" > "${TMPDIR:-/tmp}/resolve-run-dir-${CSID}"  # Steps 10–11 update the report here; Step 1 empties it per run
+# durable record from the moment the run dir exists: an incomplete stub, replaced by the Step 11 report
+IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
+python "$PLUGIN_ROOT/bin/resolve_report_stub.py" mark --run-dir "$RUN_DIR" --pr "$_PR_NUMBER" --impl-dir "$IMPL_DIR" --step "Step 9 — lint and QA gate started"  # timeout: 5000
 IFS= read -r _XREPO < "${TMPDIR:-/tmp}/resolve-is-cross-repo-${CSID}" 2>/dev/null || _XREPO=true
 [ -z "$IMPL_DIR" ] || [ "$_XREPO" != false ] || [ -s "$IMPL_DIR/pr-code-clause.txt" ] || echo "PR code: run tests directly in the checkout; no guard." > "$IMPL_DIR/pr-code-clause.txt"  # sentinel false = own code, so write the direct clause when none exists
 [ -z "$IMPL_DIR" ] || [ "$_XREPO" = false ] || [ ! -s "$IMPL_DIR/pr-code-clause.txt" ] || ! grep -v -q -x -E 'PR code: run every command that loads or executes checkout code only as python -I "[^"]+" run --approval-file "[^"]+" -- <command>, adding -p no:xdist to a pytest command; a refusal \(exit 3 or 4\) means the command did not run: report a gap, never run it bare\.|PR code: run no tests and no PR code; report tests not run — PR-code execution not approved as a gap\.' "$IMPL_DIR/pr-code-clause.txt" 2>/dev/null || echo "PR code: run no tests and no PR code; report tests not run — PR-code execution not approved as a gap." > "$IMPL_DIR/pr-code-clause.txt"  # any other answer never keeps a direct clause (forged or mistaken)
@@ -81,7 +87,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 export RESOLVE_APPROVED_HOOKS=""
 [ -z "$IMPL_DIR" ] || IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" 2>/dev/null || [ -n "$RESOLVE_APPROVED_HOOKS" ] || RESOLVE_APPROVED_HOOKS=""
-python "$PLUGIN_ROOT/bin/commit_lint_fixes.py"  # timeout: 90000
+python "$PLUGIN_ROOT/bin/commit_lint_fixes.py"  # timeout: 600000
 ```
 
 **Gate loop — QA gate** (max 3 iterations; every test run inside it is targeted, never the full suite, and runs through the PR-code guard per `dispatch-prelude.md` §PR-code approval, except for a same-repo PR, which runs directly):

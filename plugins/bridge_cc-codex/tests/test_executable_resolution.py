@@ -114,9 +114,9 @@ class TestMissingWindowsTool:
         mock_run.assert_not_called()
 
     @mock.patch("subprocess.run", autospec=True)
-    def test_setup_inspection_reports_missing_prerequisite(self, mock_run: mock.MagicMock) -> None:
+    def test_setup_inspection_reports_missing_prerequisite(self, mock_run: mock.MagicMock, windows_host: Path) -> None:
         """Setup inspection treats the cwd-only peer as a missing prerequisite instead of probing it."""
-        assert bridge_setup._inspect("codex", "claude", "user") == (None, "missing-prerequisite")
+        assert bridge_setup._inspect("codex", "claude", "user", windows_host) == (None, "missing-prerequisite")
         mock_run.assert_not_called()
 
     @mock.patch("subprocess.run", autospec=True)
@@ -145,7 +145,7 @@ class TestMissingWindowsTool:
         pytest.param(lambda: bridge_setup._capture(["claude", "--version"])[0] is True, id="setup-probe"),
         pytest.param(lambda: bridge_setup._authenticated("claude") == (True, True), id="authentication-check"),
         pytest.param(
-            lambda: bridge_setup._run_configuration([{"argv": ["claude", "plugin", "list"]}]) is True,
+            lambda: bridge_setup._run_configuration([{"argv": ["claude", "plugin", "list"]}], Path.cwd()) is True,
             id="configuration-mutation",
         ),
         pytest.param(lambda: bridge_setup._launch_authentication("claude").ok is True, id="login"),

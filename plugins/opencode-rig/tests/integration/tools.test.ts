@@ -591,6 +591,23 @@ ${TREE}`,
 })
 
 describe("rig_gate", () => {
+  it("detects but refuses to run configured gates on the host under all-sandbox", async () => {
+    const harness = await createHarness(changedProject(), {
+      execution: "all-sandbox",
+      inspection: false,
+      guardrails: "off",
+      gates: ["node --version"],
+    })
+    await harness.call("rig_evidence", {
+      action: "start",
+      skill: "rig-implement",
+      trivial_plan: trivialPlan(["src/a.ts"]),
+    })
+    expect((await harness.call("rig_gate", { action: "detect" })).metadata.gates).toEqual(["configured-1"])
+    await expect(harness.call("rig_gate", { action: "run" })).rejects.toThrow(/all-sandbox requires rig_sandbox/)
+    expect(harness.assertions).toHaveLength(0)
+  })
+
   it("reports that no gate is configured instead of inventing one", async () => {
     const harness = await createHarness(changedProject())
     const detected = await harness.call("rig_gate", { action: "detect" })

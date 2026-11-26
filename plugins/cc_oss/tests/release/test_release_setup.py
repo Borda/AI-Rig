@@ -79,9 +79,13 @@ def git_sequence(monkeypatch: pytest.MonkeyPatch) -> Callable[..., list[list[str
     def install(*outcomes: tuple[int, str]) -> list[list[str]]:
         """Replace ``subprocess.run`` and ``which`` inside ``release_setup`` with the sequential fake."""
         recorded: list[list[str]] = []
+        real_run = subprocess.run
 
         def fake_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
             """Return the next configured outcome for the recorded git command."""
+            if cmd[0] == "cygpath":
+                # Native Windows converts published paths through cygpath; only git answers come from the sequence.
+                return real_run(cmd, **_kwargs)
             idx = len(recorded)
             recorded.append(list(cmd))
             returncode, stdout = outcomes[idx] if idx < len(outcomes) else (0, "")
@@ -386,6 +390,35 @@ def test_unsafe_baseline_is_refused_before_reuse(
     assert not out_dir.exists()
 
 
+def test_overlapping_invocations_keep_their_published_baselines(
+    git_sequence: Callable[..., list[list[str]]], capsys: pytest.CaptureFixture[str], out_dir: Path
+) -> None:
+    """Each setup returns a durable baseline handle that survives another setup in the same session."""
+    git_sequence((0, "/repo"), (0, "stable"), (0, "v1.0.0"), (0, ""), (0, "a" * 40))
+    assert rs.main([]) == 0
+    first = capsys.readouterr().out.strip().removeprefix("BASELINE_FILE=")
+    git_sequence((0, "/repo"), (0, "main"), (0, "v2.0.0"), (0, ""), (0, "b" * 40))
+    assert rs.main([]) == 0
+    second = capsys.readouterr().out.strip().removeprefix("BASELINE_FILE=")
+
+    assert first
+    assert second
+    assert first != second
+    assert (out_dir / Path(first).name).read_text(encoding="utf-8") == "a" * 40 + "\n"
+    assert (out_dir / Path(second).name).read_text(encoding="utf-8") == "b" * 40 + "\n"
+
+
+def test_disappearing_published_tag_leaves_baseline_unresolved(
+    git_sequence: Callable[..., list[list[str]]], capsys: pytest.CaptureFixture[str], out_dir: Path
+) -> None:
+    """A tag that disappears between discovery and pinning supplies no published evidence."""
+    git_sequence((0, "/repo"), (0, "main"), (0, "v1.0.0"), (0, ""), (1, ""))
+
+    assert rs.main([]) == 0
+    baseline = capsys.readouterr().out.strip().removeprefix("BASELINE_FILE=")
+    assert (out_dir / Path(baseline).name).read_text(encoding="utf-8") == "\n"
+
+
 def test_fallback_ranges_terminate_options_after_log_flags(
     git_sequence: Callable[..., list[list[str]]],
 ) -> None:
@@ -394,7 +427,8 @@ def test_fallback_ranges_terminate_options_after_log_flags(
 
     assert rs.main([]) == 0
 
-    assert recorded[-1] == ["/fake/git", "log", "--no-merges", "--format=%s", "--end-of-options", "v0.8.0..v0.9.0"]
+    assert recorded[7] == ["/fake/git", "log", "--no-merges", "--format=%s", "--end-of-options", "v0.8.0..v0.9.0"]
+    assert recorded[8][-2:] == ["--end-of-options", "refs/tags/v0.8.0^{commit}"]
     assert recorded[4] == ["/fake/git", "rev-list", "-n1", "--end-of-options", "refs/tags/v0.9.0"]
     assert recorded[5] == ["/fake/git", "merge-base", "--end-of-options", "HEAD", "abc123"]
     assert recorded[6][-2:] == ["--end-of-options", "def456"]
@@ -437,18 +471,23 @@ def test_real_git_stable_fallback_accepts_terminated_refs(tmp_path: Path, monkey
 
 @pytest.mark.integration
 def test_real_git_first_release_publishes_initial_sha(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, out_dir: Path
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, out_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A real repository without tags retains its initial commit as the release baseline."""
     _git(tmp_path, "init", "-q", "-b", "main")
     _git(tmp_path, "commit", "-q", "--allow-empty", "-m", "initial")
     monkeypatch.chdir(tmp_path)
     initial = subprocess.run(["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+    out_dir.mkdir(exist_ok=True)
+    (out_dir / "BASELINE_REF").write_text("prior-invocation\n", encoding="utf-8")
 
     assert rs.main([]) == 0
 
     assert (out_dir / "LAST_TAG").read_text(encoding="utf-8") == initial + "\n"
     assert (out_dir / "SOURCE_TAG_REF").read_text(encoding="utf-8") == initial + "\n"
+    assert not (out_dir / "BASELINE_REF").exists()
+    baseline = capsys.readouterr().out.strip().removeprefix("BASELINE_FILE=")
+    assert (out_dir / Path(baseline).name).read_text(encoding="utf-8") == "\n"
 
 
 class TestEntryPoint:

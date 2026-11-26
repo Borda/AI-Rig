@@ -3,7 +3,7 @@
 
 Purpose:
     Attribute recorded session wall time to local tools, agent spawns, skills, user
-    prompts, and the residual main-loop reasoning bucket.
+    prompts, and wall time without observed activity.
 
 Scope:
     Read ``~/.claude/logs/{timings,invocations}.jsonl`` from Foundry's timing hooks,
@@ -33,6 +33,7 @@ import re
 import statistics
 import sys
 import time
+from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -69,6 +70,7 @@ _IDLE_TOOLS = frozenset({"AskUserQuestion"})
 _BASH_CLIP_MS = 3_600_000  # 1h cap on runaway Bash
 _BG_THRESHOLD_MS = 1_000  # below this an Agent row is suspect-background
 _BG_MATCH_WINDOW_S = 60.0  # invocations pair must end within ±60s of timings ts
+_BUCKET_PRIORITY = ("idle", "local", "agent", "skill")
 
 
 @dataclass
@@ -84,19 +86,26 @@ class SessionStats:
     idle_ms: int = 0
     top_calls: list[tuple[int, str, str, str]] = field(default_factory=list)
     skill_names: list[str] = field(default_factory=list)
+    observed_spawn: bool = False
+    unresolved_join: bool = False
+    observation: tuple[float, float] | None = None
 
     @property
     def wall_ms(self) -> int:
         """Session wall-clock = last_ts − first_ts, ms."""
         if self.last_ts <= self.first_ts:
             return 0
-        return int((self.last_ts - self.first_ts) * 1000)
+        return round((self.last_ts - self.first_ts) * 1000)
 
     @property
-    def reasoning_ms(self) -> int:
-        """Residual after subtracting all bucketed time; clamped ≥0."""
-        bucketed = self.local_ms + self.agent_ms + self.skill_ms + self.idle_ms
-        return max(0, self.wall_ms - bucketed)
+    def compute_ms(self) -> int:
+        """Return time backed by observed non-idle intervals."""
+        return self.local_ms + self.agent_ms + self.skill_ms
+
+    @property
+    def unattributed_ms(self) -> int:
+        """Return wall time with no tool activity recorded."""
+        return max(0, self.wall_ms - self.compute_ms - self.idle_ms)
 
 
 @dataclass(slots=True)
@@ -117,6 +126,8 @@ class TimingAccumulators:
     sessions: dict[str, SessionStats] = field(default_factory=dict)
     skill_events: list[dict] = field(default_factory=list)
     counters: dict[str, int] = field(default_factory=lambda: {"warnings": 0})
+    events: dict[str, list[tuple[int, str, int]]] = field(default_factory=dict)
+    session_complete: bool = True
 
 
 def parse_since(spec: str) -> float:
@@ -286,7 +297,7 @@ def clip_duration(tool: str, raw_ms: int) -> int:
     return max(0, raw_ms)
 
 
-def build_invocation_pairs(invocations_path: Path) -> list[dict]:
+def build_invocation_pairs(invocations_path: Path, *, end: float = float("inf")) -> list[dict]:
     """Pair ``started`` and ``completed`` Task events from invocations.jsonl.
 
     Pairing is FIFO per ``(project, agent)`` because invocations.jsonl
@@ -294,6 +305,7 @@ def build_invocation_pairs(invocations_path: Path) -> list[dict]:
 
     Args:
         invocations_path: path to ``invocations.jsonl``.
+        end: exclusive POSIX-second bound on invocation events.
 
     Returns:
         List of ``{agent, project, desc, start, end, wall_ms}`` dicts.
@@ -321,26 +333,28 @@ def build_invocation_pairs(invocations_path: Path) -> list[dict]:
         agent = row.get("agent") or ""
         project = row.get("project") or ""
         ts = row.get("ts")
-        if not ts:
+        if not ts or ev not in {"started", "completed"}:
             continue
         key = (project, agent)
+        if ev == "completed" and not queues.get(key):
+            continue
+        stamp = parse_ts(ts)
+        if stamp >= end:
+            continue
         if ev == "started":
             entry = {
                 "agent": agent,
                 "project": project,
                 "desc": row.get("desc") or "",
-                "start": parse_ts(ts),
+                "start": stamp,
                 "end": None,
                 "wall_ms": None,
             }
             queues.setdefault(key, []).append(entry)
             pairs.append(entry)
-        elif ev == "completed":
-            q = queues.get(key) or []
-            if not q:
-                continue
-            entry = q.pop(0)
-            entry["end"] = parse_ts(ts)
+        else:
+            entry = queues[key].pop(0)
+            entry["end"] = stamp
             entry["wall_ms"] = int((entry["end"] - entry["start"]) * 1000)
     return [p for p in pairs if p["wall_ms"] is not None]
 
@@ -371,14 +385,19 @@ def resolve_agent_ms(row: dict, pairs: list[dict]) -> int:
         >>> resolve_agent_ms({"ts": "1970-01-01T00:00:10Z", "duration_ms": 5000, "args": ""}, [])
         5000
     """
+    return _resolve_agent_timing(row, pairs)[0]
+
+
+def _resolve_agent_timing(row: dict, pairs: list[dict]) -> tuple[int, bool, dict | None]:
+    """Return duration, unresolved-join status and the matching invocation if available."""
     raw = int(row.get("duration_ms") or 0)
     if raw >= _BG_THRESHOLD_MS:
-        return raw
+        return raw, False, None
     agent, desc = extract_agent_desc(row.get("args"))
     if not agent or not desc:
-        return raw
+        return raw, True, None
     row_end = parse_ts(row["ts"])
-    best_ms = raw
+    best = None
     best_dt = _BG_MATCH_WINDOW_S
     for p in pairs:
         if p["agent"] != agent:
@@ -388,83 +407,73 @@ def resolve_agent_ms(row: dict, pairs: list[dict]) -> int:
         dt = abs((p.get("end") or 0.0) - row_end)
         if dt <= best_dt:
             best_dt = dt
-            best_ms = p["wall_ms"]
-    return best_ms
+            best = p
+    return (raw, True, None) if best is None else (best["wall_ms"], False, best)
 
 
-def _record_bucket_time(stats: SessionStats, bucket: str, ms: int) -> None:
-    """Add one call's duration to the session total its bucket names.
-
-    An unrecognized bucket contributes to no total, which leaves the time in the
-    session's reasoning residual.
-
-    Examples:
-        >>> s = SessionStats(session_id="s1")
-        >>> _record_bucket_time(s, "skill", 250)
-        >>> s.skill_ms
-        250
-    """
-    if bucket == "local":
-        stats.local_ms += ms
-    elif bucket == "agent":
-        stats.agent_ms += ms
-    elif bucket == "skill":
-        stats.skill_ms += ms
-    elif bucket == "idle":
-        stats.idle_ms += ms
+def _allocate_wall(stats: SessionStats, events: list[tuple[int, str, int]]) -> None:
+    """Assign each observed millisecond to the highest-priority active bucket."""
+    active: Counter[str] = Counter()
+    totals: Counter[str] = Counter()
+    previous = 0
+    for point, bucket, change in sorted(events):
+        # Idle takes precedence over compute, and tool activity over enclosing Skill calls.
+        owner = next((name for name in _BUCKET_PRIORITY if active[name]), None)
+        if owner is not None:
+            totals[owner] += point - previous
+        active[bucket] += change
+        previous = point
+    stats.idle_ms, stats.local_ms, stats.agent_ms, stats.skill_ms = (totals[name] for name in _BUCKET_PRIORITY)
 
 
-def _row_in_scope(row: dict, cutoff: float, session_filter: str | None) -> tuple[str, str, float] | None:
-    """Identify a timing row this run should count, as ``(session_id, raw_ts, ts)``.
-
-    Returns ``None`` for a row missing either identifier, belonging to another
-    session when one is selected, or older than the cutoff.
-
-    Examples:
-        >>> _row_in_scope({"session_id": "s1", "ts": "2030-01-01T00:00:00Z"}, 0.0, None)
-        ('s1', '2030-01-01T00:00:00Z', 1893456000.0)
-        >>> _row_in_scope({"session_id": "s1", "ts": "2030-01-01T00:00:00Z"}, 0.0, "other") is None
-        True
-        >>> _row_in_scope({"ts": "2030-01-01T00:00:00Z"}, 0.0, None) is None
-        True
-    """
-    sid = row.get("session_id")
-    ts_raw = row.get("ts")
-    if not sid or not ts_raw:
-        return None
-    if session_filter and sid != session_filter:
-        return None
-    ts = parse_ts(ts_raw)
-    if ts < cutoff:
-        return None
-    return sid, ts_raw, ts
+def _call_bounds(row: dict, ts: float, pairs: list[dict]) -> tuple[float, float, bool]:
+    """Return the observed interval and whether the background duration remains unknown."""
+    tool = row.get("tool") or "?"
+    if tool in _AGENT_TOOLS:
+        ms, unresolved, match = _resolve_agent_timing(row, pairs)
+        if match is not None:
+            return match["start"], match["end"], unresolved
+    else:
+        ms, unresolved = clip_duration(tool, int(row.get("duration_ms") or 0)), False
+    return ts - max(0, ms) / 1000, ts, unresolved
 
 
 def _accumulate_row(
     row: dict,
     cutoff: float,
+    end: float,
     session_filter: str | None,
     top_n: int,
     acc: TimingAccumulators,
 ) -> None:
-    """Fold one timing row into the running totals."""
-    scoped = _row_in_scope(row, cutoff, session_filter)
-    if scoped is None:
+    """Clip known intervals and track whether a selected session was fully observed."""
+    sid, ts_raw = row.get("session_id"), row.get("ts")
+    if not sid or (session_filter and sid != session_filter):
         return
-    sid, ts_raw, ts = scoped
+    if not ts_raw:
+        acc.session_complete = False
+        return
+    ts = parse_ts(ts_raw)
     tool = row.get("tool") or "?"
     raw_ms = int(row.get("duration_ms") or 0)
-    if tool in _AGENT_TOOLS:
-        ms = resolve_agent_ms(row, acc.pairs)
-    else:
-        ms = clip_duration(tool, raw_ms)
+    first, last, unresolved = _call_bounds(row, ts, acc.pairs)
+    if min(first, ts - max(0, raw_ms) / 1000) < cutoff or max(last, ts) >= end or unresolved:
+        acc.session_complete = False
+    start, stop = max(cutoff, first), min(end, last)
+    if start >= stop and not (first == last and cutoff <= first < end):
+        return
+    s = acc.sessions.setdefault(sid, SessionStats(session_id=sid))
+    s.observed_spawn |= tool in _AGENT_TOOLS
+    s.unresolved_join |= unresolved
     if tool == "Bash" and raw_ms > _BASH_CLIP_MS:
         acc.counters["warnings"] = acc.counters.get("warnings", 0) + 1
     bucket = classify_bucket(tool)
-    s = acc.sessions.setdefault(sid, SessionStats(session_id=sid))
-    s.first_ts = min(s.first_ts, ts - ms / 1000)
-    s.last_ts = max(s.last_ts, ts)
-    _record_bucket_time(s, bucket, ms)
+    start_ms, stop_ms = round(start * 1000), round(stop * 1000)
+    ms = stop_ms - start_ms
+    s.first_ts = min(s.first_ts, start_ms / 1000)
+    s.last_ts = max(s.last_ts, stop_ms / 1000)
+    if ms:
+        acc.events.setdefault(sid, []).extend(((start_ms, bucket, 1), (stop_ms, bucket, -1)))
     if bucket == "skill":
         name = extract_skill_name(row.get("args"))
         if name:
@@ -481,6 +490,7 @@ def aggregate_sessions(
     invocations_path: Path,
     *,
     cutoff: float,
+    end: float = float("inf"),
     session_filter: str | None = None,
     top_n: int = 5,
 ) -> tuple[dict[str, SessionStats], list[dict], int]:
@@ -489,7 +499,8 @@ def aggregate_sessions(
     Args:
         timings_path: ``timings.jsonl`` path.
         invocations_path: ``invocations.jsonl`` path.
-        cutoff: ignore rows with ``ts`` older than this POSIX second.
+        cutoff: inclusive start of the observation in POSIX seconds.
+        end: exclusive end of the observation in POSIX seconds.
         session_filter: only aggregate this session_id (optional).
         top_n: keep this many slowest calls per session.
 
@@ -511,7 +522,11 @@ def aggregate_sessions(
     """
     acc = TimingAccumulators(pairs=build_invocation_pairs(invocations_path))
     for row in iter_jsonl(timings_path):
-        _accumulate_row(row, cutoff, session_filter, top_n, acc)
+        _accumulate_row(row, cutoff, end, session_filter, top_n, acc)
+    for sid, stats in acc.sessions.items():
+        _allocate_wall(stats, acc.events.get(sid, []))
+        if session_filter and acc.session_complete:
+            stats.observation = stats.first_ts, stats.last_ts
     return acc.sessions, acc.skill_events, acc.counters["warnings"]
 
 
@@ -547,11 +562,87 @@ def _fmt_pct(part: int, whole: int) -> str:
     return f"{(100 * part / whole):.1f}%" if whole else "0.0%"
 
 
+@dataclass(frozen=True)
+class ConfidenceGap:
+    """One named limitation of the clock report and its share of the confidence shortfall."""
+
+    deduction: float
+    #: Short label for the one-line ``Confidence:`` header field.
+    label: str
+    #: Full gap text for the ``## Confidence`` block.
+    text: str
+
+
+_AGENT_INTERNAL_GAP = ConfidenceGap(
+    0.07,
+    "clock log excludes internal subagent timing",
+    "The main-process hook cannot observe internal subagent tool calls or split their elapsed time into buckets",
+)
+_AGENT_JOIN_GAP = ConfidenceGap(
+    0.05,
+    "background agent join by substring match",
+    "Background agent join via (agent, desc) substring match can mispair concurrent spawns of the same type and description",
+)
+_UNRESOLVED_JOIN_GAP = ConfidenceGap(
+    _AGENT_JOIN_GAP.deduction,
+    "unresolved background-agent joins",
+    "Unresolved background-agent joins can leave activity unattributed. " + _AGENT_JOIN_GAP.text,
+)
+#: Gap that always applies: the clock-side source logs carry no model field.
+_MODEL_GAP = ConfidenceGap(
+    0.03,
+    "no per-model-tier clock breakdown",
+    "`model` field 100% null in source logs → no per-model-tier breakdown",
+)
+
+
+def confidence_gaps(
+    agent_ms: int, *, observed_spawn: bool = False, unresolved_join: bool = False
+) -> list[ConfidenceGap]:
+    """Return the confidence gaps that apply to a report, so the score follows from named gaps only.
+
+    Observed spawns bring in timing gaps even when they contribute zero milliseconds. An unresolved join gives
+    a more specific explanation for the join deduction.
+
+    Args:
+        agent_ms: Summed agent and subagent spawn wall time across the reported sessions, in milliseconds.
+        observed_spawn: At least one in-scope Agent or Task timing row exists.
+        unresolved_join: At least one short agent timing lacks a matching completion.
+
+    Returns:
+        Applicable gaps, largest deduction first.
+
+    Examples:
+        >>> [gap.deduction for gap in confidence_gaps(0)]
+        [0.03]
+        >>> [gap.deduction for gap in confidence_gaps(1)]
+        [0.07, 0.05, 0.03]
+    """
+    if unresolved_join:
+        return [_AGENT_INTERNAL_GAP, _UNRESOLVED_JOIN_GAP, _MODEL_GAP]
+    if observed_spawn or agent_ms > 0:
+        return [_AGENT_INTERNAL_GAP, _AGENT_JOIN_GAP, _MODEL_GAP]
+    return [_MODEL_GAP]
+
+
+def confidence_score(gaps: list[ConfidenceGap]) -> float:
+    """Return the report score: 1.0 minus the deductions of its named gaps.
+
+    Examples:
+        >>> confidence_score(confidence_gaps(0))
+        0.97
+        >>> confidence_score(confidence_gaps(1))
+        0.85
+    """
+    return round(1.0 - sum(gap.deduction for gap in gaps), 2)
+
+
 def _render_yaml(
     sessions: dict[str, SessionStats],
     total_wall: int,
     since_spec: str,
     output_hint: str,
+    gaps: list[ConfidenceGap] | None = None,
 ) -> str:
     """Render the report's ``---`` metadata header, one ``Key: value`` line per field.
 
@@ -565,6 +656,7 @@ def _render_yaml(
         total_wall: Summed wall time in milliseconds across the sessions.
         since_spec: The ``--since`` window as given, e.g. ``24h``.
         output_hint: Report path shown in the ``Path:`` field.
+        gaps: Applicable confidence gaps; ``None`` means a window without agent spawns.
 
     Returns:
         The header block, opening and closing ``---`` lines included.
@@ -575,17 +667,20 @@ def _render_yaml(
         'Title'
         >>> all(":" in line for line in header.splitlines()[1:-1])
         True
+        >>> [line for line in header.splitlines() if line.startswith("Confidence:")]
+        ['Confidence: 0.97 — no per-model-tier clock breakdown']
     """
     today = time.strftime("%Y-%m-%d", time.gmtime())
+    gaps = confidence_gaps(0) if gaps is None else gaps
     return (
         "---\n"
         "Title:      foundry:profile — session clock-time breakdown\n"
         f"Date:       {today}\n"
         f"Scope:      window={since_spec}, sessions={len(sessions)}, total_wall={_fmt_hms(total_wall)}\n"
-        "Focus:      local-tool / agent-spawn / skill / askuser / main-loop reasoning split\n"
+        "Focus:      local-tool / agent-spawn / skill / askuser / unattributed wall-time split\n"
         "Agents:     timing_analyzer.py (no LLM agents — pure log read)\n"
         "Outcome:    INFORMATIONAL — data-only report\n"
-        "Confidence: 0.85 — reasoning bucket underestimated when subagents dominate\n"
+        f"Confidence: {confidence_score(gaps):.2f} — {gaps[0].label}\n"
         "Next steps: re-run with --session-id <slowest> for drill-down\n"
         f"Path:       → {output_hint}\n"
         "---\n"
@@ -593,33 +688,36 @@ def _render_yaml(
 
 
 def _render_headline(totals: dict[str, int]) -> list[str]:
-    compute = max(1, totals["wall"] - totals["idle"])
+    """Render the exclusive shares of observed compute and the excluded durations."""
+    compute = totals["compute"]
     return [
-        "## Headline split (compute-only, excl. AskUserQuestion idle)",
+        "## Headline split (shares of observed compute)",
         "",
         f"- Local tools: {_fmt_hms(totals['local'])} ({_fmt_pct(totals['local'], compute)})",
         f"- Agent / subagent spawns: {_fmt_hms(totals['agent'])} ({_fmt_pct(totals['agent'], compute)})",
         f"- Skill wall: {_fmt_hms(totals['skill'])} ({_fmt_pct(totals['skill'], compute)})",
-        f"- Main-loop reasoning (residual): {_fmt_hms(totals['reasoning'])} ({_fmt_pct(totals['reasoning'], compute)})",
+        f"- Compute time (observed): {_fmt_hms(compute)}",
         f"- AskUserQuestion idle (excluded): {_fmt_hms(totals['idle'])}",
+        f"- Unattributed wall time (excluded): {_fmt_hms(totals['unattributed'])}",
         "",
     ]
 
 
 def _render_per_session(sessions: dict[str, SessionStats]) -> list[str]:
+    """Show wall, compute shares, idle and unobserved gaps per session."""
     lines = [
         "## Per-session breakdown",
         "",
-        "| session | wall | local% | agent% | skill% | reasoning% | idle | top skill |",
+        "| session | wall | local% | agent% | skill% | unattributed | idle | top skill |",
         "|---|---:|---:|---:|---:|---:|---:|---|",
     ]
     for s in sorted(sessions.values(), key=lambda x: -x.wall_ms)[:50]:
         top_skill = max(set(s.skill_names), key=s.skill_names.count) if s.skill_names else "—"
-        ct = max(1, s.wall_ms - s.idle_ms)
+        ct = s.compute_ms
         lines.append(
             f"| `{s.session_id[:8]}` | {_fmt_hms(s.wall_ms)} | "
             f"{_fmt_pct(s.local_ms, ct)} | {_fmt_pct(s.agent_ms, ct)} | "
-            f"{_fmt_pct(s.skill_ms, ct)} | {_fmt_pct(s.reasoning_ms, ct)} | "
+            f"{_fmt_pct(s.skill_ms, ct)} | {_fmt_hms(s.unattributed_ms)} | "
             f"{_fmt_hms(s.idle_ms)} | {top_skill} |"
         )
     lines.append("")
@@ -672,33 +770,36 @@ def _render_top_n(sessions: dict[str, SessionStats], top_n: int) -> list[str]:
 
 
 def _render_legend(warnings: int) -> list[str]:
+    """Describe the clock buckets and their allocation."""
     return [
         "## Legend",
         "",
         "- **Local tools**: Bash/Read/Edit/Write/Grep/Glob/TaskCreate etc — main-process work",
         "- **Agent**: Task/Agent spawn wall time; background agents resolved via invocations.jsonl pair",
         "- **Skill**: tool=Skill row duration (whole skill turn wall)",
-        "- **Reasoning**: residual = session wall − (local + agent + skill + idle)",
+        "- **Unattributed**: gaps between recorded intervals, excluded from compute",
         "- **Idle**: AskUserQuestion wall — pure human-wait, excluded from compute total",
-        "- **wall**: session last_ts − first_ts",
+        "- **Wall**: span of the observed intervals within each session",
+        "- **Overlap**: idle takes priority, then local tools, agent calls and Skill calls",
         f"- **Bash clipped**: {warnings} row(s) clipped at 1h (runaway-shell guard)",
         "",
     ]
 
 
-def _render_confidence() -> list[str]:
+def _render_confidence(gaps: list[ConfidenceGap]) -> list[str]:
+    """Render the ``## Confidence`` block whose deductions sum to ``1.0 - Score`` (Confidence Block rule).
+
+    Examples:
+        >>> _render_confidence(confidence_gaps(0))[1]
+        '**Score**: 0.97 — high'
+    """
+    score = confidence_score(gaps)
+    band = "high" if score >= 0.9 else "moderate" if score >= 0.85 else "low ⚠"
     return [
         "## Confidence",
-        "**Score**: 0.85 — moderate",
+        f"**Score**: {score:.2f} — {band}",
         "**Gaps**:",
-        # Deductions sum to 1.0 - Score (0.15), per the Confidence Block rule.
-        "- (-0.07) Subagent internal tool calls invisible to main-process hook → "
-        "reasoning bucket underestimates when subagents dominate",
-        "- (-0.03) `model` field 100% null in source logs → no per-model-tier breakdown",
-        "- (-0.05) Background agent join via (agent, desc) substring match; concurrent same-type/same-desc "
-        "spawns may pair wrong",
-        "",
-        "**Refinements**: 0 passes.",
+        *(f"- (-{gap.deduction:.2f}) {gap.text}" for gap in gaps),
     ]
 
 
@@ -710,6 +811,7 @@ def render_report(
     top_n: int,
     warnings: int,
     output_hint: str = "report.md",
+    window: tuple[float, float] | None = None,
 ) -> str:
     """Render the full markdown report string.
 
@@ -720,6 +822,7 @@ def render_report(
         top_n: how many slowest calls to list at the bottom.
         warnings: Bash-clip warning count for the legend.
         output_hint: path placed in the YAML ``Path:`` line.
+        window: inclusive start and exclusive end of the timing-row observation window in POSIX seconds.
 
     Returns:
         Complete markdown report (string with trailing newline).
@@ -735,15 +838,27 @@ def render_report(
         "skill": sum(s.skill_ms for s in sessions.values()),
         "idle": sum(s.idle_ms for s in sessions.values()),
         "wall": sum(s.wall_ms for s in sessions.values()),
-        "reasoning": sum(s.reasoning_ms for s in sessions.values()),
+        "compute": sum(s.compute_ms for s in sessions.values()),
+        "unattributed": sum(s.unattributed_ms for s in sessions.values()),
     }
-    parts: list[str] = [_render_yaml(sessions, totals["wall"], since_spec, output_hint), ""]
+    gaps = confidence_gaps(
+        totals["agent"],
+        observed_spawn=any(s.observed_spawn for s in sessions.values()),
+        unresolved_join=any(s.unresolved_join for s in sessions.values()),
+    )
+    parts: list[str] = [_render_yaml(sessions, totals["wall"], since_spec, output_hint, gaps), ""]
+    if window is not None:
+        parts.extend([f"Clock window (UTC epoch seconds): {window[0]!r} to {window[1]!r}", ""])
+    elif len(sessions) == 1:
+        observation = next(iter(sessions.values())).observation
+        if observation is not None:
+            parts.extend([f"Clock session (UTC epoch seconds): {observation[0]!r} to {observation[1]!r}", ""])
     parts.extend(_render_headline(totals))
     parts.extend(_render_per_session(sessions))
     parts.extend(_render_per_skill(skill_events))
     parts.extend(_render_top_n(sessions, top_n))
     parts.extend(_render_legend(warnings))
-    parts.extend(_render_confidence())
+    parts.extend(_render_confidence(gaps))
     return "\n".join(parts) + "\n"
 
 
@@ -774,11 +889,13 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     timings = Path(args.timings).expanduser()
     invocations = Path(args.invocations).expanduser()
-    cutoff = time.time() - parse_since(args.since)
+    end = time.time()
+    cutoff = end - parse_since(args.since)
     sessions, skill_events, warnings = aggregate_sessions(
         timings,
         invocations,
         cutoff=cutoff,
+        end=end,
         session_filter=args.session_id,
         top_n=args.top_n,
     )
@@ -797,6 +914,7 @@ def main(argv: list[str] | None = None) -> int:
         top_n=args.top_n,
         warnings=warnings,
         output_hint=str(out),
+        window=(cutoff, end) if args.session_id is None else None,
     )
     write_report(out, report)
     enc = getattr(sys.stdout, "encoding", None) or "utf-8"

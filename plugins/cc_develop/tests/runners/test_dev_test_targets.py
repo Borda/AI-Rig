@@ -142,6 +142,19 @@ class TestChangedFiles:
         _write(repo, "src/pkg/new.py", "X = 1\n")
         assert dtt.changed_files(repo, None) == ["src/pkg/mod.py", "src/pkg/new.py"]
 
+    def test_invalid_base_is_a_selection_error(self, repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Expose an invalid comparison ref even when no local files changed."""
+        assert dtt.main(["--pytest-cmd", "pytest", "--base", "missing-ref"]) == 2
+        assert "git diff against 'missing-ref' failed" in json.loads(capsys.readouterr().out)["error"]
+
+    def test_discovery_preserves_non_ascii_filenames(self, repo: Path) -> None:
+        """Keep Git's original Unicode spelling so the changed test still selects itself."""
+        filename = "tests/test_café.py"
+        _write(repo, filename, "def test_value():\n    pass\n")
+        discovered = dtt.changed_files(repo, None)
+        assert discovered == [filename]
+        assert list(dtt.plan_targeted(repo, discovered, codemap_enabled=False).sources) == [filename]
+
 
 class TestCodemapQuery:
     """``codemap_tests`` builds a safe codemap command line and runs it from the repository root."""
@@ -253,6 +266,29 @@ class TestRunFlag:
         rc = dtt.main(["--pytest-cmd", "pytest", "--tests-from", str(targets), "--run"])
         assert rc == 1
         mock_main.assert_called_once_with(["pytest", "tests/test_other.py::test_g"])
+
+    @mock.patch("run_pytest_short.main", autospec=True)
+    def test_provisioned_retry_refuses_empty_selection(self, launch, repo: Path, capsys) -> None:
+        """Report an unresolved retry when discovery finds no tests."""
+        args = ["--pytest-cmd", "pytest", "--run", "--env", "env.json"]
+        assert dtt.main(args) == 2
+        assert "selected no tests" in json.loads(capsys.readouterr().out)["error"]
+        launch.assert_not_called()
+
+    @mock.patch("run_pytest_short.main", autospec=True, return_value=2)
+    def test_provisioned_retry_requires_the_recorded_target_order(self, launch, repo: Path, capsys) -> None:
+        """A replacement selection cannot stand in for the ordered targets from the original check."""
+        tests = ["tests/test_other.py::test_g", "tests/test_mod.py::test_f"]
+        fixed = repo / "fixed.json"
+        fixed.write_text(json.dumps(tests), encoding="utf-8")
+        args = ["--pytest-cmd", "pytest", "--tests-from", str(fixed), "--run", "--record-dir", ".developments"]
+        assert dtt.main(args) == 2
+        launch.reset_mock()
+        capsys.readouterr()
+        fixed.write_text(json.dumps(list(reversed(tests))), encoding="utf-8")
+        assert dtt.main([*args, "--env", "env.json"]) == 2
+        assert "original ordered targets" in json.loads(capsys.readouterr().out)["error"]
+        launch.assert_not_called()
 
 
 @_skip_no_git

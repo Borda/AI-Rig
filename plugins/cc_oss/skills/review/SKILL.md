@@ -51,6 +51,10 @@ FANOUT_MAX=3            # default: top-N most relevant of the scope-preselected 
                         # OUTSIDE the cap, never ranked out: bridge review, the issue agent,
                         # and qa-specialist (security-scan-every-PR contract pin, except Docs-only mode)
                         # --full runs ALL scope-preselected units instead — no numeric cap
+                        # promoted units (changed changelog/migration guide → docs+lint,
+                        # CI workflow → sw-engineer in a code lineup, stated perf claim →
+                        # perf+arch) take slots first, inside the cap; an unslotted
+                        # one is a missing reviewer (Readiness incomplete) — agent-launch.md
 AGENT_CALL_BUDGET=55    # target tool-calls per agent; past ~60 they stall without returning an envelope
 CHALLENGE_ENABLED=true  # set to false via --no-challenge
 CODEMAP_ENABLED=auto    # on by default if codemap installed + index found; --no-codemap = off; --codemap = strict (stop if not installed)
@@ -65,6 +69,8 @@ AGENT_DEADLINE_S=1800  # per spawned agent, from its spawn; covers the former 90
 </constants>
 
 <compaction>
+
+To resume an allocated run, go directly to the fixed parent recovery block in `modes/post-agent.md` using the run directory saved in the compaction contract. Skip Step 0, which resets fresh-run state. Continue at the first unmet checkpoint. If only delivery remains, read the saved publication and finish Step 5b on its recorded route, including any pending follow-up.
 
 - Key boundary: end of Step 2 — parallel review-agent fan-out outputs collected, before Step 5 consolidation.
 - Second boundary: end of Step 5 — consolidated report written, before Step 8 --reply.
@@ -195,7 +201,7 @@ cat "$OSS_SIGNALS" 2>/dev/null
 
 <!-- loads: modes/post-agent.md -->
 
-Whenever entering Steps 4–7, including fill-gaps consolidation at Step 5 or a terminal reject at Step 5b and Step 7, load and follow `modes/post-agent.md` at that step.
+Whenever entering Steps 4–7, including fill-gaps consolidation at Step 5, a terminal reject at Step 5b and Step 7, or delivery of a selected saved review at Step 5b, load and follow `modes/post-agent.md` at that step.
 
 ```bash
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
@@ -226,7 +232,7 @@ python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$REVIEW_SKILL_DIR/modes/reply.m
 Scenarios:
 
 1. FIX scope, `IMPACT_TIER=LIGHT`: single bug-fix PR touching only a plotting helper no main-path function calls → scope=FIX drops the perf+arch unit entirely (both members out of scope). Surviving units: sw-engineer, docs+lint (merged), challenger (unless `--no-challenge`) = 3 units ≤ FANOUT_MAX, all spawn; + pinned qa-specialist = 4 spawns (+ Codex bridge if installed). Same small FIX with `IMPACT_TIER=FULL` (private helper called by a public entry point) → perf+arch unit stays in; 4 units rank for 3 slots + pinned qa-specialist = 4 spawns (+ Codex). Never inline — small diff on the main user story is the riskiest case.
-2. FEATURE scope: new feature PR with API changes → units sw-engineer, perf+arch, docs+lint, challenger = 4 survive preselection; default cap spawns top 3 ranked (dropped unit listed in report) + pinned qa-specialist = 4 spawns; `--full` spawns all 4 units + qa-specialist = 5 spawns.
+2. FEATURE scope: new feature PR with API changes → units sw-engineer, perf+arch, docs+lint, challenger = 4 survive preselection; default cap spawns top 3 ranked (dropped unit listed in report as `Unreviewed dimension:`) + pinned qa-specialist = 4 spawns; `--full` spawns all 4 units + qa-specialist = 5 spawns. Same PR with a changed `CHANGELOG.md` → docs+lint is promoted into a slot ahead of the unpromoted units, so challenger or perf+arch is the dropped one.
 3. --reply mode: existing review report + --reply flag → skip to Step 8, no agents spawned
 4. DOCS_TYPING scope: PR with only docs and `.pyi` stub changes (no Python logic file) → Step 0 sets PR_TYPE=DOCS_TYPING, CHALLENGE_ENABLED=false, CONSOLIDATOR_AGENT=foundry:doc-scribe; only doc-scribe spawned; Step 5 uses doc-scribe consolidator.
 5. TESTS_CI scope: PR with only test files (plus `tox.ini`/`Makefile`) → Step 0 sets PR_TYPE=TESTS_CI, CHALLENGE_ENABLED=false, CONSOLIDATOR_AGENT=foundry:qa-specialist; qa-specialist + linting-expert spawned; Step 5 uses qa-specialist consolidator. Contrast: a PR touching only `.github/workflows/*.yml` stays PR_TYPE=CODE → File scope detection sets CICD_ONLY_MODE → `oss:cicd-steward` + Agent 1 + pinned qa-specialist + challenger + Codex, CI status and acceptance gate run; a `requirements.txt`- or `.ipynb`-only PR stays CODE → CHORE with qa-specialist kept for OWASP/CVE.

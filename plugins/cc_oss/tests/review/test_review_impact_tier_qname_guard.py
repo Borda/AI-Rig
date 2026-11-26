@@ -46,7 +46,9 @@ class TestRunFnBlastQnameGuard:
         The guard must not over-block: a plain ``module::function`` name reaches ``codemap-py fn-blast`` and the parsed
         blast radius comes back to the caller.
         """
-        run.return_value = subprocess.CompletedProcess([], 0, stdout=json.dumps({"blast_radius": []}), stderr="")
+        run.return_value = subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps({"blast_radius": []}).encode(), stderr=b""
+        )
 
         assert rit.run_fn_blast("pkg.mod::run") == {"blast_radius": []}
         assert run.call_args.args[0][-1] == "pkg.mod::run"

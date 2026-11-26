@@ -91,12 +91,38 @@
 > | `blocked-guard` | `⚠ Push blocked by push guard — run the lines under Unblock push at the end of this report` |
 > | `blocked-permission` | `⚠ Push blocked — git push permission not granted; run the command under Unblock push` |
 > | `blocked-needs-manual-push` | `⚠ Push needs your shell — no upstream tracking, and no approval covers the explicit-refspec push; run the line under Unblock push` |
-> | `rejected-non-ff` | `✗ Push rejected (non-fast-forward) — merge the remote branch, then push manually` |
-> | `rejected-remote` | `✗ Push approved but failed — the remote refused it: [git's error line, verbatim from push-error.txt]. The PR on GitHub does not carry these commits; run the line under Unblock push` |
+> | `rejected-non-ff` | `✗ Push rejected (non-fast-forward)` |
+> | `rejected-remote` | `✗ Push approved but failed — the remote refused it: [git's error line, verbatim from push-error.txt]` |
 > | `skipped-by-user` | `⊘ Push skipped by you (Step 3d "don't push" or Step 10 "Hold") — run git push when ready` |
 > | `not-attempted` | `✗ Push not attempted — push scope could not be computed` |
 > | `none` | `⊘ No push this run (no PR number, or all items skipped)` |
 > | `unknown` | Push status unavailable. |
+>
+> `skipped-by-user` is the user's decision, never a failure or a Confidence gap.
+
+**Remote branch**: \[what the remote PR branch holds, from `REMOTE_STATE` and `REMOTE_DETAIL`\]
+
+> Only when Step 11 printed a `REMOTE_STATE` other than `n/a`. Describe what the branch holds (`unchanged`, `pushed-externally`, `diverged`, `moved`, `absent`, `unknown`); never call it a safety problem and never name who moved it.
+
+### GitHub writes for you
+
+| # | Item | Write |
+| -- | -- | -- |
+| [id] | [item gist] | [what the write does] |
+
+`gh api graphql -f query='mutation { [aliased replies and resolves for every row] }'`
+
+> Only when an item needs a GitHub write this run did not make (PR description edit, thread resolution, alert dismissal, reply); omit otherwise. One combined command for every GraphQL-expressible row, so the user approves once; only text needing `--body-file` (a file in the run dir) gets its own command line.
+
+### Run leftovers
+
+\[One line per branch, worktree and stash entry, plus any `LEFTOVER_CHECK=incomplete` reasons\]
+
+```text
+[every CLEANUP= command, verbatim, in printed order]
+```
+
+> Include this section when Step 11 lists entries or reports incomplete checks. Include the command block only if there are `CLEANUP=` lines. Follow it with the printed `STASH_DROP=` text when present. The user decides whether to run the commands.
 
 **Next**:
 
@@ -118,4 +144,4 @@
 
 ## Unblock push
 
-> `blocked-guard` / `blocked-permission` / `blocked-needs-manual-push` / `rejected-remote` only, and always the last section of the report — after **Next**, the Challenge Log and Confidence. Repeat the lines of `push-unblock.txt` verbatim in one fenced block; omit the section for every other status.
+> `blocked-guard` / `blocked-permission` / `blocked-needs-manual-push` only, plus `rejected-remote` when the remote comparison shows missing run commits or delivery stays unverified, and always the last section of the report — after **Next**, the Challenge Log and Confidence. Repeat the lines of `push-unblock.txt` verbatim in one fenced block; omit the section for every other status.

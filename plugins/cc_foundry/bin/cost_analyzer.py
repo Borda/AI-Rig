@@ -185,6 +185,15 @@ LATEST_BY_FAMILY: dict[str, str] = {
 COMMAND_RE = re.compile(r"<command-name>([^<]+)</command-name>")
 #: Tool calls above which one agent is flagged ``long``; the repository's per-agent workload bound is about 55.
 LONG_AGENT_TOOL_CALLS = 60
+#: A main-loop call is a cache rebuild when it writes over this share of its prompt and the prompt exceeds the floor.
+REBUILD_WRITE_SHARE = 0.5
+REBUILD_MIN_PROMPT = 20_000
+#: Prompt size that, compared with the call before, marks a compaction (the prompt fell below this share of it).
+COMPACTION_DROP = 0.7
+#: Longest idle gap the main loop's 1-hour cache write survives, in seconds.
+MAIN_CACHE_TTL_S = 3600
+#: Rebuild causes in precedence order; the first that applies names a rebuild.
+REBUILD_CAUSES = ("compaction", "model switch", "idle over 1h", "other")
 #: A chained continuation ends a spawn name (``impl-parser-link4``), unlike a domain named ``link``.
 CHAIN_LINK_RE = re.compile(r"-link\d+$", re.IGNORECASE)
 #: A single-item challenge retry name (``challenge-<domain>-retry-<id>``): ``retry`` follows a domain segment.
@@ -468,6 +477,11 @@ class Call:
     def output(self) -> int:
         return self.usage.get("output_tokens", 0)
 
+    @property
+    def total_tokens(self) -> int:
+        """Count the recorded input, cache-read, cache-write and output tokens."""
+        return prompt_tokens(self.usage) + self.output
+
 
 @dataclass
 class AgentSpend:
@@ -501,6 +515,8 @@ class Session:
     agent_spends: list[AgentSpend]
     ts_first: float = float("inf")
     ts_last: float = 0.0
+    #: Last main-loop call before the window cutoff, kept only to classify the first in-window call's rebuild cause.
+    lead: Call | None = None
 
     @property
     def project(self) -> str:
@@ -723,8 +739,8 @@ def _load_agent_spend(jf: Path, sub_calls: dict[str, Call], tool_calls: int = 0)
     )
 
 
-def _in_window(calls: dict[str, Call], cutoff: float) -> dict[str, Call]:
-    """Keep calls at or after *cutoff*; a call with no timestamp stays, as nothing places it outside the window.
+def _in_window(calls: dict[str, Call], cutoff: float, end: float = float("inf")) -> dict[str, Call]:
+    """Keep calls in ``[cutoff, end)`` and retain undated calls for descriptive totals.
 
     Examples:
         >>> calls = {"a": Call("a", "m", {}, ts=10.0), "b": Call("b", "m", {}, ts=30.0), "c": Call("c", "m", {})}
@@ -733,10 +749,15 @@ def _in_window(calls: dict[str, Call], cutoff: float) -> dict[str, Call]:
         >>> sorted(_in_window(calls, 0.0))
         ['a', 'b', 'c']
     """
-    return {key: c for key, c in calls.items() if c.ts == 0.0 or c.ts >= cutoff}
+    return {key: c for key, c in calls.items() if c.ts == 0.0 or cutoff <= c.ts < end}
 
 
-def load_session(main_path: Path, cutoff: float = 0.0) -> Session:
+def _subagent_transcripts(main_path: Path) -> list[Path]:
+    """List the agent transcripts belonging to a main session transcript."""
+    return sorted((main_path.parent / main_path.stem / "subagents").glob("agent-*.jsonl"))
+
+
+def load_session(main_path: Path, cutoff: float = 0.0, *, end: float = float("inf")) -> Session:
     """Parse one session: its main-loop file plus every subagent transcript.
 
     Subagent files live at ``<main_path stem>/subagents/agent-*.jsonl``, sibling to the flat ``<session-id>.jsonl``.
@@ -744,25 +765,24 @@ def load_session(main_path: Path, cutoff: float = 0.0) -> Session:
     rollup — more reliable than scanning the main transcript for ``Agent`` tool_use blocks, which misses agents spawned
     through the ``Workflow`` tool.
 
-    With *cutoff* (epoch seconds) only calls at or after it are kept, so a session that began before a report window
-    contributes just its in-window spend. ``ts_first`` and ``ts_last`` still span the whole transcript, and an agent
-    with no call left in the window drops out of the roster.
+    Calls with known timestamps are limited to ``[cutoff, end)`` in epoch seconds. ``ts_first`` and ``ts_last`` still
+    span the whole transcript, and an agent with no call left in the window drops out of the roster.
     """
     calls_by_id, commands, ts_first, ts_last = _parse_rows(main_path)
-    calls = list(_in_window(calls_by_id, cutoff).values())
+    calls = list(_in_window(calls_by_id, cutoff, end).values())
+    older = (c for c in calls_by_id.values() if 0.0 < c.ts < cutoff and not c.sidechain and prompt_tokens(c.usage))
+    lead = max(older, key=lambda c: c.ts, default=None)
 
     agent_spends: list[AgentSpend] = []
-    subagents_dir = main_path.parent / main_path.stem / "subagents"
-    if subagents_dir.is_dir():
-        for jf in sorted(subagents_dir.glob("agent-*.jsonl")):
-            tool_ids: set[str] = set()
-            sub_calls, _, sub_first, sub_last = _parse_rows(jf, tool_ids)
-            ts_first, ts_last = min(ts_first, sub_first), max(ts_last, sub_last)
-            sub_calls = _in_window(sub_calls, cutoff)
-            if cutoff and not sub_calls:
-                continue
-            calls.extend(sub_calls.values())
-            agent_spends.append(_load_agent_spend(jf, sub_calls, len(tool_ids)))
+    for jf in _subagent_transcripts(main_path):
+        tool_ids: set[str] = set()
+        sub_calls, _, sub_first, sub_last = _parse_rows(jf, tool_ids)
+        ts_first, ts_last = min(ts_first, sub_first), max(ts_last, sub_last)
+        sub_calls = _in_window(sub_calls, cutoff, end)
+        if cutoff and not sub_calls:
+            continue
+        calls.extend(sub_calls.values())
+        agent_spends.append(_load_agent_spend(jf, sub_calls, len(tool_ids)))
 
     return Session(
         path=main_path,
@@ -771,6 +791,7 @@ def load_session(main_path: Path, cutoff: float = 0.0) -> Session:
         agent_spends=agent_spends,
         ts_first=ts_first,
         ts_last=ts_last,
+        lead=lead,
     )
 
 
@@ -831,6 +852,89 @@ def cold_start_share(calls: list[Call]) -> float:
     if not written:
         return 0.0
     return sum(c.cache_write for c in calls if c.cache_read == 0) / written
+
+
+def rebuild_cause(prev: Call, call: Call) -> str | None:
+    """Name why *call* rebuilt the cache after *prev*, or ``None`` when it did not rebuild.
+
+    A rebuild writes over half its prompt fresh. Precedence: compaction (prompt fell below 70% of the previous one),
+    model switch, idle gap beyond the 1-hour cache lifetime, otherwise ``other``.
+
+    Examples:
+        >>> warm = Call("a", "opus", {"cache_read_input_tokens": 300_000}, ts=0.0)
+        >>> rebuilt = Call("b", "opus", {"cache_creation_input_tokens": 100_000}, ts=7_200.0)
+        >>> rebuild_cause(warm, rebuilt)
+        'compaction'
+        >>> rebuild_cause(Call("a", "opus", {"cache_read_input_tokens": 100_000}, ts=0.0), rebuilt)
+        'idle over 1h'
+        >>> rebuild_cause(warm, Call("c", "opus", {"cache_read_input_tokens": 300_000}, ts=1.0)) is None
+        True
+    """
+    prompt = prompt_tokens(call.usage)
+    if prompt <= REBUILD_MIN_PROMPT or call.cache_write <= REBUILD_WRITE_SHARE * prompt:
+        return None
+    if prompt < COMPACTION_DROP * prompt_tokens(prev.usage):
+        return "compaction"
+    if call.model != prev.model:
+        return "model switch"
+    if call.ts - prev.ts > MAIN_CACHE_TTL_S:
+        return "idle over 1h"
+    return "other"
+
+
+@dataclass
+class RebuildRow:
+    """Count and cache-write dollars of the rebuilds one cause explains."""
+
+    rebuilds: int = 0
+    write_usd: float = 0.0
+
+
+def rebuild_breakdown(sessions: list[Session]) -> tuple[dict[str, RebuildRow], float]:
+    """Attribute each main-loop cache rebuild to a cause; return the rows and the main loop's in-window spend.
+
+    Compare consecutive timestamped calls that used prompt tokens, including the session's pre-window ``lead``.
+    Rows such as synthetic messages and output-only calls cannot establish the previous prompt's cache state.
+
+    Examples:
+        >>> rebuild_breakdown([])[0]["compaction"].rebuilds
+        0
+    """
+    rows = {cause: RebuildRow() for cause in REBUILD_CAUSES}
+    main_spend = 0.0
+    for session in sessions:
+        main = sorted((c for c in session.calls if not c.sidechain and c.ts), key=lambda c: c.ts)
+        main_spend += sum(cost(c.usage, c.model) for c in main)
+        prev = session.lead
+        for call in main:
+            if not prompt_tokens(call.usage):
+                continue
+            cause = rebuild_cause(prev, call) if prev else None
+            if cause:
+                parts = cost_parts(call.usage, call.model)
+                rows[cause].rebuilds += 1
+                rows[cause].write_usd += parts["write_5m"] + parts["write_1h"]
+            prev = call
+    return rows, main_spend
+
+
+def render_rebuild_causes(sessions: list[Session]) -> list[str]:
+    """Render main-loop cache rebuilds by cause, with cache-write dollars and their share of main-loop spend."""
+    rows, main_spend = rebuild_breakdown(sessions)
+    if not any(row.rebuilds for row in rows.values()):
+        return []
+    lines = [
+        "### Main-loop cache rebuilds by cause",
+        "",
+        "| cause | rebuilds | cache write $ | share of main spend |",
+        "|---|---:|---:|---:|",
+    ]
+    for cause in REBUILD_CAUSES:
+        row = rows[cause]
+        share = row.write_usd / main_spend if main_spend else 0.0
+        lines.append(f"| {cause} | {row.rebuilds} | {_fmt_usd(row.write_usd)} | {share:.1%} |")
+    lines.append("")
+    return lines
 
 
 @dataclass
@@ -917,10 +1021,10 @@ def render_cost_classes(calls: list[Call]) -> list[str]:
 
 
 def render_subagent_writes(spends: list[AgentSpend]) -> list[str]:
-    """Render 5-minute cache-write dollars per agent type: first-call prefix versus later rewrites.
+    """Render 5-minute cache-write dollars per agent type: first-call prefix versus later writes.
 
-    The first call writes the agent's start-up prefix once; spend beyond it is context re-cached after the 5-minute
-    window lapsed or the context grew.
+    The first call writes the agent's start-up prefix once. Later writes are mostly new context the agent adds as it
+    works; only a smaller part is context re-cached after the 5-minute window lapsed (measured: about 10% of writes).
     """
     by_type: dict[str, list[AgentSpend]] = {}
     for spend in spends:
@@ -939,7 +1043,7 @@ def render_subagent_writes(spends: list[AgentSpend]) -> list[str]:
     header = [
         "### Subagent 5-minute cache writes by type",
         "",
-        "| agent type | agents | 5m write $ | first-call prefix $ | later rewrites $ |",
+        "| agent type | agents | 5m write $ | first-call prefix $ | later writes $ |",
         "|---|---:|---:|---:|---:|",
     ]
     return [*header, *rows, ""]
@@ -1083,18 +1187,35 @@ def render_agent_detail(spends: list[AgentSpend], *, limit: int = 25) -> list[st
     return lines
 
 
+def _cost_bounds_lines(kind: str, bounds: tuple[float, float], calls: list[Call]) -> list[str]:
+    """Certify the cost and token observation bounds only when all counted usage is dated."""
+    if any(not call.ts and call.total_tokens for call in calls):
+        return [f"Cost {kind} bounds unavailable because some usage has no timestamp.", ""]
+    return [f"Cost {kind} (UTC epoch seconds): {bounds[0]} to {bounds[1]}", ""]
+
+
+def _session_date_lines(session: Session) -> list[str]:
+    """Render the whole session transcript span and any usable observation bounds."""
+    if session.ts_first > session.ts_last:
+        return ["Cost session bounds unavailable because no transcript rows have a timestamp.", ""]
+    first = datetime.fromtimestamp(session.ts_first, timezone.utc).strftime("%Y-%m-%d %H:%MZ")
+    last = datetime.fromtimestamp(session.ts_last, timezone.utc).strftime("%Y-%m-%d %H:%MZ")
+    return [
+        f"Whole session, {first} to {last} — not clipped to a window.",
+        "",
+        *_cost_bounds_lines("session", (session.ts_first, session.ts_last), session.calls),
+    ]
+
+
 def render_session_detail(session: Session, *, top_n: int, every: int = 10) -> list[str]:
-    """Render the ``--session-id`` deep-dive: cost buckets, cache rebuilds, agent roster."""
+    """Render cost buckets, cache rebuilds and the agent roster for a whole session."""
     lines = [
         "## Tokens & cost",
         "",
         f"### Session `{session.path.stem}` — {session.project}",
         "",
+        *_session_date_lines(session),
     ]
-    if session.ts_last:
-        first = datetime.fromtimestamp(session.ts_first, timezone.utc).strftime("%Y-%m-%d %H:%MZ")
-        last = datetime.fromtimestamp(session.ts_last, timezone.utc).strftime("%Y-%m-%d %H:%MZ")
-        lines += [f"Whole session, {first} to {last} — not clipped to a window.", ""]
     buckets = bucket(session.calls)
     lines += ["| scope | tier | in | out | cache_w | cache_r | cost |", "|---|---|---:|---:|---:|---:|---:|"]
     total = 0.0
@@ -1104,7 +1225,8 @@ def render_session_detail(session: Session, *, top_n: int, every: int = 10) -> l
             f"| {side} | {tr} | {b.input:,} | {b.output:,} | {b.cache_write:,} | {b.cache_read:,} "
             f"| {_fmt_usd(b.cost_usd)} |"
         )
-    lines += [f"| **total** | | | | | | **{_fmt_usd(total)}** |", ""]
+    tokens = sum(call.total_tokens for call in session.calls)
+    lines += [f"| **total** | | | | | | **{_fmt_usd(total)}** |", "", f"**Total tokens: {tokens:,}**", ""]
     lines += render_cost_classes(session.calls)
 
     if session.agent_spends:
@@ -1142,9 +1264,14 @@ def render_session_detail(session: Session, *, top_n: int, every: int = 10) -> l
     return lines
 
 
-def render_window(sessions: list[Session], *, top_n: int, since_spec: str) -> list[str]:
-    """Render the window-ranking report: sessions by cost, plus per-command rollup."""
+def render_window(
+    sessions: list[Session], *, top_n: int, since_spec: str, bounds: tuple[float, float] | None = None
+) -> list[str]:
+    """Render session costs and total tokens, certifying bounds only for fully dated usage."""
     lines = ["## Tokens & cost", "", f"Window: last {since_spec}, {len(sessions)} session(s) with usage.", ""]
+    all_calls = [call for session in sessions for call in session.calls]
+    if bounds is not None:
+        lines += _cost_bounds_lines("window", bounds, all_calls)
     ranked = sorted(sessions, key=lambda s: -s.total_cost)
     lines += [
         "### Sessions ranked by cost",
@@ -1159,10 +1286,17 @@ def render_window(sessions: list[Session], *, top_n: int, since_spec: str) -> li
             f"{_fmt_usd(main_cost)} | {_fmt_usd(s.subagent_cost)} | {_fmt_usd(s.total_cost)} |"
         )
     grand_total = sum(s.total_cost for s in sessions)
-    lines += ["", f"**Window total: {_fmt_usd(grand_total)}** across all {len(sessions)} session(s) above.", ""]
-    all_calls = [call for s in sessions for call in s.calls]
+    tokens = sum(call.total_tokens for call in all_calls)
+    lines += [
+        "",
+        f"**Window total: {_fmt_usd(grand_total)}** across all {len(sessions)} session(s) above.",
+        "",
+        f"**Total tokens: {tokens:,}**",
+        "",
+    ]
     lines += render_cost_classes(all_calls)
     lines += render_subagent_writes([a for s in sessions for a in s.agent_spends])
+    lines += render_rebuild_causes(sessions)
 
     cmd_totals = aggregate_commands(sessions)
     if cmd_totals:
@@ -1181,7 +1315,7 @@ def render_window(sessions: list[Session], *, top_n: int, since_spec: str) -> li
         "### Notes",
         "",
         "- Prices are public list rates — dollar figures are proportional truth, not a billing statement.",
-        "- Only calls inside the window are priced: a session that began earlier counts its in-window spend, not its whole cost.",
+        "- Dated calls are priced only inside the window. Calls without timestamps are retained in the totals.",
         "- Per-command `session $` attributes a session's *entire* cost to every command it ran — ranks, never sums.",
         "- Subagent spend is included via each session's `subagents/agent-*.jsonl` transcripts.",
         "",
@@ -1230,20 +1364,21 @@ def _run_session_mode(root: Path, args: argparse.Namespace) -> list[str] | int:
     return render_session_detail(session, top_n=args.top_n)
 
 
-def _collect_window_sessions(root: Path, cutoff: float) -> list[Session]:
-    """Load every session under ``root`` whose activity falls at/after ``cutoff``.
+def _collect_window_sessions(root: Path, cutoff: float, end: float = float("inf")) -> list[Session]:
+    """Load sessions under ``root`` with usage in the requested window.
 
-    A file-mtime pre-check skips parsing anything provably older than the window before paying for a full transcript
-    read.
+    Skip parsing only if the main transcript and every subagent transcript were last modified before the window.
     """
     sessions: list[Session] = []
     for candidate in discover_sessions(root):
         try:
-            if candidate.stat().st_mtime < cutoff:
+            if candidate.stat().st_mtime < cutoff and all(
+                path.stat().st_mtime < cutoff for path in _subagent_transcripts(candidate)
+            ):
                 continue
         except OSError:
             continue
-        session = load_session(candidate, cutoff)
+        session = load_session(candidate, cutoff, end=end)
         if session.calls and session.ts_last >= cutoff:
             sessions.append(session)
     return sessions
@@ -1251,13 +1386,14 @@ def _collect_window_sessions(root: Path, cutoff: float) -> list[Session]:
 
 def _run_window_mode(root: Path, args: argparse.Namespace) -> list[str] | int:
     """Render the window-ranking report, or an error code."""
-    cutoff = time.time() - parse_since(args.since)
-    sessions = _collect_window_sessions(root, cutoff)
+    end = time.time()
+    cutoff = end - parse_since(args.since)
+    sessions = _collect_window_sessions(root, cutoff, end)
     if not sessions:
         sys.stderr.write(f"no sessions with usage found in window --since={args.since}\n")
         return 1
     _warn_unpriced([call for session in sessions for call in session.calls])
-    return render_window(sessions, top_n=args.top_n, since_spec=args.since)
+    return render_window(sessions, top_n=args.top_n, since_spec=args.since, bounds=(cutoff, end))
 
 
 def _write_report(lines: list[str], output: str | None) -> Path:

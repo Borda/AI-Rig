@@ -8,7 +8,12 @@ lineup, because a trimmed review of a risky change is the failure this script ex
 from __future__ import annotations
 
 import io
+import json
+import os
 import shutil
+import stat
+import sys
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -112,6 +117,106 @@ class TestFailSafe:
         tier, reason = rit.classify(payload, lambda _qname: None)
         assert tier == "FULL"
         assert reason.startswith("impact unknown")
+
+    @pytest.mark.parametrize(
+        ("fields", "cause"),
+        [
+            pytest.param({"rdep_count": "unknown"}, rit.ImpactCause.BAD_ENTRY, id="non-numeric-importer-count"),
+            pytest.param({"rdep_count": True}, rit.ImpactCause.BAD_ENTRY, id="boolean-importer-count"),
+            pytest.param({"rdep_count": -1}, rit.ImpactCause.BAD_ENTRY, id="negative-importer-count"),
+            pytest.param(
+                {"path": [], "module": "pkg.core"},
+                rit.ImpactCause.MODULE_WITHOUT_PATH,
+                id="malformed-path-with-module-fallback",
+            ),
+            pytest.param({"changed_symbols": 42}, rit.ImpactCause.BAD_ENTRY, id="non-list-changed-symbols"),
+            pytest.param(
+                {"changed_symbols": ["pkg.core::_prep", None]},
+                rit.ImpactCause.BAD_ENTRY,
+                id="non-string-changed-symbol",
+            ),
+        ],
+    )
+    def test_malformed_module_is_unknown_impact(self, fields: dict, cause: rit.ImpactCause) -> None:
+        """A malformed field cannot be ignored to classify the remaining module evidence as LIGHT."""
+        payload = _payload({**_module("src/pkg/core.py", "pkg.core::_prep"), **fields})
+        tier, reason = rit.classify(payload, _callers())
+
+        assert (tier, rit.cause_of(reason)) == ("FULL", cause)
+
+    @pytest.mark.parametrize(
+        "fields",
+        [
+            pytest.param({"unmapped_files": "pkg/core.py"}, id="unmapped-files-not-a-list"),
+            pytest.param({"unmapped_files": [None]}, id="unmapped-file-not-a-string"),
+            pytest.param({"index": []}, id="index-not-an-object"),
+            pytest.param({"index": {"stale": 1}}, id="stale-flag-not-boolean"),
+            pytest.param({"index": {"root_mismatch": "true"}}, id="root-mismatch-flag-not-boolean"),
+        ],
+    )
+    def test_malformed_change_set_is_unknown_impact(self, fields: dict) -> None:
+        """Unavailable coverage and index provenance cannot be mistaken for complete mapping."""
+        payload = {**_payload(_module("src/pkg/core.py", "pkg.core::_prep")), **fields}
+        tier, reason = rit.classify(payload, _callers())
+
+        assert (tier, rit.cause_of(reason)) == ("FULL", rit.ImpactCause.UNREADABLE_OUTPUT)
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            pytest.param(None, id="caller-entry-not-an-object"),
+            pytest.param({}, id="caller-entry-without-name-or-path"),
+            pytest.param({"caller": [], "path": "src/pkg/core.py"}, id="caller-name-not-a-string"),
+            pytest.param({"caller": "pkg.core::run", "path": {}, "module": "pkg.viz"}, id="caller-path-not-a-string"),
+        ],
+    )
+    def test_malformed_caller_entry_is_a_failed_query(self, entry: object) -> None:
+        """An unusable caller entry cannot count as evidence that a private function has no main-path callers."""
+        payload = _payload(_module("src/pkg/core.py", "pkg.core::_prep"))
+        tier, reason = rit.classify(payload, lambda _qname: {"blast_radius": [entry]})
+
+        assert (tier, rit.cause_of(reason)) == ("FULL", rit.ImpactCause.FN_BLAST_FAILED)
+
+    def test_malformed_caller_after_main_path_is_still_a_failed_query(self) -> None:
+        """An earlier main-path caller cannot make the rest of a malformed query trustworthy."""
+        payload = _payload(_module("src/pkg/core.py", "pkg.core::_prep"))
+        callers = [{"caller": "pkg.core::run", "path": "src/pkg/core.py"}, None]
+        tier, reason = rit.classify(payload, lambda _qname: {"blast_radius": callers})
+
+        assert (tier, rit.cause_of(reason)) == ("FULL", rit.ImpactCause.FN_BLAST_FAILED)
+
+    @pytest.mark.parametrize(
+        ("exit_code", "stderr", "expected"),
+        [
+            pytest.param(0, b"", "LIGHT", id="successful-empty-blast-radius"),
+            pytest.param(1, b"", "FULL", id="failed-query-with-empty-blast-radius"),
+            pytest.param(0, b"\xff", "FULL", id="undecodable-provider-output"),
+        ],
+    )
+    def test_caller_subprocess_must_succeed_to_trim_review(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exit_code: int, stderr: bytes, expected: str
+    ) -> None:
+        """Run a provider that prints valid caller JSON and vary whether its execution actually succeeds."""
+        script = tmp_path / "provider.py"
+        script.write_text(
+            f"import sys\nprint({json.dumps({'blast_radius': []})!r})\n"
+            f"sys.stderr.buffer.write({stderr!r})\nraise SystemExit({exit_code})\n",
+            encoding="utf-8",
+        )
+        if os.name == "nt":
+            launcher = tmp_path / "codemap-py.cmd"
+            launcher.write_text(f'@"{sys.executable}" "{script}" %*\n', encoding="utf-8")
+        else:
+            launcher = tmp_path / "codemap-py"
+            launcher.write_text(f"#!{sys.executable}\n{script.read_text(encoding='utf-8')}", encoding="utf-8")
+            launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
+        monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+        payload = _payload(_module("src/pkg/core.py", "pkg.core::_prep"))
+
+        tier, reason = rit.classify(payload)
+
+        assert tier == expected
+        assert rit.cause_of(reason) == (rit.ImpactCause.FN_BLAST_FAILED if expected == "FULL" else None)
 
     def test_symbol_cap_exceeded_is_full(self) -> None:
         """More changed symbols than the query cap are not silently skipped; the run fails safe to FULL."""

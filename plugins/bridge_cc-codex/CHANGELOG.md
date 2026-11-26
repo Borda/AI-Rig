@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.18.0
+
+- Bridge envelopes report confidence or a specific reason it is unavailable.
+  - The peer lists each limit as `(-0.NN) <limit>` in `confidence_gaps`. The bridge derives the score for a complete result from those deductions. Missing, empty or malformed gaps preserve the findings and yield `unscored`. A full score requires an explicit `(-0.00)` line, and late cancellation withdraws the score.
+  - Single-call envelopes reject incompatible status and reason pairs, incomplete confidence fields, and scores that disagree with their deductions. Results saved before confidence was recorded still read as unscored with `not-recorded`.
+  - Split reviews validate each scope's final envelope before merging. They retain the original deductions in each row and tag merged gap strings with the scope number. Only the first lowest-scoring scope contributes deductions to a scored merge. An unscored scope is named with its status and reason, including quota exhaustion even when the overall result is partial.
+- `/bridge:review --partition-file PATH` reports the limits of the files and waves it covers. `against` now reviews the tracked diff against a commit. Use `paths` to include named untracked files. Skipped files appear with reasons and leave the partition unscored, even when every runnable group completes. Every wave of a multi-wave review is unscored, including the last. Callers can derive the partition score from the lowest group score only after every wave runs, every group has a score and no files were skipped.
+- Codex peer results come from the final completed agent message. If that message lacks a usable result, the bridge reports `empty-result`. JSONL events keep Unicode line separators inside their payloads.
+- `/bridge:setup` and `$bridge:setup` inspect the plugin inventory and apply approved configuration in the resolved workspace. Setup reclaims an old mutation marker only while holding the OS lock and removes only its own marker at release, so simultaneous setup attempts cannot claim the same mutation slot.
+- The bridge and native-question MCP servers reject malformed UTF-8 or oversized JSONL frames individually and can continue with the next request. Reverse bridge calls reject invalid `timeout_seconds` with a parameter error before launching the peer.
+- A stalled `implement` peer retains ownership of its paths until termination is confirmed. The caller can stop waiting at the deadline and report incomplete work, then inspect the worktree delta after a terminal peer status or confirmed cancellation permits editing again.
+
 ## 0.17.0
 
 - `/bridge:review --partition-file PATH` reviews a Git range, the working tree against a commit, or a file list too large for one call without the caller naming scopes, so an oversized review no longer ends as `output-limit` with no verdict:

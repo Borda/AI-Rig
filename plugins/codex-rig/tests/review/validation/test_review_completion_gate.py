@@ -565,6 +565,8 @@ def _finalize_parent_fallback(run: Path, *, independent_required: bool = False) 
             str(result_path),
             "--parent-thread-id",
             "thread",
+            "--extra-checks-failed",
+            "verification-readiness,independent-review-coverage",
             "--promote",
         ],
         capture_output=True,
@@ -635,6 +637,19 @@ def _find_target(reports_dir: Path) -> subprocess.CompletedProcess[str]:
     """Run the finder lookup CLI for pull request 123 below a reports directory."""
     argv = [sys.executable, str(FINDER), "--target", "#123", "--reports-dir", str(reports_dir)]
     return subprocess.run(argv, capture_output=True, text=True, check=False)
+
+
+def _with_status_axes(result: dict[str, Any]) -> dict[str, Any]:
+    """Add the status axes every fresh candidate carries, derived from the result's own gate status and decision."""
+    metadata = result["metadata"]
+    decision = metadata.get("review_decision")
+    metadata["status_axes"] = {
+        "schema_version": 1,
+        "gates_status": "pass" if result["status"] == "pass" else "fail",
+        "review_status": "assessed",
+        "review_decision": decision.get("recommendation") if isinstance(decision, dict) else None,
+    }
+    return result
 
 
 def _validate_assessed(validator: ModuleType, run: Path, result_name: str = "result.json") -> None:
@@ -1330,7 +1345,7 @@ class TestHandoffContract:
         result = _load_json(assessed_pr / "result.json")
         _rerender(assessed_pr, handoff, result)
         result_path = assessed_pr / filename
-        _save_json(result_path, result)
+        _save_json(result_path, _with_status_axes(result) if filename == "result.candidate.json" else result)
 
         with pytest.raises(LookupError, match=error):
             attempt(finder, assessed_pr, result_path)
@@ -1352,7 +1367,7 @@ class TestHandoffContract:
         """
         result = _apply_caller_contract_branch(assessed_pr)
         result_path = assessed_pr / filename
-        _save_json(result_path, result)
+        _save_json(result_path, _with_status_axes(result) if filename == "result.candidate.json" else result)
 
         with pytest.raises(LookupError, match="code-review-final-handoff-branch-mismatch"):
             attempt(finder, assessed_pr, result_path)

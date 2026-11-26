@@ -35,6 +35,7 @@ from _hook_payloads import (
     stop_payload,
     write_transcript,
 )
+from _text_io import bash_block_after, bash_path, write_lf
 
 HOOK = Path(__file__).resolve().parents[2] / "hooks" / "enforce-review-header.js"
 _ask_payload = functools.partial(ask_payload, "oss-review")
@@ -380,6 +381,34 @@ class TestStopGate:
         The final message holds the header table, so the turn may end.
         """
         assert _run(tmp_path, stop_payload(last_assistant_message=DELIVERED)) == {}
+
+    @pytest.mark.integration
+    @pytest.mark.skipif(shutil.which("bash") is None, reason="The reuse recipe runs in Bash")
+    def test_reuse_rearms_delivery_of_the_same_report(self, tmp_path: Path, written_run: Path) -> None:
+        """A prior delivery in this session cannot excuse a path-only response on the next reuse."""
+        assert _run(tmp_path, stop_payload(last_assistant_message=DELIVERED)) == {}
+        (tmp_path / SENTINEL_NAME).unlink()  # Step 0 starts a new invocation.
+        # LF only: the recipe reads it with `IFS= read -r`, which keeps a Windows carriage return in the path
+        write_lf(tmp_path / f"oss-review-prior-report-{CSID}", written_run.as_posix() + "\n")
+        preflight = HOOK.parents[1] / "skills/review/modes/preflight.md"
+        recipe = bash_block_after(preflight.read_text(encoding="utf-8"), "Selected (b)")
+        # the resolved path, never bare "bash": Windows process search finds System32's WSL launcher before Git Bash
+        bash = shutil.which("bash")
+        assert bash is not None
+        subprocess.run(
+            [bash, "-c", recipe],
+            env=os.environ
+            | {
+                "CLAUDE_CODE_SESSION_ID": CSID,
+                "TMPDIR": bash_path(tmp_path),
+                "CLAUDE_PLUGIN_ROOT": bash_path(HOOK.parents[1]),
+            },
+            check=True,
+        )
+        assert (
+            _run(tmp_path, stop_payload(last_assistant_message=f"Existing report: {written_run}")).get("decision")
+            == "block"
+        )
 
     @pytest.mark.parametrize(
         ("report_name", "sentinel_template"),

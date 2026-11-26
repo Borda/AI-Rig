@@ -9,18 +9,21 @@ Purpose:
     ``bridge_split.py --plan-file PATH [--workspace PATH] [--effort LEVEL] [--timeout-seconds N] [--run-id ID]
     [--untrusted-task]``. PATH is a JSON array of one to three non-empty review task strings. Outputs: exactly one JSON
     object on stdout, with ``status`` ``complete`` when every scope completed, ``partial`` when some did, otherwise
-    the shared child status (or ``blocked`` when they differ), one ``splits`` row per scope, and the scopes' findings
-    and blockers merged with the scope index. A scope that times out, is blocked or fails is a gap, never a verdict:
-    this script never re-sends it. Failure: an invalid plan or option prints ``{"status": "error", ...}`` and exits
-    2. Used by: the Claude Bridge review skill (``--split-file``).
+    the shared child status (or ``blocked`` when they differ), one ``splits`` row per scope, and the scopes' findings,
+    blockers and ``confidence_gaps`` merged with the scope index: every merged gap is a string, like a single call's,
+    with the scope number written into its limit (``(-0.20) split 2: tests not run``). ``confidence`` is the lowest
+    scope score only when every scope has one; otherwise it is ``null`` and ``confidence_null_reason`` names the cause
+    in the bridge envelope's code set. A scope that times out, is blocked or fails is a gap, never a verdict: this
+    script never re-sends it. Failure: an invalid plan or option prints ``{"status": "error", ...}`` and exits 2. Used
+    by: the Claude Bridge review skill (``--split-file``).
 
 Automatic partitioning:
     A caller that cannot name its scopes, such as a release audit over a whole commit range, passes
     ``--partition-file PATH`` instead. PATH is a JSON object with ``task`` (the review question every part shares)
     and one of ``range`` (``A..B`` or ``A...B``; both ends are resolved to commits at the start of every wave, and
-    the changed files are weighed by the lines each contributes), ``against`` (one commit: the working tree's changes
-    against it, new untracked files included, ``.temp`` and the partition file left out) or ``paths`` (workspace
-    files, weighed by their line counts). Files are
+    the changed files are weighed by the lines each contributes), ``against`` (one commit: tracked working-tree changes
+    against it, with ``.temp`` and the partition file left out) or ``paths`` (explicit workspace files, weighed by
+    their line counts). Files are
     packed first-fit, largest first, into groups of at most ``--max-weight`` lines, ``--max-files`` files and one
     child task's byte limit; a file larger than the line budget gets a group of its own and may still stop at the
     output limit, which its row reports. Groups run :data:`MAX_SPLITS` at a time, and ``--wave N`` (default 1) runs
@@ -31,6 +34,13 @@ Automatic partitioning:
     not the last reports ``partial`` with a ``remaining`` entry naming the groups of later waves. The digest binds
     the task, the resolved commits or file contents, the groups and the skipped files; waves after the first pass
     ``--expect-digest`` and are refused before any child runs when the partition changed.
+
+    Partition confidence:
+    One wave's rows cover only part of a partition, so when ``waves`` is above 1 no wave, the last one included, carries
+    a ``confidence``: each reports ``null`` with ``quota-exhausted`` (a group of that wave hit the provider stop) or
+    ``incomplete``. The caller derives the partition's score after the last wave from every wave's ``splits`` rows:
+    the lowest ``confidence``, only when every group of every wave has a number and no file was skipped. Skipped files
+    are named in the gaps and withhold the partition score, including for one wave.
 """
 
 from __future__ import annotations
@@ -53,6 +63,14 @@ from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from bridge_call import (
+    _GAP_LINE,
+    CONFIDENCE_FIELDS,
+    FINAL_STATUSES,
+    ConfidenceNullReason,
+    unscored_scope_gap,
+    validate_confidence_fields,
+)
 from bridge_task_path import SESSION_PATTERN
 
 #: Most scopes one split may run; Codex quota and the host's concurrency are shared, so the fan-out stays small.
@@ -83,7 +101,29 @@ SCOPE_BACKSTOP_SLACK_SECONDS = 5.0
 #: Directory, relative to the workspace, that holds the bridge's incident records.
 INCIDENT_STORE = Path(".temp") / "bridge" / "incidents"
 #: Envelope fields kept per scope; the full envelope and transcript stay with the child's own artifacts.
-KEPT_FIELDS = ("status", "findings", "blockers", "remaining", "incident", "duration_seconds", "effort", "run_id")
+KEPT_FIELDS = (
+    "status",
+    "findings",
+    "blockers",
+    "remaining",
+    "incident",
+    "duration_seconds",
+    "effort",
+    "run_id",
+    "confidence",
+    "confidence_gaps",
+    "confidence_null_reason",
+)
+#: Reason codes for a scope row the helper fills itself, matching the bridge envelope's closed set: a child that could
+#: not be launched, one that printed no usable envelope, an invocation the child refused, and the helper's own backstop.
+SCOPE_NOT_RUN = "peer-unavailable"
+SCOPE_NO_ENVELOPE = "empty-result"
+SCOPE_REFUSED_INVOCATION = "invalid-request"
+SCOPE_BACKSTOP = "timeout"
+#: The provider stop a merged envelope names first, as its ``incident`` does: it ends every later Codex call.
+QUOTA_REASON = "quota-exhausted"
+#: Reason code for skipped files or a wave that covers only part of the partition.
+INCOMPLETE_REASON = "incomplete"
 
 
 def _read_anchored(path: Path, flag: str = "--plan-file") -> str:
@@ -380,66 +420,21 @@ def _hidden_changes(
     return hidden
 
 
-def _untracked_weights(
-    workspace: Path, deadline: float, exclude: tuple[str, ...] = ()
-) -> tuple[dict[str, int], list[dict[str, str]], str]:
-    """Return the line count of each untracked, not ignored file, the ones with none, and one hash over their bytes.
-
-    A new file is part of a working-tree change that ``git diff`` does not list; binary files and anything that is not a
-    regular file have no line count and are returned as skipped.
-    """
-    listing = _git(workspace, ["ls-files", "--others", "--exclude-standard", "-z", *_pathspec(exclude)], deadline)
-    weights: dict[str, int] = {}
-    skipped: list[dict[str, str]] = []
-    digests: dict[str, str] = {}
-    for raw in listing.decode("utf-8", "surrogateescape").split("\0"):
-        if not raw:
-            continue
-        try:
-            name = _clean_path(raw)
-        except ValueError:
-            skipped.append({"path": ascii(raw)[1:-1], "reason": UNUSABLE_NAME})
-            continue
-        target = workspace / name
-        if target.is_symlink() or not target.is_file():
-            skipped.append({"path": name, "reason": "untracked and not a regular file"})
-            continue
-        digest, lines, binary = sha256(), 0, False
-        with target.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1 << 16), b""):
-                _remaining(deadline)
-                digest.update(chunk)
-                lines += chunk.count(b"\n")
-                binary = binary or b"\0" in chunk
-        digests[name] = digest.hexdigest()
-        if binary:
-            skipped.append({"path": name, "reason": "untracked binary file: no line count"})
-        else:
-            weights[name] = max(lines, 1)
-    pin = sha256(json.dumps(sorted(digests.items())).encode("utf-8")).hexdigest()
-    return weights, sorted(skipped, key=lambda item: item["path"]), pin
-
-
 def _path_weights(
     workspace: Path, paths: list[str], deadline: float
 ) -> tuple[dict[str, int], str, list[dict[str, str]]]:
     """Return the line count of each named text file, one hash over all names and bytes, and the binary files.
 
-    A file with a NUL byte has no line count and is returned as skipped, as in the diff-based sources.
+    Each distinct requested path stays in scope because aliases can have different diffs. A file with a NUL byte has no
+    line count and is returned as skipped, as in the diff-based sources.
     """
     weights: dict[str, int] = {}
     skipped: list[dict[str, str]] = []
     digests: dict[str, str] = {}
-    seen: set[tuple[int, int]] = set()
-    for raw in paths:
-        name = _clean_path(raw)
+    for name in dict.fromkeys(map(_clean_path, paths)):
         target = (workspace / name).resolve()
         if not target.is_relative_to(workspace) or not target.is_file():
             raise ValueError(f"partition path is not a file inside the workspace: {name}")
-        identity = (target.stat().st_dev, target.stat().st_ino)  # one file under every link, hard link and spelling
-        if identity in seen:
-            continue
-        seen.add(identity)
         digest, lines, binary = sha256(), 0, False
         with target.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1 << 16), b""):
@@ -501,11 +496,7 @@ def group_task(partition: Partition, index: int) -> str:
     if not partition.ranged:
         review = "Review only the files listed below."
     elif partition.scope.startswith("Working tree"):
-        review = (
-            "Review only what the working tree changes against that commit in the files listed below "
-            "(`git diff`; review whole a file `git diff` does not show, which is untracked and new, or shows only as "
-            "deleted while it still exists on disk)."
-        )
+        review = "Review only the tracked working-tree diff against that commit in the files listed below."
     else:
         review = "Review only what the range changes in the files listed below."
     return (
@@ -518,7 +509,7 @@ def group_task(partition: Partition, index: int) -> str:
 def _working_tree_listing(
     workspace: Path, against: str, partition_file: Path, deadline: float
 ) -> tuple[dict[str, int], list[dict[str, str]], str, str]:
-    """Return the weights, skipped files, scope text and pin for the working tree's changes against ``against``.
+    """Return the tracked changes against the named commit and bind them to the partition digest.
 
     ``.temp`` (where runs keep their artifacts) and the partition file are the review's own files and never part of the
     change; a submodule and a file git hides are skipped; a path appears once, as a group member or as skipped.
@@ -531,17 +522,14 @@ def _working_tree_listing(
         pass
     exclude = tuple(own)
     weights, skipped = _range_weights(workspace, commit, deadline, exclude)
-    tracked = sorted(weights)
     hidden = _hidden_changes(workspace, commit, deadline, exclude)
-    fresh, unlisted, fresh_pin = _untracked_weights(workspace, deadline, exclude)
-    weights.update(fresh)
     # A name shown escaped is a display form, never the path itself, so it can neither shadow nor be shadowed.
-    named = {(item["path"], item["reason"] == UNUSABLE_NAME): item for item in [*skipped, *unlisted, *hidden]}
+    named = {(item["path"], item["reason"] == UNUSABLE_NAME): item for item in [*skipped, *hidden]}
     skipped = sorted(
         (item for (name, escaped), item in named.items() if escaped or name not in weights),
         key=lambda item: item["path"],
     )
-    pin = f"{_diff_pin(workspace, commit, deadline, exclude, tracked)}+{fresh_pin[:16]}"
+    pin = _diff_pin(workspace, commit, deadline, exclude, sorted(weights))
     return weights, skipped, f"Working tree against {commit}", pin
 
 
@@ -550,7 +538,7 @@ def read_partition(path: Path, workspace: Path, max_weight: int, max_files: int)
 
     Raises:
         ValueError: The file is unsafe or malformed, names none or more than one of ``range``, ``against`` and
-            ``paths``, lists no file with a line count, the listing passes its budget, or the shared task leaves no
+            ``paths``, lists no files, the listing passes its budget, or the shared task leaves no
             room for a file name.
     """
     spec = _read_json_file(path, workspace, "--partition-file")
@@ -578,11 +566,11 @@ def read_partition(path: Path, workspace: Path, max_weight: int, max_files: int)
             raise ValueError(f'--partition-file "paths" lists more than {MAX_PARTITION_PATHS} files')
         weights, pin, skipped = _path_weights(workspace, paths, deadline)
         scope = "Scope: the files the caller named"
-    if not weights:
-        raise ValueError(f"--partition-file names no file with a line count to review ({len(skipped)} skipped)")
+    if not weights and not skipped:
+        raise ValueError("--partition-file names no files to review")
     empty = Partition(spec["task"].strip(), scope, pin, [[]], skipped, paths is None)
     budget = TASK_BYTE_LIMIT - len(group_task(empty, 1).encode("utf-8")) - 16
-    if budget < 1 or any(_name_cost(name) > budget for name in weights):
+    if weights and (budget < 1 or any(_name_cost(name) > budget for name in weights)):
         raise ValueError("--partition-file task is too long to share across parts with these file names")
     return empty._replace(groups=pack_groups(weights, max_weight, max_files, budget))
 
@@ -679,21 +667,122 @@ def _run_scope(index: int, task: str, options: argparse.Namespace) -> dict[str, 
         if options.untrusted_task:
             command.append("--untrusted-task")
         returncode, stdout = _supervise(command, budget)
-        envelope = json.loads(stdout.strip().splitlines()[-1]) if stdout.strip() else {}
-        if not isinstance(envelope, dict) or not envelope:
-            row.update(status="error", blockers=[f"scope {index} printed no envelope (exit {returncode})"])
+        envelope = _scope_envelope(stdout)
+        if envelope is None:
+            row.update(status="error", blockers=[f"scope {index} printed no usable envelope (exit {returncode})"])
+            _unscored(row, SCOPE_NO_ENVELOPE)
         else:
             row.update({key: envelope[key] for key in KEPT_FIELDS if key in envelope})
             row.setdefault("status", "error")
             if envelope.get("error"):
                 row["blockers"] = [str(envelope["error"])]
+                _unscored(row, SCOPE_REFUSED_INVOCATION)
     except subprocess.TimeoutExpired:
         row.update(status="timeout", blockers=[f"scope {index} passed its {budget:g} second backstop and was stopped"])
+        _unscored(row, SCOPE_BACKSTOP)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         row.update(status="error", blockers=[f"scope {index} did not run: {error}"])
+        _unscored(row, SCOPE_NOT_RUN)
     finally:
         path.unlink(missing_ok=True)
     return row
+
+
+def _scope_envelope(stdout: str) -> dict | None:
+    """Read the child's final stdout line and validate its confidence before admitting the scope."""
+    try:
+        envelope = json.loads(stdout.strip().rsplit("\n", 1)[-1])
+        if not isinstance(envelope, dict) or not envelope:
+            return None
+        if envelope.get("error"):
+            return envelope
+        status = envelope.get("status")
+        if not isinstance(status, str) or status not in FINAL_STATUSES:
+            return None
+        present = envelope.keys() & set(CONFIDENCE_FIELDS)
+        if not present:
+            _unscored(envelope, ConfidenceNullReason.NOT_RECORDED.value)
+        elif present != set(CONFIDENCE_FIELDS):
+            return None
+        validate_confidence_fields(envelope)
+    except (ValueError, RecursionError):
+        return None
+    return envelope
+
+
+def _unscored(row: dict[str, object], reason: str) -> None:
+    """Mark a scope row the helper filled itself as carrying no confidence, with the cause in the bridge's code set."""
+    row.update(confidence=None, confidence_gaps=[], confidence_null_reason=reason)
+
+
+def _scoped_gap(index: object, gap: object, *, keep_deduction: bool) -> str:
+    """Name the scope in a gap line and format its deduction as the original amount or zero.
+
+    A well-formed line starts with its original deduction or ``(-0.00)`` for an informational gap. A malformed line
+    gains the scope before the whole text, so no deduction is invented for it.
+
+    Examples:
+        >>> _scoped_gap(2, "(-0.20) tests not run", keep_deduction=True)
+        '(-0.20) split 2: tests not run'
+        >>> _scoped_gap(2, "(-0.20) tests not run", keep_deduction=False)
+        '(-0.00) split 2: tests not run'
+        >>> _scoped_gap(3, "tests not run", keep_deduction=True)
+        'split 3: tests not run'
+    """
+    text = gap if isinstance(gap, str) else str(gap)
+    if _GAP_LINE.fullmatch(text) is None:
+        return f"split {index}: {text}"
+    deduction, limit = text.split(" ", 1)
+    if not keep_deduction:
+        deduction = "(-0.00)"
+    return f"{deduction} split {index}: {limit}"
+
+
+def _merged_confidence(rows: list[dict[str, object]]) -> tuple[float | None, str | None]:
+    """Return the split's confidence: the lowest scope score when every scope has one, else no number and a cause.
+
+    The weakest scope bounds the whole review, and a scope without a score is a coverage gap no other scope can stand in
+    for, so the split carries a number only when every scope does. The cause is a quota stop when any scope hit one,
+    like the merged ``incident``; otherwise it is the first unscored scope's code.
+
+    Examples:
+        >>> _merged_confidence([{"confidence": 0.9}, {"confidence": 0.8}])
+        (0.8, None)
+        >>> _merged_confidence([{"confidence": 0.9}, {"confidence": None, "confidence_null_reason": "timeout"}])
+        (None, 'timeout')
+    """
+    scores = [row.get("confidence") for row in rows]
+    if rows and all(isinstance(score, (int, float)) and not isinstance(score, bool) for score in scores):
+        return min(scores), None  # type: ignore[type-var]
+    reasons = [
+        row.get("confidence_null_reason")
+        for row in rows
+        if not isinstance(row.get("confidence"), (int, float)) or isinstance(row.get("confidence"), bool)
+    ]
+    if QUOTA_REASON in reasons:
+        return None, QUOTA_REASON
+    named = [
+        reason for reason in reasons if isinstance(reason, str) and reason != ConfidenceNullReason.NOT_RECORDED.value
+    ]
+    # An aggregate has accounting of its own even when its first unscored scope is a legacy result.
+    return None, named[0] if named else INCOMPLETE_REASON
+
+
+def _merged_gaps(rows: list[dict[str, object]], confidence: float | None) -> list[str]:
+    """Keep scope gaps and name every scope that withheld a score."""
+    # A tie contributes the same shortfall only once. The original rows retain every deduction for partition callers.
+    lowest = next(row for row in rows if row["confidence"] == confidence) if confidence is not None else None
+    gaps: list[str] = []
+    for row in rows:
+        index = row["index"]
+        unscored = unscored_scope_gap(row)
+        if unscored is not None:
+            gaps.append(unscored)
+        gaps.extend(
+            _scoped_gap(index, gap, keep_deduction=lowest is None or row is lowest)
+            for gap in row.get("confidence_gaps") or []
+        )
+    return gaps
 
 
 def _split_incident(rows: list[dict[str, object]], workspace: Path | None) -> str | None:
@@ -721,7 +810,7 @@ def _split_incident(rows: list[dict[str, object]], workspace: Path | None) -> st
 def merge(rows: list[dict[str, object]], workspace: Path | None = None) -> dict[str, object]:
     """Fold the per-scope rows into one envelope; a gap in any scope is visible, never absorbed into a pass."""
     statuses = [str(row.get("status")) for row in rows]
-    if all(status == "complete" for status in statuses):
+    if statuses and all(status == "complete" for status in statuses):
         status = "complete"
     elif any(status in {"complete", "partial"} for status in statuses):
         status = "partial"  # a scope that answered part of its question is completed with a gap, never hidden
@@ -737,14 +826,20 @@ def merge(rows: list[dict[str, object]], workspace: Path | None = None) -> dict[
         for finding in row.get("findings") or []:
             findings.append({"split": row["index"], "finding": finding})
         blockers.extend(f"split {row['index']}: {text}" for text in row.get("blockers") or [])
-    return {
+    confidence, null_reason = _merged_confidence(rows)
+    output = {
         "status": status,
         "splits": rows,
         "findings": findings,
         "blockers": blockers,
         "remaining": remaining,
         "incident": _split_incident(rows, workspace),
+        "confidence": confidence,
+        "confidence_gaps": _merged_gaps(rows, confidence),
+        "confidence_null_reason": null_reason,
     }
+    validate_confidence_fields(output, merged=True)
+    return output
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -781,7 +876,7 @@ def _select_scopes(options: argparse.Namespace) -> tuple[list[tuple[int, str]], 
         raise ValueError(
             f"the partition changed since the first wave (digest {digest}, expected {options.expect_digest})"
         )
-    waves = -(-len(partition.groups) // MAX_SPLITS)
+    waves = max(1, -(-len(partition.groups) // MAX_SPLITS))
     if not 1 <= options.wave <= waves:
         raise ValueError(f"--wave must be between 1 and {waves} for this partition")
     first = (options.wave - 1) * MAX_SPLITS + 1
@@ -800,17 +895,41 @@ def _select_scopes(options: argparse.Namespace) -> tuple[list[tuple[int, str]], 
 
 
 def account_for_later_waves(output: dict[str, object]) -> dict[str, object]:
-    """Report groups of waves not yet run: a clean wave becomes ``partial`` and a ``remaining`` entry names them.
+    """Account for coverage outside the reviewed groups of a partition wave.
 
-    A caller that reads only ``status`` must never take the first wave of several for a finished review.
+    A caller that reads only ``status`` must never take the first wave of several for a finished review, so a clean wave
+    with later groups becomes ``partial`` and a ``remaining`` entry names them. A caller that reads only ``confidence``
+    must never take one wave's score for the whole partition's, and the last wave is no exception: it covers only its
+    own groups, so an earlier wave's lower or missing score would stay invisible. Every wave of a partition with more
+    than one wave therefore carries no number; its code is ``quota-exhausted`` when a group of the wave hit that stop
+    and ``incomplete`` otherwise. Skipped files also make a successful wave partial and withhold its score.
+
+    Examples:
+        >>> last = {"status": "complete", "wave": 3, "waves": 3, "splits": [],
+        ...         "confidence": 0.95, "confidence_null_reason": None}
+        >>> result = account_for_later_waves(last)
+        >>> (result["confidence"], result["confidence_null_reason"])
+        (None, 'incomplete')
     """
     later = output.pop("later_groups", None)
+    skipped = output.get("skipped") or []
+    if (later or skipped) and output.get("status") == "complete":
+        output["status"] = "partial"
     if later:
-        if output.get("status") == "complete":
-            output["status"] = "partial"
         remaining = list(output.get("remaining") or [])  # type: ignore[call-overload]
         remaining.append({"waves": [int(output["wave"]) + 1, output["waves"]], "groups": later})  # type: ignore[call-overload]
         output["remaining"] = remaining
+    multi_wave = int(output.get("waves") or 1) > 1  # type: ignore[call-overload]
+    if multi_wave or skipped:
+        output["confidence"] = None
+        quota = output.get("confidence_null_reason") == QUOTA_REASON
+        output["confidence_null_reason"] = QUOTA_REASON if quota else INCOMPLETE_REASON
+        gaps = list(output.get("confidence_gaps") or [])  # type: ignore[call-overload]
+        if multi_wave:
+            gaps.append(f"wave {output['wave']} of {output['waves']}: partition coverage requires every wave")
+        gaps.extend(f"skipped {item['path']}: {item['reason']}" for item in skipped)  # type: ignore[union-attr]
+        output["confidence_gaps"] = gaps
+        validate_confidence_fields(output, merged=True)
     return output
 
 
@@ -823,7 +942,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError(f"--timeout-seconds must be above 0 and at most {DEFAULT_SOFT_SECONDS:g} for a split")
         options.run_id = options.run_id or f"split-{uuid4().hex[:12]}"
         indexed, extra = _select_scopes(options)
-        with ThreadPoolExecutor(max_workers=len(indexed)) as pool:
+        with ThreadPoolExecutor(max_workers=max(1, len(indexed))) as pool:
             rows = list(pool.map(lambda item: _run_scope(item[0], item[1], options), indexed))
         output = account_for_later_waves({**merge(rows, options.workspace), **extra})
         code = 0

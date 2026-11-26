@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _file_modes import _file_modes_supported
 from _hook_env import _bash_runs_posix_script
 
 _MOD_PATH = Path(__file__).resolve().parent.parent.parent / "bin" / "propagate_shared.py"
@@ -108,6 +109,32 @@ class TestApply:
         assert (tmp_path / "b" / "hook.js").read_text() == "NEW\n"
         assert ps.check(tmp_path, _manifest()) == []
 
+    @pytest.mark.skipif(not _file_modes_supported(), reason="POSIX file modes are unavailable")
+    @pytest.mark.parametrize(
+        "copy_mode",
+        [
+            pytest.param(0o645, id="owner-and-group"),
+            pytest.param(0o655, id="owner"),
+            pytest.param(0o745, id="group"),
+            pytest.param(0o754, id="other"),
+        ],
+    )
+    def test_repairs_each_execute_bit(self, tmp_path: Path, copy_mode: int) -> None:
+        """Drift detection and propagation preserve all three execute bits.
+
+        Every copy has identical bytes and at least one execute bit. The matching control differs only in write bits.
+        """
+        _tree(tmp_path, "X\n", "X\n", "X\n")
+        (tmp_path / "a" / "hook.js").chmod(0o755)
+        copy = tmp_path / "b" / "hook.js"
+        copy.chmod(copy_mode)
+        (tmp_path / "c" / "hook.js").chmod(0o775)
+
+        assert ps.check(tmp_path, _manifest()) == ["b/hook.js differs from canonical a/hook.js"]
+        assert ps.apply(tmp_path, _manifest()) == ["b/hook.js"]
+        assert copy.stat().st_mode & 0o111 == 0o111
+        assert ps.check(tmp_path, _manifest()) == []
+
     @pytest.mark.parametrize("encoding", ["cp1252", "ascii"])
     def test_noop_reports_success_on_legacy_stdout(
         self,
@@ -149,6 +176,30 @@ class TestMain:
         _tree(tmp_path, "X\n", "OLD\n", "X\n")
         ps.main(["--apply", "--root", str(tmp_path)])
         assert ps.main(["--root", str(tmp_path)]) == 0
+
+    @pytest.mark.parametrize("existing_copy", [pytest.param("NEW\n", id="clean"), pytest.param("OLD\n", id="drifted")])
+    def test_apply_names_missing_canonicals_before_writing(
+        self,
+        tmp_path: Path,
+        synthetic_manifest: list[dict[str, object]],
+        capsys: pytest.CaptureFixture[str],
+        existing_copy: str,
+    ) -> None:
+        """Apply reports every unavailable canonical and leaves existing copies untouched.
+
+        A missing file and a directory in place of a file invalidate the manifest even when another copy could sync.
+        """
+        _tree(tmp_path, "NEW\n", existing_copy, "NEW\n")
+        (tmp_path / "directory.js").mkdir()
+        synthetic_manifest.extend(
+            [{"canonical": "missing.js", "copies": ["copy.js"]}, {"canonical": "directory.js", "copies": []}]
+        )
+
+        assert ps.main(["--apply", "--root", str(tmp_path)]) == 1
+        output = capsys.readouterr()
+        assert output.out == ""
+        assert "canonical missing: missing.js, directory.js" in output.err
+        assert (tmp_path / "b" / "hook.js").read_text() == existing_copy
 
 
 @pytest.mark.parametrize(

@@ -11,6 +11,7 @@ unless ``--tail N`` requests only the last N lines, using the bounded buffer sha
 
 Usage:
     python dev_run_tests.py {pytest|suite} [--tail N] [--] [ARGS...]
+    python dev_run_tests.py pytest --env RECEIPT [--tail N] [--] [ARGS...]
 
 Exit codes:
     0 — tests passed.
@@ -40,6 +41,9 @@ import shlex
 import subprocess
 import sys
 from collections import deque
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
 from shutil import which
 
 from dev_run_dir import read_sentinel, write_sentinel
@@ -101,6 +105,9 @@ def _parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser = _Parser(description=__doc__, add_help=False, allow_abbrev=False)
     parser.add_argument("mode", choices=("pytest", "suite"))
     parser.add_argument("--tail", type=int, default=None, metavar="N", help="Keep only the last N output lines.")
+    parser.add_argument(
+        "--env", type=Path, metavar="RECEIPT", help="Use a provisioned environment for targeted pytest."
+    )
     boundary = argv.index("--") if "--" in argv else len(argv)
     options, extra = parser.parse_known_args(argv[:boundary])
     extra += argv[boundary + 1 :]
@@ -170,6 +177,39 @@ def _run_stream(argv: list[str]) -> tuple[int, list[str]]:
         return proc.wait(), list(recent)
 
 
+def _provisioned_python(mode: str, command: str, receipt: Path) -> str:
+    """Resolve a provisioner receipt only for a directly replaceable pytest command."""
+    if mode != "pytest" or command not in {"pytest", "python -m pytest"}:
+        raise ValueError("--env requires an allowlisted pytest or python -m pytest command in pytest mode")
+    # Ordinary test runs do not need to load the local provisioner.
+    from dev_env_provision import receipt_python
+
+    return receipt_python(receipt)
+
+
+@contextmanager
+def _retry_pythonpath(provisioned: bool) -> Iterator[None]:
+    """Put the project's source roots first on ``PYTHONPATH`` while a provisioned retry runs, then restore it.
+
+    The provisioner never installs the project, so without them a src-layout package would not import in the retry. The
+    child inherits this process's environment, so the change is scoped to the launch and undone afterwards.
+    """
+    if not provisioned:
+        yield
+        return
+    from dev_env_provision import retry_pythonpath
+
+    previous = os.environ.get("PYTHONPATH")
+    os.environ["PYTHONPATH"] = retry_pythonpath(Path.cwd(), previous)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("PYTHONPATH", None)
+        else:
+            os.environ["PYTHONPATH"] = previous
+
+
 def main(argv: list[str] | None = None) -> int:
     """Validate the session command and execute the requested test gate.
 
@@ -191,6 +231,18 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_NO_RUN
 
 
+def _launch(child_argv: list[str], tail: int | None, *, provisioned: bool) -> tuple[int, list[str]]:
+    """Run the child, streaming its output or printing only its last ``tail`` lines; return status and recent lines."""
+    with _retry_pythonpath(provisioned):
+        if tail is None:
+            return _run_stream(child_argv)
+        code, recent = run_tail(child_argv, tail_lines=max(tail, _RECENT_LINES))
+    shown = recent[len(recent) - tail :] if tail else []
+    if shown:
+        _emit("\n".join(shown))
+    return code, recent
+
+
 def _run(argv: list[str]) -> int:
     """Resolve the allowlisted command, run it, and map the outcome to the documented status."""
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
@@ -208,19 +260,16 @@ def _run(argv: list[str]) -> int:
         print(f"dev_run_tests: rejected unsafe {name}: {command}", file=sys.stderr)
         return EXIT_NO_RUN
     parts = shlex.split(command)
-    resolved = which(parts[0])
+    if options.env is None:
+        resolved = which(parts[0])
+    else:
+        resolved = _provisioned_python(options.mode, command, options.env)
+        parts = ["python", "-m", "pytest"]
     if resolved is None:
         print(f"dev_run_tests: executable not found on PATH: {parts[0]}", file=sys.stderr)
         return EXIT_NO_RUN
     try:
-        child_argv = [resolved, *parts[1:], *extra]
-        if options.tail is None:
-            code, recent = _run_stream(child_argv)
-        else:
-            code, recent = run_tail(child_argv, tail_lines=max(options.tail, _RECENT_LINES))
-            shown = recent[len(recent) - options.tail :] if options.tail else []
-            if shown:
-                _emit("\n".join(shown))
+        code, recent = _launch([resolved, *parts[1:], *extra], options.tail, provisioned=options.env is not None)
     except OSError as exc:
         print(f"dev_run_tests: could not launch {parts[0]}: {exc}", file=sys.stderr)
         return EXIT_NO_RUN

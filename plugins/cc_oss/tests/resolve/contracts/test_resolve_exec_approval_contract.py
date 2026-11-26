@@ -57,7 +57,7 @@ def decide() -> list[str]:
 def _auto_bind(decide: list[str]) -> str:
     """Return the only Decide bind line: the automatic approval for a clean scan."""
     (bind,) = [
-        line for line in decide if "untrusted_code_guard.py" in line and " bind " in line and "--tier" not in line
+        line for line in decide if "untrusted_code_guard.py" in line and " record " in line and "--tier" not in line
     ]
     return bind
 
@@ -153,19 +153,19 @@ def _answer_block(word: str) -> list[str]:
 
 def test_sandbox_answer_binds_without_unsandboxed() -> None:
     """Answering ``sandbox`` binds the default tier; only the unsandboxed answer adds the decision."""
-    bind = next(line for line in _answer_block("sandbox") if " bind " in line)
+    bind = next(line for line in _answer_block("sandbox") if " record " in line)
     assert not any(flag in bind for flag in ("--tier", "--decision", "unsandboxed"))
     assert '|| { echo "! BLOCKED' in bind
     block = _answer_block("sandbox")
-    assert _index(block, " bind ") < _index(block, "echo sandbox >")
+    assert _index(block, " record ") < _index(block, "echo sandbox >")
 
 
 def test_unsandboxed_answer_records_the_explicit_decision() -> None:
     """Only the explicit ``Run without sandbox`` answer binds ``--tier env-only --decision unsandboxed``."""
     block = _answer_block("unsandboxed")
-    bind = next(line for line in block if " bind " in line)
+    bind = next(line for line in block if " record " in line)
     assert "--tier env-only --decision unsandboxed" in bind
-    assert _index(block, " bind ") < _index(block, "echo unsandboxed >")
+    assert _index(block, " record ") < _index(block, "echo unsandboxed >")
 
 
 def test_deny_answer_records_no_approval() -> None:
@@ -295,7 +295,7 @@ def test_a_stale_refusal_rebinds_at_the_commit_it_was_about() -> None:
     assert _index(stale, "git rev-parse HEAD > ") < _index(stale, "echo stale >")
     for word in ("sandbox", "unsandboxed"):
         block = _answer_block(word)
-        bind = next(line for line in block if " bind " in line)
+        bind = next(line for line in block if " record " in line)
         assert '--head "$_BIND_HEAD"' in bind
         assert any("pr-code-rebind-head.txt" in line and "_BIND_HEAD=" in line for line in block[: block.index(bind)])
     prelude = "\n".join(_lines("modes/dispatch-prelude.md"))
@@ -337,7 +337,7 @@ def test_the_prelude_check_fence_blocks_on_a_missing_impl_dir() -> None:
 def test_the_sandbox_flag_binds_the_sandbox_tier_only_after_the_exact_check_word(decide: list[str]) -> None:
     """Under ``--sandbox`` the bind names ``--tier sandbox`` and sits inside the ``sandbox`` arm of the check, never
     beside an unsandboxed decision."""
-    (bind,) = [line for line in decide if " bind " in line and "--tier sandbox" in line]
+    (bind,) = [line for line in decide if " record " in line and "--tier sandbox" in line]
     assert "unsandboxed" not in bind
     arm = _index(decide, "sandbox)")
     assert "check-sandbox" in "\n".join(decide[:arm])

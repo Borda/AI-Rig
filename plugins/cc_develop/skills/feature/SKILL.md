@@ -73,6 +73,14 @@ python "$PLUGIN_ROOT/bin/dev_load_shared.py" runner-detection.md  # timeout: 500
 
 Sets `$TEST_CMD` (full suite) and `$PYTEST_CMD` (pytest flags). Run at skill start.
 
+If a targeted Python test fails to import a declared package, load and follow the shared recovery instructions before interpreting the failure.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name develop) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "$PLUGIN_ROOT/bin/dev_load_shared.py" env-provision.md
+```
+
 **Language preflight gate**: apply §Language preflight gate from `runner-detection.md` (loaded above) — sets `NON_PY` and runs the abort/continue question.
 
 <!--

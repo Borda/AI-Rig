@@ -93,17 +93,19 @@ def foundry_hook_roots(tmp_path: Path, request: pytest.FixtureRequest) -> list[P
 _skip_without_symlinks = pytest.mark.skipif(not _symlinks_supported(), reason="requires symbolic link support")
 
 
-def _git(*args: str, cwd: Path) -> None:
-    """Run one git command in ``cwd`` with a throwaway identity, failing loudly."""
+def _git(*args: str, cwd: Path) -> str:
+    """Run Git with a throwaway identity and return its standard output."""
     # No background maintenance: its lock file appears in .git/objects while the template checkout is copied.
-    subprocess.run(
+    proc = subprocess.run(
         ["git", "-c", "user.name=Test", "-c", "user.email=test@test.com", "-c", "maintenance.auto=false", *args],
         cwd=cwd,
         check=True,
         capture_output=True,
+        encoding="utf-8",
         timeout=30,
         env=_clean_env(),
     )
+    return proc.stdout.strip()
 
 
 @pytest.fixture(scope="module", name="checkout_template")
@@ -1152,6 +1154,10 @@ class TestSelfGrantGuard:
             pytest.param("Write", {"file_path": "notes/claude-push-approval.json"}, id="push-token"),
             pytest.param("Write", {"file_path": "notes/claude-push-run-approval.json"}, id="push-run-token"),
             pytest.param("Write", {"file_path": "notes/claude-gh-write-approval.json"}, id="gh-write-token"),
+            pytest.param("Edit", {"file_path": ".git/claude-push-approval.json.slot-0123456789abcdef"}, id="push-slot"),
+            pytest.param(
+                "Write", {"file_path": ".git/claude-gh-write-approval.json.slot-0123456789abcdef"}, id="gh-write-slot"
+            ),
             pytest.param("Write", {"file_path": f"notes/claude-git-approval.j{LONG_S}on"}, id="long-s-case-fold"),
             pytest.param("Write", {"file_path": f"notes/claude-{FULLWIDTH_G}it-approval.json"}, id="fullwidth-letter"),
             pytest.param("Write", {"file_path": f"notes/{GRANT_NAME}."}, id="win32-trailing-dot"),
@@ -1402,6 +1408,212 @@ class TestSelfGrantGuard:
     @pytest.mark.parametrize(
         "command",
         [
+            pytest.param(f"case $R in\n  */*) cp x .git/{GRANT_NAME} ;;\nesac", id="clause-body-copy-onto-record"),
+            pytest.param(f"case $R in\n  */*) echo a > .git/{GRANT_NAME} ;;\nesac", id="clause-body-redirect"),
+            pytest.param(
+                "case $R in\n  a) echo ;;\n  */*) node hooks/approval-guar?.js ;;\nesac", id="clause-body-writer-glob"
+            ),
+            pytest.param("x=$(cp x in .g*/*)", id="in-word-outside-case-keeps-glob"),
+            pytest.param("x=$(true\nhooks/approval-guar?.js)", id="substitution-closing-line-keeps-writer-glob"),
+            pytest.param("cp x */*", id="plain-glob-operand"),
+            pytest.param(f"(tee a case in .git/{GRANT_NAME})", id="case-words-as-operands-in-subshell"),
+            pytest.param(f"x=$(cp src case in .git/{GRANT_NAME})", id="case-words-as-operands-in-substitution"),
+            pytest.param(f'(tee "case" in .git/{GRANT_NAME})', id="quoted-case-word-as-operand"),
+            pytest.param(f"(sort -o my-case in .git/{GRANT_NAME})", id="hyphenated-case-word-as-operand"),
+            pytest.param("x=$(cp src case in .g*/*)", id="case-words-before-git-dir-glob"),
+            pytest.param("(true \\;; hooks/approval-guard.js)", id="escaped-semicolon-is-no-clause-end"),
+            pytest.param("(true # ;;\nhooks/approval-guard.js)", id="clause-end-in-comment"),
+            pytest.param("(true # ; case x in\nhooks/approval-guard.js)", id="case-head-in-comment"),
+            pytest.param(f"tee .git/@(x;case y in {GRANT_NAME}|{GRANT_NAME}) esac", id="case-head-inside-glob-group"),
+            pytest.param("cat <<'x)'\ncase y in\nx)\n(hooks/approval-guard.js)\nesac", id="case-head-in-heredoc-body"),
+        ],
+    )
+    def test_case_pattern_exemption_keeps_clause_bodies_checked(self, run_hook: Callable, command: str) -> None:
+        """Only the pattern of a real ``case`` clause is exempt; everything else a command holds is still judged.
+
+        A complete admitted clause leaves its body visible. Case keywords in operands and case-like text in unsupported
+        syntax also leave their words visible, so the usual checks still catch write targets and writers.
+        """
+        proc = run_hook(_pre("Bash", {"command": command}))
+        assert proc.returncode == 2, proc.stderr
+
+    @pytest.mark.parametrize(
+        "pattern",
+        [
+            pytest.param('"$(printf value)"', id="quoted-substitution"),
+            pytest.param("${VALUE:-$(printf value)}", id="parameter-operand"),
+            pytest.param('"`printf value`"', id="backticks"),
+            pytest.param('"$((1 + $(printf 2)))"', id="arithmetic"),
+            pytest.param('"$[1 + 2]"', id="legacy-arithmetic"),
+            pytest.param('"${VALUE}"', id="braced-parameter"),
+            pytest.param('"$?"', id="special-parameter"),
+            pytest.param('"$VALUE"', id="named-parameter-in-double-quotes"),
+            pytest.param('"$VALUES[2]"', id="unbraced-parameter-subscript"),
+            pytest.param('"$Valuesé[2]"', id="locale-parameter-subscript"),
+            pytest.param("$VALUE:h", id="unbraced-parameter-modifier"),
+            pytest.param('$"value"', id="locale-translated-quote"),
+            pytest.param('"$(git rev-parse --git-dir)"', id="git-directory-substitution"),
+            pytest.param("'$(literal)'", id="literal-expansion-marker"),
+        ],
+    )
+    def test_case_pattern_expansion_keeps_all_patterns_visible(self, run_hook: Callable, pattern: str) -> None:
+        """An unmodeled second alternative leaves even the first pattern to the normal glob checks."""
+        proc = run_hook(_pre("Bash", {"command": f"case $R in */* | {pattern}) echo a ;; esac"}))
+        assert proc.returncode == 2, proc.stderr
+
+    def test_case_pattern_expansion_keeps_earlier_clause_visible(self, run_hook: Callable) -> None:
+        """An unmodeled later pattern also cancels the exemption for an earlier clause."""
+        command = 'case $R in */*) echo a ;; base | "${VALUE}") echo b ;; esac'
+        proc = run_hook(_pre("Bash", {"command": command}))
+        assert proc.returncode == 2, proc.stderr
+
+    @pytest.mark.parametrize(
+        ("subject", "suffix"),
+        [
+            pytest.param('"line\rbreak"', "", id="carriage-return-in-subject"),
+            pytest.param('"line"', " # note\r", id="carriage-return-after-case"),
+        ],
+    )
+    def test_case_pattern_with_carriage_return_keeps_writer_name_visible(
+        self, run_hook: Callable, subject: str, suffix: str
+    ) -> None:
+        """A raw carriage return anywhere leaves a literal writer-shaped pattern to the usual checks."""
+        command = f"case {subject} in\n  hooks/approval-guard.js) echo match ;;\nesac{suffix}"
+        proc = run_hook(_pre("Bash", {"command": command}))
+        assert proc.returncode == 2, proc.stderr
+        assert "a segment naming the approval writer" in proc.stderr
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param(
+                "cat <<'E\\'\nE\ncase x in\n  hooks/approval-guard.js) echo match ;;\nesac\nE\\",
+                id="quoted-delimiter-keeping-a-backslash",
+            ),
+            pytest.param(
+                "cat <<EOF\nprefix\\\nEOF\ncase x in\n  hooks/approval-guard.js) echo match ;;\nesac\nEOF",
+                id="body-line-continued-into-the-delimiter",
+            ),
+            pytest.param(
+                "cat <<$'E'\nE\ncase x in\n  hooks/approval-guard.js) echo match ;;\nesac\nE",
+                id="ansi-quoted-delimiter",
+            ),
+        ],
+    )
+    def test_case_pattern_with_here_document_keeps_writer_name_visible(self, run_hook: Callable, command: str) -> None:
+        """A here-document anywhere leaves a literal writer-shaped pattern to the usual checks.
+
+        Bash and zsh derive the delimiter by quote and backslash removal and join a backslash-newline before comparing a
+        body line with it, so the reader cannot tell here-document data from a real clause.
+        """
+        proc = run_hook(_pre("Bash", {"command": command}))
+        assert proc.returncode == 2, proc.stderr
+        assert "a segment naming the approval writer" in proc.stderr
+
+    @pytest.mark.parametrize(
+        "subject",
+        [
+            pytest.param("${VALUE:-{a} b}", id="nested-brace-parameter"),
+            pytest.param("\"${VALUE:-'}'}\"", id="quote-inside-braced-parameter"),
+            pytest.param("$(printf x)", id="command-substitution"),
+            pytest.param("$((1 + 2))", id="arithmetic-expansion"),
+            pytest.param("$[1 + 2]", id="legacy-arithmetic-expansion"),
+            pytest.param("`printf x`", id="backtick-substitution"),
+            pytest.param("<(printf x)", id="input-process-substitution"),
+            pytest.param(">(true)", id="output-process-substitution"),
+            pytest.param("$?", id="special-parameter"),
+            pytest.param("$VALUE[1]", id="unbraced-parameter-subscript"),
+            pytest.param("$VALUE:h", id="unbraced-parameter-modifier"),
+            pytest.param('"$VALUE"', id="parameter-in-double-quotes"),
+            pytest.param('"a\\tb"', id="backslash-in-double-quotes"),
+            pytest.param("$'a\\tb'", id="ansi-c-quote"),
+            pytest.param('$"value"', id="locale-quote"),
+            pytest.param("a\\ b", id="unquoted-escape"),
+            pytest.param("a\\\nb", id="unquoted-line-continuation"),
+            pytest.param("'a\\\nb'", id="quoted-line-continuation"),
+            pytest.param("'a#b'", id="quoted-comment-marker"),
+            pytest.param("'a<<b'", id="quoted-heredoc-marker"),
+            pytest.param("'$(literal)'", id="quoted-expansion-marker"),
+            pytest.param("'<(literal)'", id="quoted-process-marker"),
+            pytest.param("a\N{NO-BREAK SPACE}b", id="non-ascii-unquoted-word"),
+            pytest.param("a\fb", id="form-feed-outside-quotes"),
+            pytest.param("'unclosed", id="unterminated-quote"),
+        ],
+    )
+    def test_case_subject_outside_simple_grammar_keeps_writer_name_visible(
+        self, run_hook: Callable, subject: str
+    ) -> None:
+        """An unsupported subject leaves a benign writer-shaped pattern visible to the guard."""
+        command = f"case {subject} in\n  hooks/approval-guard.js) printf match ;;\nesac"
+        proc = run_hook(_pre("Bash", {"command": command}))
+        assert proc.returncode == 2, proc.stderr
+        assert "a segment naming the approval writer" in proc.stderr
+
+    @pytest.mark.parametrize(
+        ("prefix", "body", "suffix"),
+        [
+            pytest.param("# note\n", "printf match", "", id="comment-before-clause"),
+            pytest.param("cat <<EOF\nexample\nEOF\n", "printf match", "", id="heredoc-before-clause"),
+            pytest.param("cat <<-EOF\n\texample\n\tEOF\n", "printf match", "", id="tab-stripped-heredoc-before-clause"),
+            pytest.param("cat <<< example\n", "printf match", "", id="here-string-before-clause"),
+            pytest.param("cat <\\\n<EOF\nexample\nEOF\n", "printf match", "", id="continued-heredoc-operator"),
+            pytest.param("((1))\n", "printf match", "", id="arithmetic-command-before-clause"),
+            pytest.param("", 'printf "%s" "${VALUE}"', "", id="expansion-in-clause-body"),
+            pytest.param("", "printf match", "\n# note", id="comment-after-clause"),
+            pytest.param("", "printf match", "\nprintf ${VALUE}", id="expansion-after-clause"),
+        ],
+    )
+    def test_case_exemption_requires_simple_syntax_across_whole_command(
+        self, run_hook: Callable, prefix: str, body: str, suffix: str
+    ) -> None:
+        """An unsupported token anywhere in the command keeps the earlier or later pattern visible."""
+        command = f"{prefix}case value in\n  hooks/approval-guard.js) {body} ;;\nesac{suffix}"
+        proc = run_hook(_pre("Bash", {"command": command}))
+        assert proc.returncode == 2, proc.stderr
+        assert "a segment naming the approval writer" in proc.stderr
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("case $R in 'a b'|$'a\\tb'|a\\|b|*/*) echo a ;; esac", id="case-pattern-quotes-and-escapes"),
+            pytest.param("X=$(case $R in */*) echo a ;; *) echo b ;; esac)", id="case-pattern-in-substitution"),
+            pytest.param(
+                'ROOT="$(git rev-parse --show-toplevel)"\n'
+                "# timeout: 5000\n"
+                'case "$MODE" in\n'
+                "  # nested layout\n"
+                '  */*|*/*/*) echo nested > "$ROOT/out.txt" ;;\n'
+                "  *) echo flat ;;\n"
+                "esac",
+                id="case-pattern-in-skill-block",
+            ),
+        ],
+    )
+    def test_case_patterns_in_unsupported_commands_keep_globs_visible(self, run_hook: Callable, command: str) -> None:
+        """A glob in an unsupported command still goes through the ordinary target check."""
+        proc = run_hook(_pre("Bash", {"command": command}))
+        assert proc.returncode == 2, proc.stderr
+
+    @pytest.mark.parametrize(
+        ("subject", "pattern"),
+        [
+            pytest.param("value", "hooks/approval-guard.js", id="plain-words"),
+            pytest.param("'two words'", "'hooks/approval-guard.js'", id="single-quoted-words"),
+            pytest.param('"two words"', '"hooks/approval-guard.js"', id="double-quoted-words"),
+            pytest.param("$_VALUE_2", "$PATTERN | hooks/approval-guard.js", id="bare-named-parameters"),
+            pytest.param("'x|y)'", 'hooks/"approval-guard.js"', id="quoted-operators-and-adjacent-word-parts"),
+            pytest.param("value", "(hooks/approval-guard.js|[ab]*", id="grouped-alternatives-and-glob"),
+        ],
+    )
+    def test_case_simple_forms_exempt_pattern_words(self, run_hook: Callable, subject: str, pattern: str) -> None:
+        """Every admitted form can appear in a simple case clause with a writer-shaped pattern."""
+        command = f"case\t{subject} in\n  {pattern}) printf match ;;\nesac"
+        proc = run_hook(_pre("Bash", {"command": command}))
+        assert proc.returncode == 0, proc.stderr
+
+    @pytest.mark.parametrize(
+        "command",
+        [
             pytest.param(f"cat .git/{GRANT_NAME}", id="cat"),
             pytest.param(f'jq . "$(git rev-parse --git-common-dir)/{GRANT_NAME}"', id="jq-common-dir"),
             pytest.param(f"test -f .git/{GRANT_NAME} && echo present", id="test"),
@@ -1409,6 +1621,10 @@ class TestSelfGrantGuard:
             pytest.param(f"ls -la .git/{GRANT_NAME} 2>/dev/null", id="ls-dev-null"),
             pytest.param(REVOKE, id="rm-revoke"),
             pytest.param(f"rm -f .git/{GRANT_NAME}", id="rm-relative"),
+            pytest.param(
+                'rm -f "$(git rev-parse --git-common-dir)"/claude-push-approval.json{,.slot-*}',
+                id="rm-revoke-token-slots",
+            ),
             pytest.param("node plugins/cc_foundry/hooks/commit-guard.js --check-grant", id="rule-check"),
             pytest.param(
                 "node plugins/cc_foundry/hooks/commit-guard.js --check-grant </dev/null", id="rule-check-devnull"
@@ -1448,6 +1664,15 @@ class TestSelfGrantGuard:
             pytest.param(
                 'case "$IDS" in *[!0-9\\ ]*) echo "! BLOCKED — bad id"; exit 1 ;; esac', id="unclosed-bracket-word"
             ),
+            pytest.param(
+                'case $REPORT in\n    */*) echo nested > "out/check.txt" ;;\n    *) echo flat > "out/check.txt" ;;\nesac',
+                id="case-pattern-glob-multiline",
+            ),
+            pytest.param("case $R in */*) echo a ;; a|*/*/*) echo b ;; esac", id="case-pattern-glob-one-line"),
+            pytest.param("case $R in a | */*) echo a ;; esac", id="case-pattern-spaced-alternatives"),
+            pytest.param('case $R in "a b"|*/*) echo a ;; esac', id="case-pattern-quoted-alternative"),
+            pytest.param("case $R in $MODE|*/*) echo a ;; esac", id="case-pattern-named-variable"),
+            pytest.param("case $R in (*/*) echo a ;; esac", id="case-pattern-leading-paren"),
             pytest.param("jq -r '.items[] | .name' out.json", id="jq-array-iterator"),
             pytest.param(
                 "python3 -I - <<'EOF'\nline=t[i-1:].split('\\n')[0]\nEOF", id="heredoc-python-reversed-range-slice"
@@ -1556,7 +1781,7 @@ class TestSelfGrantGuard:
 
 @_skip_node_or_git_unavailable
 class TestMissingModule:
-    """Without ``lib/approval-grants.js`` the hook records nothing and blocks every call naming a record."""
+    """Without the record reader, the hook refuses calls naming a record and lets unrelated calls run."""
 
     @pytest.fixture(name="bare_hook")
     def _bare_hook(self, tmp_path: Path) -> Path:
@@ -1572,15 +1797,16 @@ class TestMissingModule:
             pytest.param(_pre("Bash", {"command": f"cp x .git/{GRANT_NAME}"}), 2, id="record-name-blocked"),
             pytest.param(_pre("Write", {"file_path": "notes/claude-push-approval.json"}), 2, id="file-tool-blocked"),
             pytest.param(_pre("Bash", {"command": "cp x .git/claude-gh-write-approval.json"}), 2, id="gh-write-token"),
-            pytest.param(_pre("Bash", {"command": "ls"}), 0, id="other-passes"),
+            pytest.param(_pre("Write", {"file_path": "claude-push-run-approval.json"}), 2, id="run-push-token"),
+            pytest.param(
+                _pre("Bash", {"command": "cp x .git/claude-push-run-approval.json.slot-ab12"}), 2, id="slot-name"
+            ),
+            pytest.param(_pre("Bash", {"command": "ls"}), 0, id="unrelated-shell-passes"),
+            pytest.param(_pre("Read", {"file_path": GRANT_NAME}), 0, id="read-tool-passes"),
         ],
     )
-    def test_fails_closed_on_record_names(self, bare_hook: Path, payload: dict, expected: int) -> None:
-        """The degraded hook exits 2 on a record name; a crash would exit 1, which Claude Code does not block on.
-
-        Starting state: the hook copied alone to a directory; a record name still exits 2 and an unrelated command
-        passes.
-        """
+    def test_fails_closed_on_tools_that_can_write(self, bare_hook: Path, payload: dict, expected: int) -> None:
+        """A degraded hook refuses a call naming a record or its sibling spellings; Read and unrelated calls pass."""
         proc = _run_hook(payload, hook=bare_hook)
         assert proc.returncode == expected, proc.stderr
 
@@ -1611,13 +1837,25 @@ GH_WRITE_FIELDS = [
     "command",
     "files_sha256",
     "expires_at",
+    "session_id",
 ]
 #: Bytes of file content one gh write command may bind (FILE_DIGEST_MAX_BYTES in the module).
 FILE_DIGEST_MAX_BYTES = 1024 * 1024 * 1024
 PUSH_COMMAND = "git push origin main"
 PUSH_OPTIONS = ["Approve", "Hold"]
 #: Fields of a push token, in the order the writer serializes them.
-PUSH_FIELDS = ["version", "scope", "created_at", "question", "answer", "question_id", "branch", "head", "expires_at"]
+PUSH_FIELDS = [
+    "version",
+    "scope",
+    "created_at",
+    "question",
+    "answer",
+    "question_id",
+    "branch",
+    "head",
+    "expires_at",
+    "session_id",
+]
 
 
 def _push_question(command: str = PUSH_COMMAND, text: str | None = None) -> dict:
@@ -1660,6 +1898,7 @@ PUSH_RUN_FIELDS = [
     "branch",
     "base_head",
     "expires_at",
+    "session_id",
 ]
 #: A full commit id no repository holds: the writer takes the PR head from the question text and never resolves it.
 UNKNOWN_HEAD = "c0ffee" + "0" * 34
@@ -1855,17 +2094,23 @@ class TestPushTokenRecording:
     def test_latest_approve_replaces_a_pending_token(
         self, run_hook: Callable, answered: Callable, checkout: Path
     ) -> None:
-        """One file per project: a newer approval replaces the pending token, so only the newest answer stands.
+        """A repeated approval of the same question replaces its token; another question's token stays beside it.
 
-        Starting state: a pending token for ``git push origin main``; a later approval of another spelling replaces
-        it in place.
+        Starting state: a pending token for ``git push origin main``. Approving the same question again at a moved HEAD
+        replaces it in place. A later ``Hold`` for the other spelling removes only its token.
         """
-        run_hook(answered(checkout, "Approve", _push_question("git push origin main")))
+        first = _push_question("git push origin main")
+        run_hook(answered(checkout, "Approve", first))
         _git("commit", "--allow-empty", "-m", "second", cwd=checkout)
+        run_hook(answered(checkout, "Approve", first))
+        replaced = _load(_push_token(checkout))
         later = _push_question("git push -u origin main")
         run_hook(answered(checkout, "Approve", later))
-        token = _load(_push_token(checkout))
-        assert (token["question"], token["head"]) == (later["question"], _rev(checkout))
+        tokens = _names_with(checkout / ".git", PUSH_RECORD)
+        run_hook(answered(checkout, "Hold", later))
+        assert (replaced["question"], replaced["head"]) == (first["question"], _rev(checkout))
+        assert len(tokens) == 2
+        assert _names_with(checkout / ".git", PUSH_RECORD) == [PUSH_RECORD]
 
     def test_second_copy_of_one_answer_is_silent(self, run_hook: Callable, answered: Callable, checkout: Path) -> None:
         """A second writer copy on the same answer keeps the first token as written and prints nothing.
@@ -2262,13 +2507,14 @@ class TestGhWriteTokenRecording:
     def test_latest_approve_replaces_a_pending_token(
         self, run_hook: Callable, answered: Callable, checkout: Path
     ) -> None:
-        """One file per project: a newer approval of another command replaces the pending one.
+        """Each approved command keeps its own token: a later approval of another command adds one, never replaces.
 
-        Starting state: a pending token for one command; a later approval for ``gh issue close 9`` takes its place.
+        Starting state: a pending token for one command; a later approval for ``gh issue close 9`` stands beside it.
         """
         run_hook(answered(checkout, "Approve", _gh_write_question()))
         run_hook(answered(checkout, "Approve", _gh_write_question("Close it: `gh issue close 9`?")))
-        assert _load(_gh_write_token(checkout))["command"] == "gh issue close 9"
+        assert _load(_gh_write_token(checkout))["command"] == GH_COMMAND
+        assert len(_names_with(checkout / ".git", GH_WRITE_RECORD)) == 2
 
     def test_unverifiable_call_records_nothing(self, run_hook: Callable, answered: Callable, checkout: Path) -> None:
         """An answer whose call cannot be checked, for lack of a session transcript, writes no token.
@@ -2295,7 +2541,7 @@ class TestGhWriteTokenRecording:
 
 
 def _guard_push(
-    checkout: Path, command: str, cwd: Path | None = None, call_id: str | None = None
+    checkout: Path, command: str, cwd: Path | None = None, call_id: str | None = None, *, hook: Path = COMMIT_GUARD
 ) -> subprocess.CompletedProcess:
     """Run commit-guard on one Bash command the way the harness does, in session project ``checkout``.
 
@@ -2311,7 +2557,7 @@ def _guard_push(
         "transcript_path": str(_session_transcript(checkout)),
     }
     return subprocess.run(
-        ["node", str(COMMIT_GUARD)],
+        ["node", str(hook)],
         input=json.dumps({**payload, "cwd": str(here)}),
         cwd=here,
         capture_output=True,
@@ -2319,6 +2565,21 @@ def _guard_push(
         timeout=15,
         env=_clean_env(CLAUDE_PROJECT_DIR=str(checkout)),
     )
+
+
+def _append_request_replay(transcript: Path) -> None:
+    """Append the two ``api-request-blob`` lines Claude Code writes after an answered question, as the harness does.
+
+    The first repeats the latest assistant call's blocks, the second the latest user line's ``tool_result`` block, both
+    without ``toolUseResult`` answers or a timestamp.
+    """
+    lines = [json.loads(line) for line in transcript.read_text(encoding="utf-8").splitlines()]
+    call = next(row for row in reversed(lines) if row.get("type") == "assistant")
+    result = next(row for row in reversed(lines) if row.get("type") == "user")
+    blob = {"type": "api-request-blob", "hash": "x", "message": {"content": call["message"]["content"]}}
+    replay = {"type": "api-request-blob", "hash": "y", "message": {"content": result["message"]["content"]}}
+    with transcript.open("a", encoding="utf-8", newline="\n") as log:
+        log.write(f"{json.dumps(blob)}\n{json.dumps(replay)}\n")
 
 
 @pytest.fixture(name="remote")
@@ -2341,9 +2602,156 @@ def _approve(run_hook: Callable, answered: Callable, checkout: Path) -> Callable
     return _run
 
 
+def _approve_together(
+    run_hook: Callable, checkout: Path, asked: list[dict], answer: str | list[str] = "Approve", **env: str
+) -> subprocess.CompletedProcess:
+    """Run the writer on ONE ``AskUserQuestion`` call that stacks the questions ``asked``.
+
+    ``answer`` is one answer for every question or one answer per question. The call and the user's answers are appended
+    to the session transcript as the harness writes them, so the guard's proof finds each question in the one call.
+    """
+    call_id = f"toolu_01Stacked{uuid.uuid4().hex[:8]}"
+    picked = [answer] * len(asked) if isinstance(answer, str) else answer
+    answers = {question["question"]: pick for question, pick in zip(asked, picked)}
+    result = {
+        "type": "user",
+        "timestamp": _now_iso(),
+        "message": {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": call_id, "content": "The user answered"}],
+        },
+        "toolUseResult": {"questions": asked, "answers": answers, "annotations": {}},
+    }
+    with _session_transcript(checkout).open("a", encoding="utf-8", newline="\n") as log:
+        log.write(f"{_call_line({'questions': asked}, call_id=call_id)}\n{json.dumps(result)}\n")
+    payload = {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "AskUserQuestion",
+        "cwd": str(checkout),
+        "session_id": "sess-grant",
+        "transcript_path": str(_session_transcript(checkout)),
+        "tool_use_id": call_id,
+        "tool_input": {"questions": asked},
+        "tool_response": {"questions": asked, "answers": answers, "annotations": {}},
+    }
+    return run_hook(payload, CLAUDE_PROJECT_DIR=str(checkout), **env)
+
+
 @_skip_node_or_git_unavailable
 class TestPushTokenRealCase:
     """The whole path on real git: the user's answer, the guard, and an actual push to a local bare remote."""
+
+    def test_stacked_approvals_each_land_one_push(
+        self, run_hook: Callable, checkout: Path, remote: Path, tmp_path: Path
+    ) -> None:
+        """Two ``git-push`` questions answered ``Approve`` in one call each allow their own push, in either order.
+
+        Starting state: the session checkout on ``main`` and a linked worktree on ``feature`` one commit ahead; one
+        call asks about both pushes and the user approves both. Each push is then run through the guard once: both are
+        allowed with no second question, and a repeat of either is blocked.
+        """
+        worktree = tmp_path / "wt"
+        _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
+        _git("commit", "--allow-empty", "-m", "feature work", cwd=worktree)
+        feature = f"git -C {worktree.as_posix()} push origin feature"
+        _approve_together(run_hook, checkout, [_push_question(PUSH_COMMAND), _push_question(feature)])
+        first = _guard_push(checkout, PUSH_COMMAND)
+        second = _guard_push(checkout, feature)
+        repeated = [_guard_push(checkout, PUSH_COMMAND), _guard_push(checkout, feature)]
+        assert (first.returncode, second.returncode) == (0, 0), (first.stderr, second.stderr)
+        assert [proc.returncode for proc in repeated] == [2, 2]
+
+    def test_stacked_approvals_are_spent_once_by_every_hook_copy(
+        self, run_hook: Callable, checkout: Path, remote: Path, tmp_path: Path, foundry_hook_roots: list[Path]
+    ) -> None:
+        """Every loaded guard copy allows the one call that spent a stacked token and none spends the sibling.
+
+        Starting state: two approved pushes. All copies judge the main push together: the first renames its token to a
+        claim, the others find that claim by the call id and must not turn to the other pending token. The worktree
+        push then still has its own token, and a repeat of the main push is blocked.
+        """
+        worktree = tmp_path / "wt"
+        _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
+        _git("commit", "--allow-empty", "-m", "feature work", cwd=worktree)
+        feature = f"git -C {worktree.as_posix()} push origin feature"
+        _approve_together(run_hook, checkout, [_push_question(PUSH_COMMAND), _push_question(feature)])
+        payload = json.dumps(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": PUSH_COMMAND},
+                "tool_use_id": "toolu_shared_push",
+                "transcript_path": str(_session_transcript(checkout)),
+                "cwd": str(checkout),
+            }
+        )
+        results = _fan_out(
+            foundry_hook_roots, "commit-guard.js", payload, cwd=checkout, CLAUDE_PROJECT_DIR=str(checkout)
+        )
+        second = _guard_push(checkout, feature)
+        repeated = _guard_push(checkout, PUSH_COMMAND)
+        assert [code for _, code in results] == [0] * len(foundry_hook_roots)
+        assert (second.returncode, repeated.returncode) == (0, 2), second.stderr
+
+    def test_stacked_run_approvals_pick_the_token_of_the_named_remote(
+        self, run_hook: Callable, checkout: Path, remote: Path
+    ) -> None:
+        """With run approvals for two remotes pending, a push to the second remote spends the second remote's token.
+
+        Starting state: the same branch approved for ``upstream`` and then ``origin`` in one call; the push names
+        ``origin``, so the first token in file order must not decide.
+        """
+        _git("remote", "add", "upstream", str(remote), cwd=checkout)
+        head = _rev(checkout)
+        asked = [
+            _push_run_question(head, "git push upstream main"),
+            _push_run_question(head, "git push origin main"),
+        ]
+        _approve_together(run_hook, checkout, asked)
+        allowed = _guard_push(checkout, "git push origin main")
+        assert allowed.returncode == 0, allowed.stderr
+
+    @pytest.mark.parametrize("hold_first", [pytest.param(False, id="hold-last"), pytest.param(True, id="hold-first")])
+    def test_stacked_hold_applies_before_any_approve(
+        self, run_hook: Callable, checkout: Path, tmp_path: Path, hold_first: bool
+    ) -> None:
+        """One call answering ``Approve`` to one push and ``Hold`` to another leaves only the approved token, in either
+        order.
+
+        The outcome never depends on which question comes first: every revoking answer applies before any approval is
+        recorded.
+        """
+        worktree = tmp_path / "wt"
+        _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
+        _git("commit", "--allow-empty", "-m", "feature work", cwd=worktree)
+        feature = f"git -C {worktree.as_posix()} push origin feature"
+        pair = [(_push_question(PUSH_COMMAND), "Approve"), (_push_question(feature), "Hold")]
+        if hold_first:
+            pair.reverse()
+        _approve_together(run_hook, checkout, [q for q, _ in pair], [a for _, a in pair])
+        names = _names_with(checkout / ".git", PUSH_RECORD)
+        assert names == [PUSH_RECORD]
+        assert PUSH_COMMAND in _load(_push_token(checkout))["question"]
+
+    def test_session_start_wipes_every_stacked_token(self, run_hook: Callable, checkout: Path, tmp_path: Path) -> None:
+        """SessionStart removes the tokens of stacked approvals together with their slots.
+
+        Starting state: two approved pushes, one in the token file and one in a slot beside it.
+        """
+        worktree = tmp_path / "wt"
+        _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
+        _git("commit", "--allow-empty", "-m", "feature work", cwd=worktree)
+        feature = f"git -C {worktree.as_posix()} push origin feature"
+        _approve_together(run_hook, checkout, [_push_question(PUSH_COMMAND), _push_question(feature)])
+        assert len(_names_with(checkout / ".git", PUSH_RECORD)) == 2
+        proc = _run_hook(
+            {"hook_event_name": "SessionStart", "cwd": str(checkout), "session_id": "sess-grant"},
+            hook=COMMIT_GUARD,
+            CLAUDE_PROJECT_DIR=str(checkout),
+            CLAUDE_CODE_SESSION_ID="sess-grant",
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert _names_with(checkout / ".git", PUSH_RECORD) == []
 
     def test_one_approval_lands_exactly_one_push(self, approve: Callable, checkout: Path, remote: Path) -> None:
         """Approve → the guard allows and spends the token → the push lands → the same push again is blocked.
@@ -2358,6 +2766,32 @@ class TestPushTokenRealCase:
         assert allowed.returncode == 0, allowed.stderr
         assert _rev(remote, "main") == _rev(checkout)
         assert (repeated.returncode, "git-push" in repeated.stderr) == (2, True)
+        assert not _push_token(checkout).exists()
+
+    @pytest.mark.parametrize(
+        "target", [pytest.param("checkout", id="cwd-checkout"), pytest.param("worktree", id="worktree")]
+    )
+    def test_replayed_request_blob_does_not_shadow_the_answer(
+        self, approve: Callable, checkout: Path, remote: Path, tmp_path: Path, target: str
+    ) -> None:
+        """A newer ``api-request-blob`` line repeating the answered call's blocks leaves the approval intact.
+
+        Claude Code writes the next API request into the transcript before the push runs; that line holds the same
+        ``tool_result`` block but no ``toolUseResult`` answers or timestamp. Starting state: one recorded ``Approve``,
+        then such a replay appended after it, which a tail-first scan meets before the real answer line. The push is
+        either the cwd's own branch or a linked worktree's branch through ``git -C <worktree> push``, the two routes a
+        push token binds; both must find the answer and spend the token.
+        """
+        command = PUSH_COMMAND
+        if target == "worktree":
+            worktree = tmp_path / "wt"
+            _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
+            _git("commit", "--allow-empty", "-m", "feature work", cwd=worktree)
+            command = f"git -C {worktree.as_posix()} push origin feature"
+        approve(command)
+        _append_request_replay(_session_transcript(checkout))
+        allowed = _guard_push(checkout, command)
+        assert allowed.returncode == 0, allowed.stderr
         assert not _push_token(checkout).exists()
 
     def test_a_new_commit_needs_a_new_approval(self, approve: Callable, checkout: Path, remote: Path) -> None:
@@ -2581,6 +3015,86 @@ def _approve_run(run_hook: Callable, answered: Callable, checkout: Path) -> Call
 class TestPushRunTokenRealCase:
     """The whole path on real git: one answer at the start, commits later, the guard, and a push to a bare remote."""
 
+    def test_exact_approval_keeps_its_remote(self, approve: Callable, checkout: Path, remote: Path) -> None:
+        """A different configured remote cannot spend an exact-HEAD approval."""
+        _git("remote", "add", "upstream", str(remote), cwd=checkout)
+        approve(PUSH_COMMAND)
+
+        blocked = _guard_push(checkout, "git push upstream main")
+
+        assert blocked.returncode == 2, blocked.stderr
+        assert _push_token(checkout).exists()
+        allowed = _guard_push(checkout, PUSH_COMMAND)
+        assert allowed.returncode == 0, allowed.stderr
+
+    @pytest.mark.parametrize(
+        "copy_order", [pytest.param((0, 1), id="left-first"), pytest.param((1, 0), id="right-first")]
+    )
+    def test_replayed_run_claim_takes_precedence_over_a_new_exact_approval(
+        self,
+        approve: Callable,
+        approve_run: Callable,
+        checkout: Path,
+        remote: Path,
+        foundry_hook_roots: list[Path],
+        copy_order: tuple[int, int],
+    ) -> None:
+        """A second guard copy authorizes the same run claim and cannot spend a new exact approval."""
+        first_copy, second_copy = copy_order
+        first_hook = foundry_hook_roots[first_copy] / "hooks" / COMMIT_GUARD.name
+        second_hook = foundry_hook_roots[second_copy] / "hooks" / COMMIT_GUARD.name
+        approve_run()
+        first = _guard_push(checkout, PUSH_COMMAND, call_id="toolu_shared_run", hook=first_hook)
+        assert first.returncode == 0, first.stderr
+        replay = _guard_push(checkout, PUSH_COMMAND, call_id="toolu_shared_run", hook=second_hook)
+        assert replay.returncode == 0, replay.stderr
+
+        approve(PUSH_COMMAND)
+        replay = _guard_push(checkout, PUSH_COMMAND, call_id="toolu_shared_run", hook=second_hook)
+
+        assert replay.returncode == 0, replay.stderr
+        assert _push_token(checkout).exists()
+
+    @pytest.mark.parametrize("foreign_proof", [False, True])
+    def test_first_run_approval_that_proves_the_call_is_spent(
+        self, approve_run: Callable, checkout: Path, remote: Path, foreign_proof: bool
+    ) -> None:
+        """A field-matching primary approval with the wrong ancestry or transcript leaves the valid slot usable."""
+        base = _rev(checkout)
+        other = _git("commit-tree", _rev(checkout, "HEAD^{tree}"), "-m", "independent", cwd=checkout)
+        approve_run(head=other)
+        if foreign_proof:
+            _session_transcript(checkout).write_text("", encoding="utf-8")
+            _git("merge", "--allow-unrelated-histories", "--no-edit", other, cwd=checkout)
+        approve_run(head=base)
+
+        allowed = _guard_push(checkout, PUSH_COMMAND)
+
+        assert allowed.returncode == 0, allowed.stderr
+        assert _load(_push_run_token(checkout))["base_head"] == other
+        assert list(_push_run_token(checkout).parent.glob(f"{PUSH_RUN_RECORD}.slot-*")) == []
+        blocked = _guard_push(checkout, PUSH_COMMAND)
+        assert blocked.returncode == 2, blocked.stderr
+
+    @pytest.mark.parametrize("replacement", [True, False])
+    def test_run_approval_uses_original_commit_parents(
+        self, approve_run: Callable, checkout: Path, remote: Path, replacement: bool
+    ) -> None:
+        """Git graph overlays cannot prove descent from the approved commit."""
+        head = _rev(checkout)
+        other = _git("commit-tree", _rev(checkout, "HEAD^{tree}"), "-m", "independent", cwd=checkout)
+        approve_run(head=other)
+        if replacement:
+            _git("replace", "--graft", head, other, cwd=checkout)
+        else:
+            grafts = checkout / ".git" / "info" / "grafts"
+            grafts.write_text(f"{head} {other}\n", encoding="utf-8")
+
+        blocked = _guard_push(checkout, PUSH_COMMAND)
+
+        assert blocked.returncode == 2, blocked.stderr
+        assert _push_run_token(checkout).exists()
+
     def test_commits_after_the_answer_still_land_one_push(
         self, approve_run: Callable, checkout: Path, remote: Path
     ) -> None:
@@ -2702,18 +3216,18 @@ class TestPushRunTokenRealCase:
     def test_replayed_call_that_spent_the_exact_token_never_spends_the_run_token(
         self, approve: Callable, approve_run: Callable, checkout: Path, remote: Path
     ) -> None:
-        """A second hook copy of one call, finding the exact-HEAD token gone, must not fall back to the run token.
+        """A second hook copy of one call accepts the exact-HEAD claim and never spends the run token too.
 
         Starting state: both tokens recorded for the same HEAD; the call spends the exact-HEAD token, then the same
-        ``tool_use_id`` is checked again, as a second loaded copy of the hook would.
+        ``tool_use_id`` is checked again, as a second loaded copy of the hook would: it finds that call's claim, allows
+        the same push, and leaves the run token unspent.
         """
         approve(PUSH_COMMAND)
         approve_run()
         first = _guard_push(checkout, PUSH_COMMAND, call_id="toolu_replayed")
         replay = _guard_push(checkout, PUSH_COMMAND, call_id="toolu_replayed")
         assert first.returncode == 0, first.stderr
-        assert replay.returncode == 2
-        assert "already spent the exact-HEAD push approval" in replay.stderr
+        assert replay.returncode == 0, replay.stderr
         assert _push_run_token(checkout).exists()
 
     def test_another_branch_is_blocked(self, approve_run: Callable, checkout: Path, remote: Path) -> None:
@@ -2792,14 +3306,24 @@ class TestPushRunTokenRealCase:
         assert not _push_token(checkout).exists()
         assert _push_run_token(checkout).exists()
 
-    def test_session_start_wipes_the_run_token(self, approve_run: Callable, checkout: Path) -> None:
-        """A new session never inherits a run approval: SessionStart deletes the token.
-
-        Starting state: a recorded run token and a SessionStart event from the commit guard.
-        """
+    def test_session_start_preserves_a_sibling_worktree_run_token(
+        self, approve_run: Callable, checkout: Path, tmp_path: Path
+    ) -> None:
+        """Only the owning SessionStart clears the run approval shared across worktrees."""
+        worktree = tmp_path / "sibling"
+        _git("worktree", "add", "-b", "sibling", str(worktree), cwd=checkout)
         approve_run()
-        payload = {"hook_event_name": "SessionStart", "cwd": str(checkout)}
-        proc = _run_hook(payload, hook=COMMIT_GUARD, CLAUDE_PROJECT_DIR=str(checkout))
+        sibling = _run_hook(
+            {"hook_event_name": "SessionStart", "cwd": str(worktree), "session_id": "sibling"},
+            hook=COMMIT_GUARD,
+            CLAUDE_PROJECT_DIR=str(worktree),
+            CLAUDE_CODE_SESSION_ID="sess-grant",
+        )
+        assert sibling.returncode == 0, sibling.stderr
+        assert _push_run_token(checkout).exists()
+
+        payload = {"hook_event_name": "SessionStart", "cwd": str(checkout), "session_id": "sess-grant"}
+        proc = _run_hook(payload, hook=COMMIT_GUARD, CLAUDE_PROJECT_DIR=str(checkout), CLAUDE_CODE_SESSION_ID="")
         assert proc.returncode == 0, proc.stderr
         assert not _push_run_token(checkout).exists()
 
@@ -2890,6 +3414,26 @@ class TestGhWriteTokenRealCase:
         assert not _gh_write_token(checkout).exists()
         assert not (tmp_path / "gh-ran").exists()
 
+    def test_stacked_approvals_each_allow_their_own_call(
+        self, run_hook: Callable, checkout: Path, fake_gh: dict[str, str], tmp_path: Path
+    ) -> None:
+        """Two ``gh-write`` questions answered ``Approve`` in one call each allow their own command, once.
+
+        Starting state: one call asks about ``gh pr create`` and ``gh issue close 9`` and the user approves both. Each
+        command is then run through the guard: both are allowed with no second question, a repeat of either is
+        blocked, and gh never ran.
+        """
+        other = "gh issue close 9"
+        asked = [_gh_write_question(f"Run on o/r: `{command}`?") for command in (GH_COMMAND, other)]
+        _approve_together(run_hook, checkout, asked, **fake_gh)
+        allowed = [_guard_gh(checkout, command, f"toolu_{n}", fake_gh) for n, command in enumerate((GH_COMMAND, other))]
+        repeated = [
+            _guard_gh(checkout, command, f"toolu_again{n}", fake_gh) for n, command in enumerate((GH_COMMAND, other))
+        ]
+        assert [proc.returncode for proc in allowed] == [0, 0], [proc.stderr for proc in allowed]
+        assert [proc.returncode for proc in repeated] == [2, 2]
+        assert not (tmp_path / "gh-ran").exists()
+
     def test_foundry_copies_allow_the_same_call(
         self, approve_gh: Callable, checkout: Path, fake_gh: dict[str, str], foundry_hook_roots: list[Path]
     ) -> None:
@@ -2921,27 +3465,33 @@ class TestGhWriteTokenRealCase:
         assert (other.returncode, "approves another command" in other.stderr) == (2, True)
         assert exact.returncode == 0, exact.stderr
 
-    def test_session_start_wipes_token_and_claims(
-        self, approve_gh: Callable, checkout: Path, fake_gh: dict[str, str]
+    @pytest.mark.parametrize(
+        "event",
+        [
+            pytest.param({"hook_event_name": "SessionStart"}, id="session-start"),
+            pytest.param({"hook_event_name": "UserPromptSubmit", "prompt": "/clear"}, id="clear"),
+        ],
+    )
+    def test_session_cleanup_respects_owner_and_active_reservation(
+        self, approve_gh: Callable, checkout: Path, fake_gh: dict[str, str], event: dict[str, str]
     ) -> None:
-        """SessionStart removes pending tokens, spent claims and reservations stranded by a crashed hook.
-
-        Starting state: one spent claim, one pending token and a ``.spent-lock`` reservation; SessionStart clears
-        all of them.
-        """
+        """Lifecycle cleanup preserves an active reservation and only removes the owning session's state."""
         approve_gh(GH_COMMAND)
         _guard_gh(checkout, GH_COMMAND, "toolu_spent", fake_gh)
         approve_gh("gh issue close 9")
-        (_gh_write_token(checkout).with_name(f"{GH_WRITE_RECORD}.spent-lock")).write_bytes(b"")
-        subprocess.run(
-            ["node", str(COMMIT_GUARD)],
-            input=json.dumps({"hook_event_name": "SessionStart", "cwd": str(checkout)}),
-            cwd=checkout,
-            capture_output=True,
-            encoding="utf-8",
-            timeout=15,
-            env=_clean_env(CLAUDE_PROJECT_DIR=str(checkout)),
-        )
+        token = _gh_write_token(checkout)
+        reservation = token.with_name(f"{GH_WRITE_RECORD}.spent-lock")
+        reservation.write_bytes(b"")
+        payload = {**event, "cwd": str(checkout), "session_id": "sess-grant"}
+        before = _names_with(token.parent, GH_WRITE_RECORD)
+        busy = _run_hook(payload, hook=COMMIT_GUARD, CLAUDE_CODE_SESSION_ID="")
+        assert busy.returncode == 0, busy.stderr
+        assert _names_with(token.parent, GH_WRITE_RECORD) == before
+        reservation.unlink()
+        sibling = {**payload, "session_id": "sibling"}
+        _run_hook(sibling, hook=COMMIT_GUARD, CLAUDE_CODE_SESSION_ID="sess-grant")
+        assert _names_with(token.parent, GH_WRITE_RECORD) == [name for name in before if name != reservation.name]
+        _run_hook(payload, hook=COMMIT_GUARD, CLAUDE_CODE_SESSION_ID="")
         assert _names_with(checkout / ".git", GH_WRITE_RECORD) == []
 
     def test_body_file_rewritten_after_approve_is_blocked(
@@ -3046,6 +3596,67 @@ class TestPushProof:
 @_skip_node_or_git_unavailable
 class TestSpendToken:
     """``spendToken`` never throws on a concurrent spend, and a spend prunes the claims older spends left."""
+
+    @pytest.mark.parametrize("suffix", ["slot-?*", "spent-[a-f]*", "spent-loc?"])
+    def test_record_guard_covers_derived_file_globs(self, run_hook: Callable, suffix: str) -> None:
+        """A write matching a record namespace is refused even if the primary name cannot match."""
+        payload = _pre("Bash", {"command": f"touch .git/claude-gh-write-approval.jso?.{suffix}"})
+        assert run_hook(payload).returncode == 2
+
+    @_skip_without_symlinks
+    def test_gh_digest_tracks_file_after_symlink_and_parent(self, checkout: Path) -> None:
+        """The digest follows the symlink before its parent component, like the file open does."""
+        nested = checkout / "real" / "nested"
+        nested.mkdir(parents=True)
+        (checkout / "link").symlink_to(nested, target_is_directory=True)
+        (checkout / "body.md").write_text("lexical path", encoding="utf-8")
+        actual = nested.parent / "body.md"
+        actual.write_text("first draft", encoding="utf-8")
+        expr = f"g.commandFileDigest('gh issue comment 1 --body-file link/../body.md', {json.dumps(str(checkout))})"
+        before = _node_lib(expr)
+        actual.write_text("second draft", encoding="utf-8")
+        after = _node_lib(expr)
+        assert before != after or "ambiguous Windows path" in before.get("reason", "")
+
+    @pytest.mark.parametrize("flag", ["--source .", "--source=."])
+    def test_unbound_source_checkout_cannot_receive_a_token(self, checkout: Path, flag: str) -> None:
+        """A source checkout is refused because a directory's existence cannot bind published refs."""
+        command = json.dumps(f"gh repo create demo {flag} --push")
+        digest = _node_lib(f"g.commandFileDigest({command}, {json.dumps(str(checkout))})")
+        assert "Git contents cannot be bound" in digest["reason"]
+
+    def test_malformed_primary_leaves_sibling_pending(self, run_hook: Callable, checkout: Path) -> None:
+        """A null primary record cannot prevent the guard from reading its valid sibling."""
+        questions = [_gh_write_question(f"Draft: `gh issue close {number}`?") for number in (1, 2)]
+        _approve_together(run_hook, checkout, questions)
+        _gh_write_token(checkout).write_text("null\n", encoding="utf-8")
+        opts = json.dumps({"cwd": str(checkout)})
+        status = _node_lib(f"g.recordStatus('gh-write-once', {opts})")
+        assert status["record"]["question"] == questions[1]["question"]
+
+    @pytest.mark.parametrize("hold_first", [False, True])
+    def test_stacked_holds_preserve_other_questions(self, run_hook: Callable, checkout: Path, hold_first: bool) -> None:
+        """A Hold preserves unrelated approvals even when they came from an earlier call."""
+        questions = [_gh_write_question(f"Draft: `gh issue close {number}`?") for number in range(1, 7)]
+        prior, approve, hold = questions[:4], questions[4], questions[5]
+        _approve_together(run_hook, checkout, prior)
+        choices = [(hold, "Hold"), (approve, "Approve")] if hold_first else [(approve, "Approve"), (hold, "Hold")]
+        reply = _approve_together(run_hook, checkout, [q for q, _ in choices], [a for _, a in choices])
+        assert "removed: the user answered Hold" not in _context(reply)
+        assert {_load(file)["question"] for file in _gh_write_token(checkout).parent.glob(f"{GH_WRITE_RECORD}*")} == {
+            q["question"] for q in [*prior, approve]
+        }
+
+    def test_full_pending_scope_keeps_every_existing_approval(self, run_hook: Callable, checkout: Path) -> None:
+        """A ninth approval is reported as refused and all eight existing approvals survive."""
+        questions = [_gh_write_question(f"Draft: `gh issue close {number}`?") for number in range(1, 10)]
+        _approve_together(run_hook, checkout, questions[:4])
+        _approve_together(run_hook, checkout, questions[4:8])
+        result = _approve_together(run_hook, checkout, questions[8:])
+        assert "all 8 pending approval slots are full" in _context(result)
+        assert {_load(file)["question"] for file in _gh_write_token(checkout).parent.glob(f"{GH_WRITE_RECORD}*")} == {
+            q["question"] for q in questions[:8]
+        }
 
     @pytest.mark.parametrize(
         ("question", "token_name"),

@@ -1,6 +1,190 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
+  "allOf": [
+    {
+      "else": {
+        "properties": {
+          "confidence_null_reason": {
+            "type": "string"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "confidence": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "confidence"
+        ]
+      },
+      "then": {
+        "properties": {
+          "confidence_gaps": {
+            "minItems": 1
+          },
+          "confidence_null_reason": {
+            "type": "null"
+          },
+          "status": {
+            "const": "complete"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "confidence_null_reason": {
+            "enum": [
+              "quota-exhausted",
+              "rate-limited",
+              "capacity"
+            ]
+          }
+        },
+        "required": [
+          "confidence_null_reason"
+        ]
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "blocked",
+              "timeout"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "confidence_null_reason": {
+            "const": "timeout"
+          }
+        },
+        "required": [
+          "confidence_null_reason"
+        ]
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "const": "timeout"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "confidence_null_reason": {
+            "enum": [
+              "output-limit",
+              "peer-unavailable",
+              "peer-failed",
+              "empty-result",
+              "cancelled",
+              "invalid-request"
+            ]
+          }
+        },
+        "required": [
+          "confidence_null_reason"
+        ]
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "const": "blocked"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "confidence_null_reason": {
+            "const": "refused"
+          }
+        },
+        "required": [
+          "confidence_null_reason"
+        ]
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "const": "refused"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "confidence_null_reason": {
+            "const": "incomplete"
+          }
+        },
+        "required": [
+          "confidence_null_reason"
+        ]
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "partial",
+              "blocked"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "confidence_null_reason": {
+            "const": "unscored"
+          }
+        },
+        "required": [
+          "confidence_null_reason"
+        ]
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "const": "complete"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "confidence_null_reason": {
+            "const": "not-recorded"
+          }
+        },
+        "required": [
+          "confidence_null_reason"
+        ]
+      },
+      "then": {
+        "properties": {
+          "confidence_gaps": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ],
   "if": {
     "required": [
       "partial_output"
@@ -12,6 +196,46 @@
         "type": "string"
       },
       "type": "array"
+    },
+    "confidence": {
+      "description": "Harness-derived: 1.00 minus the deductions named in confidence_gaps, only for a complete result; null otherwise, with confidence_null_reason naming the cause.",
+      "maximum": 1,
+      "minimum": 0,
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "confidence_gaps": {
+      "description": "Peer-named limits on the result, each '(-0.NN) <limit>'; kept for every status, empty when no usable peer answer exists.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "confidence_null_reason": {
+      "description": "Closed-set cause for a null confidence; null exactly when confidence is a number. The provider classes, timeout, output-limit and refused equal the incident fault of the same stop.",
+      "enum": [
+        "quota-exhausted",
+        "rate-limited",
+        "capacity",
+        "timeout",
+        "output-limit",
+        "refused",
+        "peer-unavailable",
+        "peer-failed",
+        "empty-result",
+        "incomplete",
+        "cancelled",
+        "invalid-request",
+        "unscored",
+        "not-recorded",
+        null
+      ],
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "cost": {
       "minimum": 0,
@@ -158,7 +382,10 @@
     "session_id",
     "transcript_path",
     "verb",
-    "direction"
+    "direction",
+    "confidence",
+    "confidence_gaps",
+    "confidence_null_reason"
   ],
   "then": {
     "properties": {

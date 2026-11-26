@@ -134,7 +134,7 @@ class TestFullSuiteGate:
         for args in (["add", "-A"], ["commit", "-q", "-m", "head"]):
             subprocess.run(["git", "-C", str(repo), *args], env=env, check=True, capture_output=True)
         bind = [
-            sys.executable, str(plugin_root / "bin/untrusted_code_guard.py"), "bind", "--repo", str(repo),
+            sys.executable, str(plugin_root / "bin/untrusted_code_guard.py"), "record", "--repo", str(repo),
             "--head", "HEAD", "--base", "HEAD~1", "--scope", "run", "--tier", "env-only", "--decision", "unsandboxed",
             "--out", str(impl_dir / "code-approval.txt"),
         ]  # fmt: skip

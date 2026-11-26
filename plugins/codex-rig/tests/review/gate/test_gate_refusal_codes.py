@@ -517,6 +517,7 @@ def test_unstarted_launch_keeps_its_route_decision(
 def _proof_for(repository: Path, change: str) -> bytes:
     """Return a passing child proof for ``repository``, altered so it describes a different invocation."""
     document = json.loads(_passing_proof(repository))
+    document["pytest"] = {"collected": 1, "calls": 1}
     if change == "worktree":
         document["worktree"] = repository.parent.as_posix()
     elif change == "interpreter":

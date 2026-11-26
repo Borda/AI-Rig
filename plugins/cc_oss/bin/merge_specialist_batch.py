@@ -91,6 +91,9 @@ _SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
 #: Upper bound, in characters, on the ``--plan`` and ``--centrality-file`` JSON. A plan holds one short row per
 #: resolved item, so a larger file is a wrong path rather than a big run — and it is read whole into memory.
 _MAX_INPUT_CHARS = 10 * 1024 * 1024
+#: Seconds one local git call may take. These calls finish in milliseconds; the bound only catches a hang, and 3 seconds
+#: was too tight for git on a loaded native Windows host, where a soft reset timed out mid-plan.
+_GIT_TIMEOUT = 30
 
 
 def _read_capped(path: str) -> str:
@@ -251,7 +254,7 @@ def _conflicted_files(git: str) -> list[str]:
         capture_output=True,
         text=True,
         check=False,
-        timeout=3,
+        timeout=_GIT_TIMEOUT,
     )
     return [f for f in proc.stdout.splitlines() if f.strip()]
 
@@ -295,7 +298,7 @@ def run_plan(entries: list[PlanEntry], commit_mode: CommitMode, base_sha: str | 
     git = _resolve("git")
     applied: list[str] = []
     for i, entry in enumerate(entries):
-        pick = subprocess.run([git, "cherry-pick", "--end-of-options", entry.sha], check=False, timeout=30)  # noqa: S603
+        pick = subprocess.run([git, "cherry-pick", "--end-of-options", entry.sha], check=False, timeout=_GIT_TIMEOUT)  # noqa: S603
         if pick.returncode != 0:
             return {
                 "applied": applied,
@@ -315,9 +318,11 @@ def run_plan(entries: list[PlanEntry], commit_mode: CommitMode, base_sha: str | 
             # run left as real commits on top of `base_sha`. Gating on `applied` (as the HEAD~n
             # fallback below still must) left that one call the only one that could ever collapse the
             # run refusing to, stranding real commits in `stage` mode with no recovery route.
-            subprocess.run([git, "reset", "--soft", "--end-of-options", base_sha], check=False, timeout=3)  # noqa: S603
+            subprocess.run([git, "reset", "--soft", "--end-of-options", base_sha], check=False, timeout=_GIT_TIMEOUT)  # noqa: S603
         elif applied:
-            subprocess.run([git, "reset", "--soft", "--end-of-options", f"HEAD~{len(applied)}"], check=False, timeout=3)  # noqa: S603
+            subprocess.run(  # noqa: S603
+                [git, "reset", "--soft", "--end-of-options", f"HEAD~{len(applied)}"], check=False, timeout=_GIT_TIMEOUT
+            )
     return {"applied": applied, "conflict": None, "remaining": []}
 
 

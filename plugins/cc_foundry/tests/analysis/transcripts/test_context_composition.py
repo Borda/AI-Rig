@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import _codex_composition as codex
@@ -113,8 +114,9 @@ def _call(message_id: str, tokens: int = 100, **message: object) -> dict:
 
 
 def _dated_call(message_id: str, tokens: int = 100) -> dict:
-    """Construct an assistant call stamped inside any ``--since`` window."""
-    return {**_call(message_id, tokens), "timestamp": "2030-01-01T00:00:00Z"}
+    """Construct an assistant call stamped just before analysis."""
+    recent = datetime.now(timezone.utc) - timedelta(seconds=1)
+    return {**_call(message_id, tokens), "timestamp": recent.isoformat()}
 
 
 def _session_root(tmp_path: Path, rows: list[dict]) -> Path:

@@ -7,7 +7,7 @@
     containment wrapper. ``scan`` lists the files a test command loads on its own, reads the files the contribution
     changed, and reports credential reads, secret-environment access, network and exfiltration endpoints, dynamic
     execution, persistence, destructive commands, agent-instruction edits, hidden Unicode, files no rule can read
-    (binaries, symlinks, submodules) and dependency provenance. ``bind`` records the user's approval of one exact
+    (binaries, symlinks, submodules) and dependency provenance. ``record`` records the user's approval of one exact
     command as a hash. ``run`` executes that command in a disposable snapshot of the working tree, under the strongest
     isolation tier this host proves usable, with an environment allowlist and a fresh home directory.
 
@@ -40,7 +40,7 @@
 
     python untrusted_code_guard.py scan --repo DIR --head REF (--base REF | --whole-tree) [--out FILE] [--text]
         [--bind-file FILE ...]
-    python untrusted_code_guard.py bind --repo DIR --head REF (--base REF | --whole-tree) --out FILE
+    python untrusted_code_guard.py record --repo DIR --head REF (--base REF | --whole-tree) --out FILE
         [RUN OPTIONS] -- CMD ...
     python untrusted_code_guard.py run --approval-file FILE [--repo DIR] [--head REF (--base REF | --whole-tree)]
         [RUN OPTIONS] [--timeout SEC] [--report FILE] -- CMD ...
@@ -52,7 +52,7 @@
 
     ``--scope command`` (default) binds the approval to the exact argv; ``--scope run`` binds it to the scan, tier,
     loopback, environment and decisions only, for a workflow whose agents run many test commands under one user
-    answer. ``bind`` writes the options it covers into the approval file, so ``run`` needs only ``--approval-file``
+    answer. ``record`` writes the options it covers into the approval file, so ``run`` needs only ``--approval-file``
     and the command; an option ``run`` passes that differs from the record fails the hash check.
 
     ``--decision exact-head`` limits an approval to the exact scanned head: ``run`` refuses (exit 3) when any copied
@@ -61,14 +61,14 @@
     judged as ``git status`` judges it: line endings and ``ident`` keywords git wrote on checkout (``core.autocrlf``,
     ``core.eol``, the ``text`` and ``eol`` attributes) are the scanned head, while a path under a ``filter`` or
     ``working-tree-encoding`` attribute must match byte for byte, because a smudge filter writes bytes the scan never
-    read. ``bind`` with this decision applies the same check to the checkout and refuses (exit 3) when it already
+    read. ``record`` with this decision applies the same check to the checkout and refuses (exit 3) when it already
     differs, so a caller can ask the user instead of recording an approval no run could use. A workflow that records
     no user decision adds it so a clean scan never authorizes code the scan did not read.
 
 ## Outputs
 
-    ``scan`` prints one JSON report (or, with ``--text``, the summary the approval question shows). ``bind`` writes the
-    approval hash, which covers the scan digest, the command, the bound script bytes, the requested tier, loopback,
+    ``scan`` prints one JSON report (or, with ``--text``, the summary the approval question shows). ``record`` writes
+    the approval hash, which covers the scan digest, the command, the bound script bytes, the requested tier, loopback,
     environment names and the decisions. ``run`` forwards the command's output and exit status and prints one
     isolation line to stderr.
 
@@ -102,7 +102,9 @@ import hashlib
 import io
 import json
 import os
+import posixpath
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -137,7 +139,7 @@ SURFACE_BASENAMES = frozenset(
     {
         "conftest.py", "pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml", "noxfile.py", "setup.py",
         "makefile", "gnumakefile", "sitecustomize.py", "usercustomize.py", ".pre-commit-config.yaml",
-        "package.json", ".envrc", "justfile", "taskfile.yml", "uv.toml", "pip.conf", ".npmrc", "pipfile",
+        "package.json", ".envrc", "justfile", "taskfile.yml", "uv.toml", "pip.conf", "pip.ini", ".npmrc", "pipfile",
     }
 )  # fmt: skip
 LOCKFILES = frozenset(
@@ -566,10 +568,137 @@ def _scan_files(
 
 _REQ_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 _DIRECT_REF = re.compile(r"@|(?:git|hg|svn|bzr)\+|://|^\s*(?:\.{1,2}/|/|file:)", re.IGNORECASE)
-_INDEX_OPTION = re.compile(
-    r"^\s*(?:--index-url|--extra-index-url|--find-links|--trusted-host|-i\b|-f\b)", re.IGNORECASE
-)
-_INCLUDE_OPTION = re.compile(r"^\s*(?:-r|-c|--requirement|--constraint)\b", re.IGNORECASE)
+#: Options pip reads from a requirements file, by canonical long spelling: the class this guard gives each and whether
+#: it takes a value. ``route`` sends names to another index or source (or trusts another host), ``include`` reads
+#: another file, ``editable`` names a local or direct project, ``neutral`` only picks wheels, pre-releases or hashes.
+#: The table mirrors pip's own requirements-file option set, so a prefix that is unique here is unique for pip too.
+_REQUIREMENTS_OPTIONS: dict[str, tuple[str, bool]] = {
+    "--index-url": ("route", True), "--pypi-url": ("route", True), "--extra-index-url": ("route", True),
+    "--find-links": ("route", True), "--trusted-host": ("route", True), "--no-index": ("route", False),
+    "--requirement": ("include", True), "--constraint": ("include", True), "--editable": ("editable", True),
+    "--no-binary": ("neutral", True), "--only-binary": ("neutral", True), "--prefer-binary": ("neutral", False),
+    "--require-hashes": ("neutral", False), "--no-require-hashes": ("neutral", False), "--pre": ("neutral", False),
+    "--all-releases": ("neutral", True), "--only-final": ("neutral", True), "--use-feature": ("neutral", True),
+    "--hash": ("neutral", True), "--config-settings": ("neutral", True), "--global-option": ("neutral", True),
+}  # fmt: skip
+#: Short spellings pip accepts in a requirements file; every one takes a value, attached (``-iURL``) or separate.
+_REQUIREMENTS_SHORT_OPTIONS = {
+    "-i": "--index-url", "-f": "--find-links", "-r": "--requirement", "-c": "--constraint", "-e": "--editable",
+    "-C": "--config-settings",
+}  # fmt: skip
+#: A comment as pip strips it: ``#`` at the line start or after whitespace (a URL fragment keeps its ``#``).
+_REQUIREMENTS_COMMENT = re.compile(r"(^|\s+)#.*$")
+_REQUIREMENTS_ENCODING = re.compile(r"coding[:=][ \t]*([-\w.]+)", re.ASCII)
+_REQUIREMENTS_VARIABLE = re.compile(r"\$\{[A-Z0-9_]+\}")
+_DependencyDeclaration = tuple[str, str, bool]
+
+
+def requirements_logical_lines(text: str) -> list[str]:
+    r"""Return a requirements file's logical lines as pip reads them: continuations joined, comments and blanks dropped.
+
+    A line ending in a backslash continues on the next physical line unless it is a comment, so the ``--hash`` options
+    a pip-compile file puts on continuation lines belong to the requirement above them.
+
+    Examples:
+        >>> requirements_logical_lines("requests==2.32.3 \\\n    --hash=sha256:aa\n# note\nidna==3.7  # pinned\n")
+        ['requests==2.32.3     --hash=sha256:aa', 'idna==3.7']
+    """
+    lines: list[str] = []
+    pending = ""
+    for raw in text.removeprefix("\ufeff").splitlines():
+        comment = _REQUIREMENTS_COMMENT.match(raw)
+        if raw.endswith("\\") and not comment:
+            pending += raw.strip("\\")
+            continue
+        line = _REQUIREMENTS_COMMENT.sub("", pending + (" " if comment else "") + raw).strip()
+        pending = ""
+        if line:
+            lines.append(line)
+    tail = _REQUIREMENTS_COMMENT.sub("", pending).strip()
+    return lines + ([tail] if tail else [])
+
+
+def _canonical_requirements_option(token: str) -> tuple[str, str | None]:
+    """Return a token's canonical option and its attached value (``None`` when the value is the next token).
+
+    A long option resolves by exact name or, as Python's option parser does, by a prefix that names one option; an
+    unknown or ambiguous one is returned unchanged.
+    """
+    if token.startswith("--"):
+        name, equals, value = token.partition("=")
+        if name not in _REQUIREMENTS_OPTIONS:
+            matches = [option for option in _REQUIREMENTS_OPTIONS if option.startswith(name)]
+            name = matches[0] if len(matches) == 1 and len(name) > 2 else name
+        return name, (value if equals else None)
+    short = _REQUIREMENTS_SHORT_OPTIONS.get(token[:2])
+    return (short, token[2:] or None) if short else (token, None)
+
+
+def requirements_line_options(line: str) -> list[tuple[str, str, str]]:
+    """Return ``(option, kind, value)`` for each option on one requirements-file option line, as pip reads them.
+
+    ``option`` is the canonical long spelling for every form pip's option parser accepts: a short option with an
+    attached or separate value (``-iURL``, ``-i URL``), a long option with ``=`` or a separate value, or a long-option
+    prefix that names one option (``--extra-index``). ``kind`` is ``route``, ``include``, ``editable`` or
+    ``neutral``. An option pip does not define, or an ambiguous prefix, keeps its own spelling and is ``route``, so an
+    unmodelled spelling is never read as harmless.
+
+    Examples:
+        >>> requirements_line_options("-ihttps://mirror.invalid/simple")
+        [('--index-url', 'route', 'https://mirror.invalid/simple')]
+        >>> requirements_line_options("--pre --extra-index=https://mirror.invalid/simple")
+        [('--pre', 'neutral', ''), ('--extra-index-url', 'route', 'https://mirror.invalid/simple')]
+        >>> requirements_line_options("-r base.txt")
+        [('--requirement', 'include', 'base.txt')]
+        >>> requirements_line_options("--frobnicate")
+        [('--frobnicate', 'route', '')]
+    """
+    try:
+        tokens = shlex.split(line)
+    except ValueError:
+        return [("", "route", "")]
+    options: list[tuple[str, str, str]] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        index += 1
+        if not token.startswith("-"):
+            continue  # a stray value; its option, if any, was already classified
+        option, value = _canonical_requirements_option(token)
+        kind, takes_value = _REQUIREMENTS_OPTIONS.get(option, ("route", False))
+        if takes_value and value is None and index < len(tokens):
+            value, index = tokens[index], index + 1
+        options.append((option, kind, value or ""))
+    return options
+
+
+def requirements_line_kinds(line: str) -> set[str]:
+    """Return the option classes on one logical requirements-file line; a requirement line has none.
+
+    Examples:
+        >>> sorted(requirements_line_kinds("-rbase.txt --no-index"))
+        ['include', 'route']
+        >>> requirements_line_kinds("numpy>=1 --hash=sha256:aa")
+        set()
+    """
+    if line.startswith("-"):
+        return {kind for _, kind, _ in requirements_line_options(line)} or {"route"}
+    return set()
+
+
+def requirement_part(line: str) -> str:
+    """Return the requirement of a logical requirement line without its per-requirement options.
+
+    pip splits such a line at the first token that starts with ``-``: what precedes it is the requirement, and the
+    ``--hash`` or ``--config-settings`` options that follow apply only to that requirement.
+
+    Examples:
+        >>> requirement_part("idna==3.7 --hash=sha256:cc --hash=sha256:dd")
+        'idna==3.7'
+        >>> requirement_part("numpy>=1.21; python_version >= '3.10'")
+        "numpy>=1.21; python_version >= '3.10'"
+    """
+    return re.split(r"\s+(?=-)", line, maxsplit=1)[0].strip()
 
 
 def _norm(name: str) -> str:
@@ -579,7 +708,7 @@ def _norm(name: str) -> str:
 
 def _requirement(line: str) -> tuple[str, str, bool] | None:
     """Split one requirement string into ``(name, spec, is_direct_reference)``; ``None`` for non-requirements."""
-    text = line.split("#", 1)[0].strip()
+    text = _REQUIREMENTS_COMMENT.sub("", line).strip()
     if not text or text.startswith("-"):
         return None
     match = _REQ_NAME.match(text)
@@ -589,27 +718,101 @@ def _requirement(line: str) -> tuple[str, str, bool] | None:
     return _norm(match.group(1)), rest.strip(), bool(_DIRECT_REF.search(rest) or _DIRECT_REF.search(text[:1]))
 
 
-def _from_requirements_txt(text: str) -> tuple[dict[str, tuple[str, bool]], set[str]]:
-    """Read ``requirements*.txt``: requirement lines plus index-override and unresolved-include option lines."""
+def _named_requirement(line: str) -> _DependencyDeclaration | None:
+    """Read a recognizable named requirement without treating paths or URLs as distribution names."""
+    req = _requirement(line)
+    if req is None:
+        return None
+    _, rest, _ = req
+    if rest and not rest.startswith(("[", "(", ";", "@", "<", ">", "=", "!", "~")):
+        return None
+    if line.lower().endswith((".whl", ".zip", ".tar", ".tar.gz", ".tar.bz2", ".tar.xz", ".tgz")) and (
+        not rest or rest[0] not in "([@<>=!~"
+    ):
+        return None
+    return req
+
+
+def _preferred_declaration(previous: tuple[str, bool] | None, declared: tuple[str, bool]) -> tuple[str, bool]:
+    """Keep the latest declaration while giving direct references priority over plain specs.
+
+    Examples:
+        >>> _preferred_declaration(("file:../demo", True), ("^2.0", False))
+        ('file:../demo', True)
+        >>> _preferred_declaration(("^1.0", False), ("^2.0", False))
+        ('^2.0', False)
+    """
+    return previous if previous and previous[1] and not declared[1] else declared
+
+
+def _retained_declarations(declarations: Iterable[_DependencyDeclaration]) -> dict[str, tuple[str, bool]]:
+    """Reduce declarations to one preferred spec per name.
+
+    Examples:
+        >>> _retained_declarations([("demo", "^1.0", False), ("demo", "file:../demo", True)])
+        {'demo': ('file:../demo', True)}
+    """
     deps: dict[str, tuple[str, bool]] = {}
-    marks: set[str] = set()
-    for raw in text.splitlines():
-        stripped = raw.split("#", 1)[0].strip()
-        if _INDEX_OPTION.match(stripped):
-            marks.add(stripped)
-        elif _INCLUDE_OPTION.match(stripped):
-            marks.add(f"include: {stripped}")
-        elif stripped.startswith(("-e", "--editable")):
-            marks.add(f"editable: {stripped}")
+    for name, spec, is_direct in declarations:
+        deps[name] = _preferred_declaration(deps.get(name), (spec, is_direct))
+    return deps
+
+
+def _requirements_file(text: str) -> tuple[list[_DependencyDeclaration], list[str]]:
+    """Read all requirement lines and relevant option lines in a requirements file.
+
+    Lines are read as pip reads them (continuations joined, per-requirement options dropped). An option line marks its
+    routing, include or editable classes; an option this guard does not model counts as routing.
+    """
+    declarations: list[_DependencyDeclaration] = []
+    marks: list[str] = []
+    if not _requirements_utf8(text):
+        return [], ["unmodeled requirements input"]
+    for line in requirements_logical_lines(text):
+        if _REQUIREMENTS_VARIABLE.search(line):
+            marks.append(f"unmodeled requirements input: {line}")
+            continue
+        kinds = requirements_line_kinds(line)
+        if "route" in kinds:
+            marks.append(line)
+        if "include" in kinds:
+            marks.append(f"include: {line}")
+        if "editable" in kinds:
+            marks.append(f"editable: {line}")
+        if kinds:
+            continue
+        req = _named_requirement(requirement_part(line))
+        if req:
+            declarations.append(req)
         else:
-            req = _requirement(stripped)
-            if req:
-                deps[req[0]] = (req[1], req[2])
-    return deps, marks
+            marks.append(f"unmodeled requirements input: {line}")
+    return declarations, marks
+
+
+def _requirements_utf8(text: str) -> bool:
+    """Refuse a file that pip might interpret using a different encoding."""
+    headers = text.removeprefix("\ufeff").split("\n", 2)[:2]
+    return "\0" not in text and all(
+        match[1].lower().replace("_", "-") in {"utf-8", "utf8"}
+        for line in headers
+        if line.lstrip().startswith("#") and (match := _REQUIREMENTS_ENCODING.search(line))
+    )
+
+
+def _read_requirements_txt(text: str) -> tuple[list[_DependencyDeclaration], set[str]]:
+    """Read requirements and distinct routing marks for callers that only need their presence."""
+    declarations, marks = _requirements_file(text)
+    return declarations, set(marks)
+
+
+def _from_requirements_txt(text: str) -> tuple[dict[str, tuple[str, bool]], set[str]]:
+    """Return retained requirements and option marks from a requirements file."""
+    declarations, marks = _read_requirements_txt(text)
+    return _retained_declarations(declarations), marks
 
 
 def _toml_loads(text: str) -> dict[str, object] | None:
-    """Parse TOML with the stdlib reader when this interpreter has one; ``None`` when it does not."""
+    """Parse TOML or return ``None`` when the input or reader is unavailable."""
     try:
         import tomllib
     except ImportError:
@@ -620,7 +823,7 @@ def _toml_loads(text: str) -> dict[str, object] | None:
     try:
         return tomllib.loads(text)
     except ValueError:
-        return {}
+        return None
 
 
 def _strings(value: object) -> Iterable[str]:
@@ -640,8 +843,95 @@ def _table(value: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
-def _from_pyproject(text: str) -> tuple[dict[str, tuple[str, bool]], set[str]] | None:
-    """Read ``pyproject.toml`` dependency tables and index overrides; ``None`` when no TOML reader exists."""
+_UV_NON_ROUTING = frozenset(
+    {
+        "dev-dependencies",
+        "package",
+        "managed",
+        "required-version",
+        "environments",
+        "cache-keys",
+        "workspace",
+        "conflicts",
+    }
+)
+UV_SOURCE_MARK = "uv-source: "
+# Explicit indexes can be reported without treating unbound packages as routed away from PyPI.
+UV_EXPLICIT_INDEX_MARK = f"{UV_SOURCE_MARK}[explicit index] "
+_RoutingMarks = set[tuple[str, str]]
+
+
+def _routing_fingerprint(value: object) -> str:
+    """Fingerprint a parsed setting without disclosing its configured value."""
+    return _sha256(json.dumps(value, sort_keys=True, default=str).encode())
+
+
+def _explicit_uv_indexes(value: object) -> bool:
+    """Check whether an index array leaves the default index available to unbound names."""
+    return isinstance(value, list) and all(
+        isinstance(index, dict) and index.get("explicit") is True and index.get("default", False) is False
+        for index in value
+    )
+
+
+def _uv_routing(settings: object, scope: str, *, allow_pip: bool = True) -> _RoutingMarks:
+    """Mark unknown uv settings globally and well-formed source bindings by distribution name."""
+    if not isinstance(settings, dict):
+        return {(f"{scope}: invalid settings", _routing_fingerprint(settings))}
+    marks = set()
+    for key in settings.keys() - _UV_NON_ROUTING:
+        value = settings[key]
+        if key == "pip" and allow_pip:
+            marks.update(_uv_routing(value, f"{scope}.pip", allow_pip=False))
+        elif key == "sources" and isinstance(value, dict) and all(_REQ_NAME.fullmatch(name.strip()) for name in value):
+            # Keep every binding here. Another manifest can declare the name selected by the gate.
+            marks.update(
+                (f"{UV_SOURCE_MARK}{_norm(name.strip())}", _routing_fingerprint(binding))
+                for name, binding in value.items()
+            )
+        else:
+            prefix = UV_EXPLICIT_INDEX_MARK if key == "index" and _explicit_uv_indexes(value) else ""
+            marks.add((f"{prefix}{scope}.{key}", _routing_fingerprint(value)))
+    return marks
+
+
+# Only known non-installer tables can be ignored when selecting the default index.
+_NON_INSTALLER_TOOLS = frozenset(
+    {
+        "bandit", "black", "bumpversion", "check-manifest", "cibuildwheel", "codespell", "commitizen",
+        "coverage", "flake8", "interrogate", "isort", "mdformat", "mypy", "nbqa", "poe", "pre-commit",
+        "pycln", "pydocstyle", "pylint", "pyproject-fmt", "pyright", "pytest", "pytest-ini", "ruff",
+        "semantic_release", "setuptools", "setuptools_scm", "sphinx-pyproject", "sqlfluff", "towncrier",
+        "vulture", "yapf",
+    }
+)  # fmt: skip
+_NON_INSTALLER_SECTIONS = {"hatch": {"version", "build", "metadata", "publish"}, "pdm": {"version"}}
+
+
+def _pyproject_routing(data: dict[str, object]) -> _RoutingMarks:
+    """Mark tool settings unless uv models their routing or the tool is known to leave it alone."""
+    tools = data.get("tool", {})
+    if not isinstance(tools, dict):
+        return {("[tool]: invalid settings", _routing_fingerprint(tools))}
+    marks = _uv_routing(tools.get("uv", {}), "[tool.uv]")
+    for name, settings in tools.items():
+        if name == "uv" or (name in _NON_INSTALLER_TOOLS and isinstance(settings, dict)):
+            continue
+        sections = _NON_INSTALLER_SECTIONS.get(name)
+        if (
+            sections
+            and isinstance(settings, dict)
+            and settings
+            and settings.keys() <= sections
+            and all(isinstance(value, dict) for value in settings.values())
+        ):
+            continue
+        marks.add((f"[tool.{name}]: installer settings are not modeled", _routing_fingerprint(settings)))
+    return marks
+
+
+def _read_pyproject(text: str) -> tuple[list[_DependencyDeclaration], _RoutingMarks] | None:
+    """Read the dependency declarations and routing marks of a parsed project."""
     data = _toml_loads(text)
     if data is None:
         return None
@@ -650,102 +940,323 @@ def _from_pyproject(text: str) -> tuple[dict[str, tuple[str, bool]], set[str]] |
         project.get("dependencies"), project.get("optional-dependencies"), data.get("dependency-groups"),
         _table(data.get("build-system")).get("requires"), uv.get("dev-dependencies"),
     ]  # fmt: skip
-    deps: dict[str, tuple[str, bool]] = {}
+    declarations: list[_DependencyDeclaration] = []
+    marks = _pyproject_routing(data)
     for entry in sources:
         for line in _strings(entry):
-            req = _requirement(line)
+            req = _named_requirement(line)
             if req:
-                deps[req[0]] = (req[1], req[2])
-    marks = {
-        f"[tool.uv].{key}" for key in ("sources", "index", "index-url", "extra-index-url", "find-links") if uv.get(key)
-    }
-    return deps, marks
+                declarations.append(req)
+            elif line.strip():
+                marks.add(("pyproject.toml: unmodeled dependency declaration", _routing_fingerprint(line)))
+    return declarations, marks
 
 
-def _from_setup_cfg(text: str) -> dict[str, tuple[str, bool]]:
-    """Read ``setup.cfg`` install, setup and extras requirements."""
+def _from_pyproject(text: str) -> tuple[dict[str, tuple[str, bool]], set[str]] | None:
+    """Return retained project dependencies and overrides if a TOML reader is available."""
+    result = _read_pyproject(text)
+    if result is None:
+        return None
+    declarations, marks = result
+    return _retained_declarations(declarations), {label for label, _ in marks}
+
+
+def _read_setup_cfg(text: str) -> list[_DependencyDeclaration] | None:
+    """Read all install, setup and extras requirements, or return None if setup.cfg is invalid."""
     parser = configparser.ConfigParser(interpolation=None)
     try:
         parser.read_string(text)
     except configparser.Error:
-        return {}
+        return None
     blobs = [parser.get("options", key, fallback="") for key in ("install_requires", "setup_requires")]
     if parser.has_section("options.extras_require"):
         blobs += [parser.get("options.extras_require", key) for key in parser["options.extras_require"]]
-    deps: dict[str, tuple[str, bool]] = {}
+    declarations: list[_DependencyDeclaration] = []
     for line in "\n".join(blobs).splitlines():
-        req = _requirement(line)
-        if req:
-            deps[req[0]] = (req[1], req[2])
-    return deps
+        text_line = _REQUIREMENTS_COMMENT.sub("", line).strip()
+        if not text_line:
+            continue
+        req = _named_requirement(text_line)
+        if req is None:
+            return None
+        declarations.append(req)
+    return declarations
 
 
-def _package_json(text: str) -> tuple[dict[str, tuple[str, bool]], dict[str, str]]:
-    """Read ``package.json`` dependency names with registry-vs-direct classification, and lifecycle scripts."""
+def _from_setup_cfg(text: str) -> dict[str, tuple[str, bool]]:
+    """Return retained dependencies from setup.cfg."""
+    return _retained_declarations(_read_setup_cfg(text) or [])
+
+
+def _read_package_json(text: str) -> tuple[list[_DependencyDeclaration], dict[str, str]]:
+    """Read all npm dependency declarations and lifecycle scripts."""
     try:
         data = json.loads(text)
     except ValueError:
-        return {}, {}
+        return [], {}
     data = _table(data)
-    deps: dict[str, tuple[str, bool]] = {}
+    declarations: list[_DependencyDeclaration] = []
     for key in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
         for name, spec in _table(data.get(key)).items():
-            direct = bool(re.match(r"^(?:git|github:|file:|link:|https?:|\.{0,2}/|[\w.-]+/[\w.-]+$)", str(spec)))
-            deps[name.lower()] = (str(spec), direct)
+            value = str(spec)
+            direct = bool(re.match(r"^(?:git|github:|file:|link:|https?:|\.{0,2}/|[\w.-]+/[\w.-]+$)", value))
+            declarations.append((name.lower(), value, direct))
     scripts = _table(data.get("scripts"))
-    return deps, {k: str(v) for k, v in scripts.items() if k in _LIFECYCLE_SCRIPTS}
+    return declarations, {k: str(v) for k, v in scripts.items() if k in _LIFECYCLE_SCRIPTS}
 
 
-def _parse_dependency_file(path: str, text: str) -> tuple[dict[str, tuple[str, bool]], set[str], bool]:
-    """Return ``(deps, marks, parsed)`` for one dependency file; ``parsed`` is False when no reader could parse it."""
+def _package_json(text: str) -> tuple[dict[str, tuple[str, bool]], dict[str, str]]:
+    """Return retained npm dependencies and lifecycle scripts from package.json."""
+    declarations, scripts = _read_package_json(text)
+    return _retained_declarations(declarations), scripts
+
+
+_PIP_CONFIGS = frozenset({"pip.conf", "pip.ini"})
+_NEUTRAL_PIP_OPTIONS = frozenset(
+    {"break-system-packages", "cache-dir", "disable-pip-version-check", "log", "no-cache-dir", "no-color",
+     "no-input", "progress-bar", "quiet", "require-virtualenv", "retries", "timeout", "verbose"}
+)  # fmt: skip
+_INSTALLER_CONFIGS = _PIP_CONFIGS | {"uv.toml", "pipfile"}
+_UNMODELED_ROOT_CONFIGS = frozenset({"pdm.toml", ".pdm.toml", "pixi.toml", "poetry.toml"})
+
+
+def _pip_config_routing(name: str, text: str) -> tuple[_RoutingMarks, bool]:
+    """Read pip routing options from any section, normalizing option names as pip does."""
+    parser = configparser.RawConfigParser()
+    try:
+        parser.read_string(text)
+    except configparser.Error:
+        return {(f"{name}: unparsed", "")}, False
+    marks = set()
+    for section in [parser.default_section, *parser.sections()]:
+        for key, value in parser[section].items():
+            option = key.replace("_", "-").removeprefix("--")
+            if option not in _NEUTRAL_PIP_OPTIONS:
+                marks.add((f"{name} [{section}].{option}", _routing_fingerprint(value)))
+    return marks, True
+
+
+def _pipfile_routing(data: dict[str, object]) -> _RoutingMarks:
+    """Fingerprint source declarations and package specs beyond plain version requirements."""
+    marks = {
+        ("Pipfile: index or source settings", _routing_fingerprint([key, data[key]]))
+        for key in data.keys() & {"source", "sources", "index", "indexes"}
+    }
+    # Pipenv permits custom dependency groups. Inspect package values, never the package names.
+    for group, specs in data.items():
+        if group in {"requires", "scripts", "pipenv"}:
+            continue
+        for name, spec in _table(specs).items():
+            routing = {key: value for key, value in _table(spec).items() if key not in {"version", "extras", "markers"}}
+            if routing:
+                marks.add(("Pipfile: index or source settings", _routing_fingerprint([group, name, routing])))
+    return marks
+
+
+def _installer_config_routing(name: str, text: str) -> tuple[_RoutingMarks, bool]:
+    """Read routing in a standalone installer config, marking parser failures globally."""
+    if name in _UNMODELED_ROOT_CONFIGS:
+        return {(f"{name}: installer settings are not modeled", _routing_fingerprint(text))}, True
+    if name == ".npmrc":
+        return {
+            (f".npmrc {match[1]}", _routing_fingerprint(match[2].strip()))
+            for line in text.splitlines()
+            if (
+                match := re.fullmatch(
+                    r"\s*((?:@[^\s:=]+:)?(?:index-url|extra-index-url|find-links|registry))\s*=(.*)", line, re.I
+                )
+            )
+        }, True
+    if name in _PIP_CONFIGS:
+        return _pip_config_routing(name, text)
+    data = _toml_loads(text)
+    if data is None:
+        return {(f"{name}: unparsed", "")}, False
+    if name == "uv.toml":
+        return _uv_routing(data, name), True
+    return _pipfile_routing(data), True
+
+
+def requirement_routing_label(mark: str) -> str:
+    """Describe a requirements option without its potentially credential-bearing value."""
+    if mark.startswith("include: "):
+        return mark if re.fullmatch(r"include: [-\w.]+[ =]?[\w./-]+", mark, re.ASCII) else "include: requirement file"
+    if mark.startswith("editable: "):
+        return "editable: requirement"
+    if mark.startswith("unmodeled requirements input"):
+        return "unmodeled requirements input"
+    options = [option for option, _, _ in requirements_line_options(mark) if option in _REQUIREMENTS_OPTIONS]
+    return "requirements option" + (" " + ", ".join(options) if options else "")
+
+
+def is_requirements_file(path: str) -> bool:
+    """Recognize conventional requirements files and text inputs in requirements directories."""
+    parts = PurePosixPath(path.lower()).parts
+    name = parts[-1] if parts else ""
+    return name.endswith((".txt", ".in")) and (name.startswith("requirements") or "requirements" in parts[:-1])
+
+
+def _read_dependency_file(path: str, text: str) -> tuple[list[_DependencyDeclaration], _RoutingMarks, bool]:
+    """Read every declaration and option mark before reducing specs to one per name."""
     name = PurePosixPath(path).name.lower()
     if name == "pyproject.toml":
-        got = _from_pyproject(text)
-        return (got[0], got[1], True) if got else ({}, set(), False)
+        got = _read_pyproject(text)
+        return (got[0], got[1], True) if got else ([], {(f"{name}: unparsed", "")}, False)
     if name == "setup.cfg":
-        return _from_setup_cfg(text), set(), True
+        declarations = _read_setup_cfg(text)
+        return ([], {(f"{name}: unparsed", "")}, False) if declarations is None else (declarations, set(), True)
     if name == "package.json":
-        return _package_json(text)[0], set(), True
-    if name in {"uv.toml", "pip.conf", ".npmrc"}:
-        hit = {
-            ln.strip()
-            for ln in text.splitlines()
-            if re.match(r"\s*(?:index-url|extra-index-url|find-links|registry)", ln, re.I)
-        }
-        return {}, hit, True
-    if name.startswith("requirements") and name.endswith(".txt"):
-        deps, marks = _from_requirements_txt(text)
-        return deps, marks, True
-    return {}, set(), True
+        return _read_package_json(text)[0], set(), True
+    if name in _INSTALLER_CONFIGS or name == ".npmrc" or path.lower() in _UNMODELED_ROOT_CONFIGS:
+        marks, parsed = _installer_config_routing(name, text)
+        return [], marks, parsed
+    if is_requirements_file(path):
+        declarations, marks = _requirements_file(text)
+        fingerprint = _routing_fingerprint(marks)
+        return declarations, {(requirement_routing_label(mark), fingerprint) for mark in marks}, True
+    return [], set(), True
+
+
+def _parse_dependency_file(path: str, text: str) -> tuple[dict[str, tuple[str, bool]], _RoutingMarks, bool]:
+    """Return the retained dependencies, marks and parser availability for one file."""
+    declarations, marks, parsed = _read_dependency_file(path, text)
+    return _retained_declarations(declarations), marks, parsed
+
+
+def _direct_specs_in_file(path: str, text: str) -> dict[str, set[str]]:
+    r"""Return every distinct direct spec declared for each name in one file.
+
+    Examples:
+        >>> text = "demo @ https://example.invalid/demo.whl\ndemo @ ./demo\ndemo>=2"
+        >>> sorted(_direct_specs_in_file("requirements.txt", text)["demo"])
+        ['@ ./demo', '@ https://example.invalid/demo.whl']
+    """
+    declarations, _, _ = _read_dependency_file(path, text)
+    direct: dict[str, set[str]] = {}
+    for name, spec, is_direct in declarations:
+        if is_direct:
+            direct.setdefault(name, set()).add(spec)
+    return direct
 
 
 def is_dependency_manifest(path: str) -> bool:
     """Return whether ``path`` declares or pins dependencies (manifests, lockfiles, ``setup.py``)."""
     name = PurePosixPath(path).name.lower()
     return (
-        name in {"pyproject.toml", "setup.cfg", "setup.py", "package.json", "uv.toml", "pip.conf", ".npmrc", "pipfile"}
+        name in {"pyproject.toml", "setup.cfg", "setup.py", "package.json", ".npmrc"}
+        or name in _INSTALLER_CONFIGS
+        or path.lower() in _UNMODELED_ROOT_CONFIGS
         or name in LOCKFILES
-        or (name.startswith("requirements") and name.endswith(".txt"))
+        or is_requirements_file(path)
     )
+
+
+_ROUTING_PATTERN = (
+    r"index[-_]?url|pypi[-_]url|find[-_]links|no[-_]index|--(default-)?index([[:space:]]|=)"
+    r"|--(build-constraint|constraint|requirement)([[:space:]]|=)|PIP_(CONSTRAINT|REQUIREMENT|TRUSTED_HOST)"
+    r"|(pip|uv)_config_file|uv_(default_)?index|\[\[(source|tool\.[a-z0-9_.-]+\.(index|source))\]\]"
+    r"|^[[:space:]]*-[ifrc]([[:space:]]|=|[a-z0-9./~])"
+    r"|(pip|uv)[^#]*[[:space:]]-[ifrc]([[:space:]]|=|[a-z0-9./~])"
+)
+
+
+def project_routing_scan(repo: str, sha: str, modeled: set[str]) -> set[str]:
+    """Flag installer directives outside files whose routing has already been checked."""
+    try:
+        out = _git(
+            repo, "grep", "--name-only", "-I", "-i", "-E", "-z", "--no-textconv", "-e", _ROUTING_PATTERN, sha, "--"
+        )
+    except GuardError as error:
+        cause = error.__cause__
+        if isinstance(cause, subprocess.CalledProcessError) and cause.returncode == 1:
+            return set()
+        return {"project routing scan failed"}
+    paths = {entry.partition(b":")[2].decode("utf-8", "surrogateescape") for entry in out.split(b"\0") if entry}
+    return {f"{path}: installer routing outside modeled declarations" for path in paths - modeled}
+
+
+def _dependency_ecosystem(path: str) -> str:
+    """Identify the ecosystem of the declarations this manifest reader returns."""
+    return "npm" if PurePosixPath(path).name.lower() == "package.json" else "python"
 
 
 def _collect(
     repo: str, sha: str | None, paths: Sequence[str]
-) -> tuple[dict[str, tuple[str, bool]], set[str], list[str]]:
-    """Merge every dependency file at ``sha`` into one name map, mark set and unparsed-file list."""
-    deps: dict[str, tuple[str, bool]] = {}
-    marks: set[str] = set()
+) -> tuple[dict[tuple[str, str], tuple[str, bool]], set[tuple[str, str, str]], list[str]]:
+    """Merge declarations by ecosystem and name, and scope routing fingerprints to their manifest paths."""
+    deps: dict[tuple[str, str], tuple[str, bool]] = {}
+    marks: set[tuple[str, str, str]] = set()
     unparsed: list[str] = []
     for path in paths if sha else []:
         data = _blob(repo, sha, path)
         if data is None:
             continue
-        got, over, parsed = _parse_dependency_file(path, data.decode("utf-8", "replace"))
-        deps.update(got)
-        marks |= over
+        try:
+            got, over, parsed = _parse_dependency_file(path, data.decode("utf-8-sig"))
+        except UnicodeDecodeError:
+            got, over, parsed = {}, {("unparsed", "")}, False
+        for name, declared in got.items():
+            key = (_dependency_ecosystem(path), name)
+            deps[key] = _preferred_declaration(deps.get(key), declared)
+        marks.update((path, label, fingerprint) for label, fingerprint in over)
         if not parsed:
             unparsed.append(path)
     return deps, marks, unparsed
+
+
+def _direct_declarations(repo: str, sha: str | None, paths: Sequence[str]) -> dict[tuple[str, str], set[str]]:
+    """Return every direct spec declared for each ecosystem and name at ``sha``."""
+    direct: dict[tuple[str, str], set[str]] = {}
+    for path in paths if sha else []:
+        data = _blob(repo, sha, path)
+        if data is None:
+            continue
+        for name, specs in _direct_specs_in_file(path, data.decode("utf-8-sig", "replace")).items():
+            direct.setdefault((_dependency_ecosystem(path), name), set()).update(specs)
+    return direct
+
+
+def _local_include(parent: str, value: str) -> str | None:
+    """Resolve a literal in-tree include without opening a URL or a host file."""
+    value = value.replace("\\", "/")
+    if not value or value.startswith(("/", "~")) or ":" in value or _REQUIREMENTS_VARIABLE.search(value):
+        return None
+    path = posixpath.normpath(posixpath.join(posixpath.dirname(parent), value))
+    return None if path in {".", ".."} or path.startswith("../") else path
+
+
+def _included_requirements(repo: str, sha: str, roots: Sequence[str]) -> set[str]:
+    """Discover literal local include targets recursively, irrespective of their names."""
+    seen: set[str] = set()
+    included: set[str] = set()
+    pending = [path for path in roots if is_requirements_file(path)]
+    while pending:
+        path = pending.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        data = _blob(repo, sha, path)
+        if not data:
+            continue
+        for target in _requirement_includes(path, data.decode("utf-8-sig", "replace")):
+            included.add(target)
+            pending.append(target)
+    return included
+
+
+def _requirement_includes(path: str, text: str) -> Iterable[str]:
+    """Yield in-tree includes from parsed pip option lines."""
+    for line in requirements_logical_lines(text):
+        if line.startswith("-"):
+            for _, kind, value in requirements_line_options(line):
+                if kind == "include" and (target := _local_include(path, value)) is not None:
+                    yield target
+
+
+def _changed_includes(repo: str, base: str, head: str, roots: Sequence[str]) -> set[str]:
+    """Identify changed or removed targets even when neither include directive changed."""
+    targets = _included_requirements(repo, base, roots) | _included_requirements(repo, head, roots)
+    return {path for path in targets if _blob(repo, base, path) != _blob(repo, head, path)}
 
 
 def _edit_distance(a: str, b: str) -> int:
@@ -773,25 +1284,72 @@ def _lookalikes(new_names: Iterable[str], known: Iterable[str]) -> list[tuple[st
     return pairs
 
 
+def _ecosystem_lookalikes(added: set[tuple[str, str]], known: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Compare lookalike names within each package ecosystem."""
+    return sorted(
+        {
+            pair
+            for ecosystem in ("python", "npm")
+            for pair in _lookalikes(
+                (name for kind, name in added if kind == ecosystem),
+                (name for kind, name in known if kind == ecosystem),
+            )
+        }
+    )
+
+
+def _dependency_source_findings(
+    routes: set[tuple[str, str, str]], overrides: list[str], changed: dict[str, str], changed_includes: set[str]
+) -> list[dict[str, object]]:
+    """Report changes to modeled sources and flag changed files whose sources are not compared."""
+    findings = [
+        _finding("dependency_index_override", "high", path, f"index or source override added or changed: {label}")
+        for path, label in sorted({(path, label) for path, label, _ in routes if label in overrides})
+    ]
+    for path in sorted(changed):
+        if PurePosixPath(path).name.lower() in LOCKFILES | {"setup.py"}:
+            findings.append(
+                _finding(
+                    "dependency_source_unchecked",
+                    "medium",
+                    path,
+                    "changed lockfile or setup.py: resolved sources are not compared",
+                )
+            )
+    findings.extend(
+        _finding(
+            "dependency_source_unchecked", "medium", path, "included requirements changed: sources are not compared"
+        )
+        for path in sorted(changed_includes)
+    )
+    return findings
+
+
 def _dependency_report(
     repo: str, base: str | None, head: str, tree: Sequence[str], changed: dict[str, str]
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
     """Compare declared dependencies between the base and the head and report what the contribution introduces."""
-    files = sorted(p for p in tree if is_dependency_manifest(p) and PurePosixPath(p).name.lower() not in LOCKFILES)
+    paths = set(tree) | (_tree_entries(repo, base).keys() if base else set())
+    files = sorted(p for p in paths if is_dependency_manifest(p) and PurePosixPath(p).name.lower() not in LOCKFILES)
     head_deps, head_marks, unparsed = _collect(repo, head, files)
     base_deps, base_marks, _ = _collect(repo, base, files)
     findings = [
-        _finding("dependency_unparsed", "medium", p, "no TOML reader (Python < 3.11): dependency changes not compared")
+        _finding("dependency_unparsed", "medium", p, "could not parse dependency manifest: changes not compared")
         for p in unparsed
     ]
-    added = sorted(set(head_deps) - set(base_deps))
-    direct = sorted(
-        n for n, (spec, is_direct) in head_deps.items() if is_direct and base_deps.get(n, ("", False))[0] != spec
-    )
-    new_marks = sorted(head_marks - base_marks)
+    added_keys = head_deps.keys() - base_deps.keys()
+    added = sorted({name for _, name in added_keys})
+    base_direct = _direct_declarations(repo, base, files)
+    direct_keys = {
+        key for key, specs in _direct_declarations(repo, head, files).items() if specs - base_direct.get(key, set())
+    }
+    direct = sorted({name for _, name in direct_keys})
+    removed_routes = {route for route in base_marks - head_marks if is_requirements_file(route[0])}
+    new_routes = (head_marks - base_marks) | removed_routes
+    new_marks = sorted({label for _, label, _ in new_routes})
     includes = [m for m in new_marks if m.startswith("include: ")]
     overrides = [m for m in new_marks if m not in includes]
-    lookalikes = _lookalikes(added, base_deps)
+    lookalikes = _ecosystem_lookalikes(added_keys, base_deps)
     findings += [
         _finding("dependency_new", "medium", "dependencies", f"new dependency {n} - verify provenance") for n in added
     ]
@@ -799,33 +1357,24 @@ def _dependency_report(
         _finding("dependency_non_index", "high", "dependencies", f"{n} uses a direct URL, VCS or path reference")
         for n in direct
     ]
-    findings += [
-        _finding("dependency_index_override", "high", "dependencies", f"index or source override added: {m}")
-        for m in overrides
-    ]
+    changed_includes = (
+        _changed_includes(repo, base, head, files)
+        if base and any(label.startswith("include: ") for _, label, _ in head_marks | base_marks)
+        else set()
+    )
+    findings += _dependency_source_findings(new_routes, overrides, changed, changed_includes)
     findings += [
         _finding("dependency_include", "medium", "dependencies", f"{m} - the included file's contents are not followed")
         for m in includes
     ]
     findings += [_finding("dependency_lookalike", "high", "dependencies", f"{a} looks like {b}") for a, b in lookalikes]
-    for path in sorted(
-        p for p in changed if PurePosixPath(p).name.lower() in LOCKFILES or PurePosixPath(p).name.lower() == "setup.py"
-    ):
-        findings.append(
-            _finding(
-                "dependency_source_unchecked",
-                "medium",
-                path,
-                "changed lockfile or setup.py: resolved sources are not compared",
-            )
-        )
     report = {
         "added": added,
         "non_index_references": direct,
         "index_overrides": overrides,
         "includes": includes,
         "lookalikes": [f"{a}~{b}" for a, b in lookalikes],
-        "trusted_unchanged": len([n for n in head_deps if n in base_deps and n not in direct]),
+        "trusted_unchanged": len((head_deps.keys() & base_deps.keys()) - direct_keys),
         "unparsed": unparsed,
     }
     return report, findings
@@ -1139,7 +1688,7 @@ def _check_approval(expected: str, approval_file: str) -> None:
     try:
         recorded = Path(approval_file).read_text(encoding="utf-8").strip().splitlines()[0].strip()
     except (OSError, IndexError):
-        raise GuardError("approval missing: the parent must show the scan, ask, then run bind", 3) from None
+        raise GuardError("approval missing: the parent must show the scan, ask, then run record", 3) from None
     if recorded != expected:
         raise GuardError("approval does not match this scan, command, tier, loopback, env and decisions", 3)
 
@@ -1359,7 +1908,7 @@ def check_delta(repo: str, report: dict[str, object], snapshot: Path, copied: Se
 def require_exact_head(repo: str, report: dict[str, object], tree: Path, files: Sequence[str]) -> list[str]:
     """Refuse (exit 3) unless ``tree`` is exactly the approved head: no changed, added or deleted file, no new mode.
 
-    ``files`` are the paths ``listed_files`` gives for ``tree``: ``run`` passes its snapshot, ``bind`` the checkout
+    ``files`` are the paths ``listed_files`` gives for ``tree``: ``run`` passes its snapshot, ``record`` the checkout
     itself, so an approval no run could use is refused before it is recorded. Returns the (empty) delta.
     """
     delta = check_delta(repo, report, tree, files)
@@ -1599,7 +2148,7 @@ def run_command(args: argparse.Namespace) -> int:
 
 
 def _add_run_options(p: argparse.ArgumentParser) -> None:
-    """Add the options ``bind`` and ``run`` must receive identically: the approval hash covers every one of them."""
+    """Add the options ``record`` and ``run`` must receive identically: the approval hash covers every one of them."""
     p.add_argument("--env", action="append")
     p.add_argument("--allow-loopback", action="store_true")
     p.add_argument("--tier", choices=("auto", "sandbox", "env-only"))
@@ -1610,11 +2159,13 @@ def _add_run_options(p: argparse.ArgumentParser) -> None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    """Build the three-subcommand CLI."""
+    """Build the three-subcommand CLI (``scan``, ``record``, ``run``; ``bind`` aliases ``record``)."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     sub = parser.add_subparsers(dest="mode", required=True)
-    for name in ("scan", "bind", "run"):
-        p = sub.add_parser(name)
+    for name in ("scan", "record", "run"):
+        # `bind` is the former name of `record`; the Claude Code worktree-isolation check refuses a command carrying
+        # that bare word (read as the shell builtin), so callers use `record` and the alias keeps older approvals' calls
+        p = sub.add_parser(name, aliases=["bind"] if name == "record" else [])
         p.add_argument("--repo", default=".")
         p.add_argument("--head", required=name != "run")
         group = p.add_mutually_exclusive_group(required=name != "run")
@@ -1626,7 +2177,7 @@ def _parser() -> argparse.ArgumentParser:
             p.add_argument("--bind-file", action="append")
             p.add_argument("--host-sandbox", action="store_true")
             continue
-        if name == "bind":
+        if name == "record":
             p.add_argument("--out", required=True)
         else:
             p.add_argument("--approval-file", required=True)
@@ -1638,7 +2189,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _require_exact_checkout(repo: str, report: dict[str, object]) -> None:
-    """Refuse an exact-head ``bind`` (exit 3) when the checkout already differs from the scanned head.
+    """Refuse an exact-head ``record`` (exit 3) when the checkout already differs from the scanned head.
 
     Every run of such an approval would be refused, and the caller can still ask the user instead. ``run`` repeats the
     check on its own snapshot, since the checkout can change after binding; a file that vanishes mid-check refuses.
@@ -1655,16 +2206,18 @@ def _strip_separator(cmd: list[str]) -> list[str]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Entry point: dispatch ``scan``, ``bind`` or ``run`` and map a guard failure to its exit status."""
+    """Dispatch ``scan``, ``record`` (alias ``bind``) or ``run`` and map a guard failure to its exit status."""
     args = _parser().parse_args(argv)
+    if args.mode == "bind":
+        args.mode = "record"
     try:
         if args.mode == "run":
             return run_command(args)
-        if args.mode == "bind":
+        if args.mode == "record":
             _apply_defaults(args)
             args.cmd = _strip_separator(args.cmd)
             if not args.cmd and args.scope != "run":
-                raise GuardError("bind needs a command after -- unless --scope run", 2)
+                raise GuardError("record needs a command after -- unless --scope run", 2)
             _validate_extra_env(args.env)
         repo = str(Path(args.repo).resolve())
         bound = getattr(args, "bind_file", None) or []
@@ -1678,7 +2231,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             bound=bound,
             host_sandbox=host_sandbox,
         )
-        if args.mode == "bind":
+        if args.mode == "record":
             if "exact-head" in args.decision:
                 _require_exact_checkout(repo, report)
             digest = approval_hash(report, args)

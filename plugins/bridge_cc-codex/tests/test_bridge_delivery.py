@@ -21,7 +21,9 @@ if str(BIN_ROOT) not in sys.path:
 
 import bridge_call  # noqa: E402
 
-INVALID_VERDICT = "invalid model result: model result must contain exactly the seven peer fields"
+INVALID_VERDICT = (
+    "invalid model result: model result must contain exactly the peer fields; only confidence_gaps may be absent"
+)
 HEALTH_WARNING = "Nonblocking health telemetry warning:"
 PEER_FACTS = ("files_touched", "remaining", "blockers")
 _REAL_FDOPEN = os.fdopen

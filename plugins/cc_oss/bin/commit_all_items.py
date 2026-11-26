@@ -35,7 +35,7 @@ from resolve_commit_hooks import commit_with_hooks
 _PLUMBING_TIMEOUT = 30
 #: Seconds allowed for ``git commit``: far above any normal pre-commit hook run, yet bounded so a hook or a signing
 #: prompt waiting on input that never comes cannot hang the resolve run for ever.
-_COMMIT_TIMEOUT = 600
+_COMMIT_TIMEOUT = 540
 
 
 @dataclass(frozen=True)

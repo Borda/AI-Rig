@@ -105,15 +105,15 @@ Follow above and execute its bash blocks inside the `DIRECT_PATH_MODE = "false"`
 
 ### Scope pre-check
 
-**DOCS_TYPING mode** (`DOCS_TYPING_MODE=true`): no Python logic files changed — only docs (md/rst) and/or `.pyi` type stubs (an annotation-only edit to a `.py` file is indistinguishable from logic mechanically, so it stays CODE). `.txt` and `.ipynb` are not docs: a requirements manifest or a notebook is code and gets the qa/OWASP path. Spawn: `foundry:doc-scribe` only; challenger disabled by Step 0; skip all other agents. Proceed directly to agent launch.
+**DOCS_TYPING mode** (`DOCS_TYPING_MODE=true`): no Python logic files changed — only docs (md/rst) and/or `.pyi` type stubs (an annotation-only edit to a `.py` file is indistinguishable from logic mechanically, so it stays CODE). `.txt` and `.ipynb` are not docs: a requirements manifest or a notebook is code and gets the qa/OWASP path. Spawn: `foundry:doc-scribe` only; challenger disabled by Step 0; skip all other agents. Proceed to Step 2 only after the acceptance gate below permits launch.
 
-**TESTS_CI mode** (`TESTS_CI_MODE=true`): test files, `tox.ini` and `Makefile` only. GitHub Actions and other YAML config never qualify — they stay CODE so File scope detection routes workflows to `oss:cicd-steward` and the CI status, acceptance gate and challenger still run. Spawn: `foundry:qa-specialist` + `foundry:linting-expert`; challenger disabled by Step 0; skip all other agents. Proceed directly to agent launch.
+**TESTS_CI mode** (`TESTS_CI_MODE=true`): test files, `tox.ini` and `Makefile` only. GitHub Actions and other YAML config never qualify — they stay CODE so File scope detection routes workflows to `oss:cicd-steward` and the CI status, acceptance gate and challenger still run. Spawn: `foundry:qa-specialist` + `foundry:linting-expert`; challenger disabled by Step 0; skip all other agents. Proceed to Step 2 only after the acceptance gate below permits launch.
 
-**CI/CD-only mode** (`CICD_ONLY_MODE=true`): no `.py`/`.md`/`.rst` and no `OTHER_CODE_FILES` (notebook, manifest, config). Spawn: `oss:cicd-steward` + Agent 1 + pinned Agent 2 + Agent 7 (if `CHALLENGE_ENABLED=true`) + Codex; skip Agents 3–6. Proceed directly to agent launch.
+**CI/CD-only mode** (`CICD_ONLY_MODE=true`): no `.py`/`.md`/`.rst` and no `OTHER_CODE_FILES` (notebook, manifest, config). Spawn: `oss:cicd-steward` + Agent 1 + pinned Agent 2 + Agent 7 (if `CHALLENGE_ENABLED=true`) + Codex; skip Agents 3–6. Proceed to Step 2 only after the acceptance gate below permits launch.
 
-**Docs-only mode** (`DOCS_ONLY_MODE=true`): no `.py`, no CI/CD and no `OTHER_CODE_FILES`. **foundry:doc-scribe (Agent 4) leads** — Agent 1 explicitly skipped (NOT for docs clause); linked-issue spawns also skip Agent 1. Spawn: Agent 4 + Agent 7 (if `CHALLENGE_ENABLED=true`) + Codex; skip Agents 1, 2, 3, 5, 6. Proceed directly to agent launch.
+**Docs-only mode** (`DOCS_ONLY_MODE=true`): no `.py`, no CI/CD and no `OTHER_CODE_FILES`. **foundry:doc-scribe (Agent 4) leads** — Agent 1 explicitly skipped (NOT for docs clause); linked-issue spawns also skip Agent 1. Spawn: Agent 4 + Agent 7 (if `CHALLENGE_ENABLED=true`) + Codex; skip Agents 1, 2, 3, 5, 6. Proceed to Step 2 only after the acceptance gate below permits launch.
 
-**Docs + CI/CD mode** (`DOCS_CICD_MODE=true`): no Python and no `OTHER_CODE_FILES`. Spawn: `oss:cicd-steward` (Agent 8) + pinned Agent 2 + `foundry:doc-scribe` (Agent 4) + Agent 7 (if `CHALLENGE_ENABLED=true`) + Codex; skip Agents 1, 3, 5, 6. Proceed directly to agent launch.
+**Docs + CI/CD mode** (`DOCS_CICD_MODE=true`): no Python and no `OTHER_CODE_FILES`. Spawn: `oss:cicd-steward` (Agent 8) + pinned Agent 2 + `foundry:doc-scribe` (Agent 4) + Agent 7 (if `CHALLENGE_ENABLED=true`) + Codex; skip Agents 1, 3, 5, 6. Proceed to Step 2 only after the acceptance gate below permits launch.
 
 Before spawning agents (Python mode only — all three mode flags false), classify diff:
 
@@ -154,13 +154,13 @@ _REVIEW_SCOPE_FILE="${TMPDIR:-/tmp}/oss-review-scope-${CLEAN_ARGS}-${CSID}"
     echo "SCOPE=$SCOPE"
     echo "CHORE_DEPS=$CHORE_DEPS"
 } > "$_REVIEW_SCOPE_FILE"
-# fail-safe default — codemap block overrides with review_impact_tier.py verdict; skipped/absent codemap keeps FULL
+# fail-safe default, cause `codemap unavailable` (codemap disabled or its block never ran); codemap block overrides with review_impact_tier.py verdict or a named cause
 echo "FULL · impact unknown: codemap unavailable" > "${TMPDIR:-/tmp}/oss-review-impact-${CLEAN_ARGS}-${CSID}"
 ```
 
 **Impact tier** — review depth follows the code path the change sits on, never its line or file count. A few-line change to a private helper on the main feature path can break the main user story; a larger tweak to a plotting helper reaches nobody. `review_impact_tier.py` (codemap `diff-impact` + `fn-blast`) prints `FULL` or `LIGHT` plus reason:
 
-- `FULL` — any changed symbol, public or private, reaches a public function outside tests/leaf modules (main path), or a changed main-path module has ≥5 importers, or a module-level main-path change. **Unknown impact (codemap off, query failed, unmapped file) = `FULL`.**
+- `FULL` — any changed symbol, public or private, reaches a public function outside tests/leaf modules (main path), or a changed main-path module has ≥5 importers, or a module-level main-path change. **Unknown impact = `FULL`**, and the line names its cause after `impact unknown:` — `codemap unavailable` (disabled or not run), `codemap not installed`, `index stale`, `index root mismatch`, `diff-impact query failed`, `unmapped <file>`, `fn-blast failed for <symbol>`, `more than 12 changed symbols`. Copy the line verbatim into the report's `Impact:` field; never shorten it to "impact unknown".
 - `LIGHT` — every change and every transitive caller stays in tests, leaf modules (`viz`, `plot`, `examples`, `docs`, `notebooks`), or uncalled private code.
 
 `conftest.py`, `docs/conf.py`, setup/release/build entrypoints and `scripts/` are always `FULL`.
@@ -213,11 +213,13 @@ Skip if `DIRECT_PATH_MODE=true`. `FILL_GAPS_MODE=true` → skip Stage 1 only (th
 PR mode → load and follow `modes/acceptance-gate.md`; its terminal jump loads `modes/post-agent.md` at Step 5b and Step 7.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in REPLY_MODE) REPLY_MODE=$_SV ;; WT_ENABLED) WT_ENABLED=$_SV ;; FILL_GAPS_MODE) FILL_GAPS_MODE=$_SV ;; DIRECT_PATH_MODE) DIRECT_PATH_MODE=$_SV ;; REVIEW_FILE) REVIEW_FILE=$_SV ;; esac; done < "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
 [ "${DIRECT_PATH_MODE:-false}" = "true" ] && exit 0
 IFS= read -r REVIEW_SKILL_DIR < "${TMPDIR:-/tmp}/review-skill-dir-${CSID}" 2>/dev/null || REVIEW_SKILL_DIR=""
-cat "$REVIEW_SKILL_DIR/modes/acceptance-gate.md"  # timeout: 5000
+# rendered, not cat: the gate's fixed blocks carry the plugin-root bootstrap token
+python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$REVIEW_SKILL_DIR/modes/acceptance-gate.md"  # timeout: 10000
 ```
 
 ### Direct report fast-path

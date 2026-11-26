@@ -391,6 +391,43 @@ def test_windows_cleanup_failure_preserves_taskkill_diagnostics(
     assert run.call_args.kwargs["timeout"] == 2
 
 
+@pytest.mark.parametrize(
+    "module_path",
+    [
+        pytest.param(RUN_GATES, id="gate-runner"),
+        pytest.param(PLUGIN_ROOT / "tests" / "local_reviewer_denial_probe.py", id="reviewer-probe"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("leader_exit", "retry_code", "proven"),
+    [
+        pytest.param(1, 128, True, id="member-exited-before-kill-and-nothing-left"),
+        pytest.param(1, 0, True, id="member-exited-before-kill-and-retry-ended-the-rest"),
+        pytest.param(1, 255, False, id="retry-still-cannot-end-a-member"),
+        pytest.param(None, 128, False, id="leader-still-running"),
+    ],
+)
+def test_windows_cleanup_proves_a_tree_whose_member_exited_during_the_kill(
+    monkeypatch: pytest.MonkeyPatch, module_path: Path, leader_exit: int | None, retry_code: int, proven: bool
+) -> None:
+    """A tree member that exits during the kill still lets a second pass prove cleanup, never a live leader."""
+    monkeypatch.syspath_prepend(str(module_path.parent))
+    module = load_module_scoped("codex_rig_cleanup_member_race", module_path, monkeypatch)
+    process = mock.Mock(spec=subprocess.Popen, pid=42)
+    process.poll.return_value = leader_exit
+    first = subprocess.CompletedProcess([], 255, stdout=b"", stderr=b"There is no running instance of the task.")
+    run = mock.Mock(side_effect=[first, subprocess.CompletedProcess([], retry_code, stdout=b"", stderr=b"")])
+    monkeypatch.setattr(module.subprocess, "run", run)
+
+    if proven:
+        module.terminate_process(process, "win32")
+        assert run.call_count == 2
+    else:
+        with pytest.raises(Exception, match="windows-process-tree-cleanup-unproven") as caught:
+            module.terminate_process(process, "win32")
+        assert "returncode=255" in str(caught.value)
+
+
 def test_reviewer_cleanup_diagnostics_keep_safe_failure_code(monkeypatch: pytest.MonkeyPatch) -> None:
     """Reviewer evidence retains the cleanup token while excluding raw taskkill diagnostics."""
     module = load_module_scoped(

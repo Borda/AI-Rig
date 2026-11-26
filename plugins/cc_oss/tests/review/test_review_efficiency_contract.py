@@ -301,7 +301,7 @@ def test_review_code_consolidator_runs_on_sonnet_and_escalates_once_on_any_respa
     missing role ``blocked``.
     """
     post_agent = " ".join((_REVIEW / "modes/post-agent.md").read_text(encoding="utf-8").split())
-    fill_gaps = " ".join((_REVIEW / "modes/fill-gaps.md").read_text(encoding="utf-8").split())
+    fill_gaps = (_REVIEW / "modes/fill-gaps.md").read_text(encoding="utf-8").splitlines()
 
     consolidator = post_agent.split("Spawn `$CONSOLIDATOR_AGENT` with this compact prompt", 1)[1][:1500]
     assert "a `foundry:doc-scribe` or `foundry:qa-specialist` consolidator passes neither" in consolidator
@@ -313,7 +313,8 @@ def test_review_code_consolidator_runs_on_sonnet_and_escalates_once_on_any_respa
     assert "a `presence: missing` assessment carries null judgment and `readiness: incomplete`" in rule
     respawn = post_agent.split("Gate failure, re-spawn unused", 1)[1][:400]
     assert '`model="opus"`, `effort="high"` for a `foundry:sw-engineer` consolidator' in respawn
-    carry = fill_gaps.split("Exit 1, re-spawn unused", 1)[1][:400]
+    carry_routes = fill_gaps[fill_gaps.index("### Carry check") + 1 :]
+    carry = next(line for line in carry_routes if line.startswith("  - Re-spawn unused"))
     assert '`model="opus"`, `effort="high"` for a `foundry:sw-engineer` consolidator' in carry
 
 

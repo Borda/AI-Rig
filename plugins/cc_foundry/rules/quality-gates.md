@@ -62,7 +62,7 @@ After each validated round, print the progress table exactly: `| Iteration | Sec
 
 > Before applying, Read `_full/quality-gates.md` §Confidence Block (required on all analysis tasks); binding inline. If it cannot be read, stop and report the missing prerequisite.
 
-Any rendered score with gaps (agent close, report, chat summary): bare `**Gaps**:` line, never a list item (`- Gaps:` ✗); each gap `- (-0.NN) <gap>`, deduction first, ASCII `-`, two decimals. The one-line `Confidence:` header field is exempt.
+Any rendered score with gaps (agent close, report, chat summary): bare `**Gaps**:` line, never a list item (`- Gaps:` ✗); each gap `- (-0.NN) <gap>`, deduction first, ASCII `-`, two decimals. The one-line `Confidence:` header field is exempt. Score = 1.0 minus listed deductions: no constant stands in for a missing score, a null or blocked contribution is excluded and named, a required control is enforced (never a token deduction), and a closure note is no gap.
 
 ## Internal Quality Loop (analysis tasks only)
 

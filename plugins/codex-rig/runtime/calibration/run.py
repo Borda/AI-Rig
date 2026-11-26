@@ -1678,6 +1678,7 @@ def check_shared_scripts(run: CalibrationRun) -> None:
     if run.paths.layout == "plugin":
         cli_paths["code-review-prepare"] = run.paths.skills_dir / "code-review" / "review_prepare.py"
         cli_paths["code-review-context"] = run.paths.skills_dir / "code-review" / "review_context.py"
+        cli_paths["code-review-run-state"] = run.paths.skills_dir / "code-review" / "review_run_state.py"
         cli_paths["create-run"] = run.paths.create_run
         cli_paths["remediation-branch"] = run.paths.shared_dir / "remediation_branch.py"
         cli_paths["release-evidence"] = run.paths.shared_dir / "release_evidence.py"
@@ -1692,6 +1693,9 @@ def check_shared_scripts(run: CalibrationRun) -> None:
         cli_paths["challenge-resolve-evidence"] = run.paths.skills_dir / "challenge-resolve" / "validate_evidence.py"
         cli_paths["challenge-resolve-chunks"] = run.paths.skills_dir / "challenge-resolve" / "chunk_diff.py"
         cli_paths["codemap-adapter"] = run.paths.codemap_adapter
+        cli_paths["benchmark-claims"] = run.paths.shared_dir / "benchmark_claims.py"
+        cli_paths["gap-ledger"] = run.paths.shared_dir / "gap_ledger.py"
+        cli_paths["gate-env-provision"] = run.paths.shared_dir / "gate_env_provision.py"
         if run.paths.github_read is None:
             raise RuntimeError("run.paths.github_read must not be None")
         cli_paths["github-read"] = run.paths.github_read

@@ -31,6 +31,9 @@ git merge-base --is-ancestor MERGE_HEAD "origin/$BASE_REF" 2>/dev/null \
     || { echo "! BLOCKED — The in-progress merge is not a merge of origin/$BASE_REF — abort it (git merge --abort) or finish it yourself, then re-run /oss:resolve"; exit 1; }  # timeout: 3000
 [ "$(git rev-parse MERGE_HEAD)" = "$(git rev-parse "origin/$BASE_REF" 2>/dev/null)" ] \
     || echo "⚠ origin/$BASE_REF moved since this merge started — finish it, then re-run /oss:resolve to merge the newer target"  # timeout: 3000
+_BEFORE=$(git rev-parse --verify HEAD) && _BASE_HEAD=$(git rev-parse --verify MERGE_HEAD) \
+    && printf 'base %s %s\n' "$_BEFORE" "$_BASE_HEAD" >> "${TMPDIR:-/tmp}/resolve-remote-imports-${CSID}" \
+    || { echo "! BLOCKED — could not record the base being merged for the final remote comparison"; exit 1; }
 git diff --name-only --diff-filter=U  # timeout: 3000
 ```
 
@@ -50,8 +53,14 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # 1. update source branch (ff-only; non-ff = force-pushed, use local)
 [ -n "${REMOTE_HEAD_REF:-}" ] || { IFS= read -r REMOTE_HEAD_REF < "${TMPDIR:-/tmp}/resolve-remote-head-ref-${CSID}" 2>/dev/null || REMOTE_HEAD_REF=""; }
 [ -n "$REMOTE_HEAD_REF" ] || { echo "! BLOCKED — remote PR head unresolved"; exit 1; }
+_IMPORTS="${TMPDIR:-/tmp}/resolve-remote-imports-${CSID}"
+_BEFORE=$(git rev-parse --verify HEAD) || exit 1
+# An unmatched pull-start leaves the final comparison unverified if this call is interrupted.
+printf 'pull-start %s %s\n' "$_BEFORE" "$_BEFORE" >> "$_IMPORTS" || exit 1
 git pull "${FORK_REMOTE:-origin}" "$REMOTE_HEAD_REF" --ff-only 2>/dev/null \
     || echo "⚠ PR branch not fast-forwardable — proceeding with local state"  # timeout: 6000
+_AFTER=$(git rev-parse --verify HEAD) || exit 1
+printf 'pull-end %s %s\n' "$_BEFORE" "$_AFTER" >> "$_IMPORTS" || exit 1
 # 2. update target branch — remote-tracking ref (required), then the local branch (ff-only, best effort)
 git fetch origin "$BASE_REF" || { echo "! BLOCKED — fetch origin/$BASE_REF failed — cannot guarantee base is current; check network/auth and retry"; exit 1; }  # timeout: 6000
 if git show-ref --verify --quiet "refs/heads/$BASE_REF"; then
@@ -59,7 +68,9 @@ if git show-ref --verify --quiet "refs/heads/$BASE_REF"; then
         || echo "⚠ local $BASE_REF not updated (diverged, or checked out in another worktree) — merging origin/$BASE_REF, which is current"
 fi  # timeout: 3000
 # 3. merge — no-commit to inspect conflicts before finalizing
-git merge "origin/$BASE_REF" --no-commit --no-ff; _MERGE_RC=$?  # timeout: 6000
+_BASE_HEAD=$(git rev-parse --verify "refs/remotes/origin/$BASE_REF^{commit}") || exit 1
+printf 'base %s %s\n' "$_AFTER" "$_BASE_HEAD" >> "$_IMPORTS" || exit 1
+git merge "$_BASE_HEAD" --no-commit --no-ff -m "Merge remote-tracking branch 'origin/$BASE_REF' into $HEAD_REF"; _MERGE_RC=$?  # timeout: 6000
 # rc!=0 with no MERGE_HEAD = merge refused (dirty tree, unrelated histories), not "no conflicts"; rc 0 with no MERGE_HEAD = already up to date
 if [ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ]; then echo "MERGE_STATE=in-progress"
 elif [ "$_MERGE_RC" = 0 ]; then echo "MERGE_STATE=up-to-date"
@@ -112,7 +123,7 @@ if [ -n "$IMPL_DIR" ] && [ -f "$IMPL_DIR/approved-hooks.txt" ]; then
     python "$PLUGIN_ROOT/bin/resolve_commit_hooks.py" --refresh-approval --base "origin/$BASE_REF" --head "$PR_HEAD_OID" --approved-file "$IMPL_DIR/approved-hooks.txt" --decision-file "$IMPL_DIR/hooks-decision.txt" || { : > "$IMPL_DIR/approved-hooks.txt"; printf 'stale\n' > "$IMPL_DIR/hooks-decision.txt"; echo "⚠ hook approval refresh failed — hooks stay disabled for the rest of this run"; }  # timeout: 30000
     IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" || [ -n "$RESOLVE_APPROVED_HOOKS" ] || RESOLVE_APPROVED_HOOKS=""
 fi
-python "$PLUGIN_ROOT/bin/resolve_commit_hooks.py" --commit-merge # timeout: 6000
+python "$PLUGIN_ROOT/bin/resolve_commit_hooks.py" --commit-merge # timeout: 600000
 ```
 
 **Hook approval before every merge commit.** The merge can change hook inputs after the approval was recorded (a base-side `package.json` bump), and a digest that no longer matches refuses the commit and leaves the merge pending. So each merge-commit block (this one, Step 7b's, and both again when Step 9.0 re-merges) first runs `resolve_commit_hooks.py --refresh-approval` and prints one `hooks-refresh=` line:
@@ -242,7 +253,7 @@ if [ -n "$IMPL_DIR" ] && [ -f "$IMPL_DIR/approved-hooks.txt" ]; then
     python "$PLUGIN_ROOT/bin/resolve_commit_hooks.py" --refresh-approval --base "origin/$BASE_REF" --head "$PR_HEAD_OID" --approved-file "$IMPL_DIR/approved-hooks.txt" --decision-file "$IMPL_DIR/hooks-decision.txt" || { : > "$IMPL_DIR/approved-hooks.txt"; printf 'stale\n' > "$IMPL_DIR/hooks-decision.txt"; echo "⚠ hook approval refresh failed — hooks stay disabled for the rest of this run"; }  # timeout: 30000
     IFS= read -r RESOLVE_APPROVED_HOOKS < "$IMPL_DIR/approved-hooks.txt" || [ -n "$RESOLVE_APPROVED_HOOKS" ] || RESOLVE_APPROVED_HOOKS=""
 fi
-python "$PLUGIN_ROOT/bin/resolve_commit_hooks.py" --commit-merge # timeout: 6000
+python "$PLUGIN_ROOT/bin/resolve_commit_hooks.py" --commit-merge # timeout: 600000
 ```
 
 Print conflict report:

@@ -78,6 +78,14 @@ Generic marker discipline ships in the global template (§Testing). This reposit
 - From the repository root, use `.venv/bin/python -m pytest -m installed_plugin` or `.venv/bin/python -m pytest -m "packaging and not live"`; omit paths for project-wide discovery. On Windows use `.venv\Scripts\python.exe`.
 - Behaviour vs bookkeeping checks follow the global template (§Testing); this repository's bookkeeping hook example is `check-shared-drift`.
 
+## Multi-OS Verification
+
+This repository supports Linux, macOS, and native Windows, so the shipped multi-OS rules always apply (global template §Multi-OS Executables; packaged `shared/global-baseline-details.md` carries the detail).
+
+- Windows is a CI gate, never a follow-up. Before handoff, a change touching subprocess output, file or sentinel writes, paths, environment, config locations, timeouts or fixtures is walked against those bullets (decode in pipe threads, CRLF sentinels, Git Bash paths, per-OS config, tight timeouts); macOS green is not evidence.
+- A Windows-only failure is fixed in the code, or in an OS-aware test that keeps the case on every OS, never by a blanket skip.
+- A fixture or test over 10 s on a Windows leg is optimized (one build per run shared across xdist workers, fewer spawned processes), not given a longer deadline.
+
 ## Project Workflow
 
 - Python minimum: 3.10. The repository root is an environment anchor, not an installable package.

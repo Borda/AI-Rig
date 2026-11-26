@@ -225,6 +225,12 @@ def _build_review_inputs(
             capture_output=True,
         ).stdout
         (run / "files.txt").write_bytes(inventory)
+        sizes = subprocess.run(
+            ["git", "-C", str(repository), "diff", "--no-renames", "--numstat", "HEAD", "--"],
+            check=True,
+            capture_output=True,
+        ).stdout
+        (run / "numstat.txt").write_bytes(sizes)
         if source_name.endswith(".py") or second_file:
             # Exercise the real optional-provider fallback independent of the developer's Codemap installation.
             empty_path = tmp_path / "empty-provider-path"

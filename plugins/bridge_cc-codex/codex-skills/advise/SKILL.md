@@ -36,6 +36,10 @@ Call `bridge_advise` with required `task` and current `binding_id`; preserve cal
 
 Return compact envelope; retain workspace-relative `transcript_path` and `incident` references, but never copy transcript-only peer `details`. Follow up with fresh call, never session resumption.
 
+<!-- policy-sibling: plugins/bridge_cc-codex/claude-skills/review/SKILL.md, plugins/bridge_cc-codex/claude-skills/advise/SKILL.md, plugins/bridge_cc-codex/claude-skills/implement/SKILL.md, plugins/bridge_cc-codex/claude-skills/result/SKILL.md, plugins/bridge_cc-codex/codex-skills/review/SKILL.md, plugins/bridge_cc-codex/codex-skills/implement/SKILL.md (confidence reporting) -->
+
+Report confidence from the envelope: `confidence` is a number only when `status=complete`, derived by the bridge as 1.00 minus the deductions in `confidence_gaps`; otherwise it is `null` and `confidence_null_reason` names the exact cause from the closed set in `rules/envelope.md` §Confidence. Report that code beside the status, carry each `confidence_gaps` line as a named gap, and never substitute a number.
+
 <!-- policy-sibling: plugins/bridge_cc-codex/claude-skills/advise/SKILL.md (provider-stop guidance; intentional difference: the peer is Claude and calls use model arguments, not `--model`) -->
 
 On `status=blocked`, open the JSON file referenced by `incident`; inspect its `fault`.

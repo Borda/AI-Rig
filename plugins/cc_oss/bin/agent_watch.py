@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -43,6 +45,8 @@ _ENVELOPE_ONLY = "-"
 #: Seconds a deliverable may predate its batch file and still count: the batch file is written in the spawn response,
 #: possibly a moment after the spawn call itself; a stale file from an earlier run is minutes older.
 _SPAWN_SLACK_S = 5
+#: A Git Bash drive prefix (`/c/dir`, or `/cygdrive/c/dir`) that native Windows Python does not resolve.
+_MSYS_DRIVE = re.compile(r"^(?:/cygdrive)?/([A-Za-z])/")
 
 
 @dataclass(frozen=True)
@@ -55,6 +59,26 @@ class AgentVerdict:
     status: str
     elapsed_s: int
     seconds_left: int
+
+
+def msys_to_native(raw: str, windows: bool) -> str:
+    """Map a Git Bash drive path to its native Windows form, leaving every other path unchanged.
+
+    A watch row is written from a shell session whose paths read ``/c/Users/me/out.md``; a native Windows Python reads
+    that as a path on the current drive and never finds the deliverable, so the agent would stay pending forever.
+
+    Args:
+        raw: Deliverable path as written in the batch file.
+        windows: Whether the running interpreter is native Windows.
+
+    Returns:
+        ``C:/Users/me/out.md`` for ``/c/Users/me/out.md`` on Windows, otherwise ``raw``.
+
+    Examples:
+        >>> msys_to_native("/c/Users/me/out.md", True), msys_to_native("/c/Users/me/out.md", False)
+        ('C:/Users/me/out.md', '/c/Users/me/out.md')
+    """
+    return _MSYS_DRIVE.sub(lambda match: f"{match.group(1).upper()}:/", raw, count=1) if windows else raw
 
 
 def classify(deliverable: str, deadline_epoch: float, now: float, spawned: float | None = None) -> str:
@@ -74,8 +98,9 @@ def classify(deliverable: str, deadline_epoch: float, now: float, spawned: float
         >>> classify("-", 100.0, 50.0), classify("-", 100.0, 150.0)
         ('awaiting-envelope', 'timed_out')
     """
-    if deliverable != _ENVELOPE_ONLY and Path(deliverable).is_file():
-        stat = Path(deliverable).stat()
+    path = Path(msys_to_native(deliverable, os.name == "nt"))
+    if deliverable != _ENVELOPE_ONLY and path.is_file():
+        stat = path.stat()
         if stat.st_size > 0 and (spawned is None or stat.st_mtime >= spawned - _SPAWN_SLACK_S):
             return "done"
     if now >= deadline_epoch:

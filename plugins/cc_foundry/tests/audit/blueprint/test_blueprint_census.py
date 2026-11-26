@@ -10,6 +10,7 @@ data normalization could alias, and a plugin helper whose source deletes trees o
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -22,6 +23,7 @@ _ROOT = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(_ROOT / "plugins" / "cc_foundry" / "bin"))
 
 import build_blueprint_manifest as bbm  # noqa: E402
+from _worker_shared import shared_artifact  # noqa: E402
 
 #: ``.`` or ``source`` where a command starts: line start, after a separator or ``then``/``do``/``else``.
 _SOURCING = re.compile(r"(?:^|[;&|({]|\bthen|\bdo|\belse)\s*(?:\.|source)\s+[\"'$\w/.]", re.MULTILINE)
@@ -51,6 +53,8 @@ _SCAN_FALSE_POSITIVES = {
     "detect_codemap.py": '"checkout" is a project-name value in a doctest',
     "fetch_pr_intel.py": '"commit" is a record key and source name; the script only runs gh reads',
     "gh_batch_query.py": '"commit" is a JSON record key',
+    "resolve_item_drift.py": '"commit" is the object type `git cat-file` reports; the script runs only git reads',
+    "resolve_leftovers.py": '"stash" is an enum value and a `stash list` read; the script runs only git reads',
     "vitality_extract.py": '"push" is a CI event name',
 }
 #: A single- or double-quoted string, removed before counting heredoc openers the shell would see.
@@ -128,9 +132,15 @@ def _admitted_entries() -> list[tuple[str, str, str]]:
 
 
 @pytest.fixture(scope="module")
-def admitted() -> list[tuple[str, str, str]]:
-    """Every entry the generator emits for the shipped plugins."""
-    return _admitted_entries()
+def admitted(tmp_path_factory: pytest.TempPathFactory, worker_id: str) -> list[tuple[str, str, str]]:
+    """Every entry the generator emits for the shipped plugins, built once per run and shared between workers."""
+
+    def build(path: Path) -> None:
+        """Write the rebuilt corpus as JSON for the other workers."""
+        path.write_text(json.dumps(_admitted_entries()), encoding="utf-8")
+
+    corpus = shared_artifact(tmp_path_factory, worker_id, "blueprint-census-admitted.json", build)
+    return [(source, kind, text) for source, kind, text in json.loads(corpus.read_text(encoding="utf-8"))]
 
 
 #: Rebuilding the corpus runs the danger analysis on every shipped block (about 12 s on a laptop, an order of magnitude

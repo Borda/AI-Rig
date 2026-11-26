@@ -27,7 +27,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass
-from typing import Any, TextIO
+from typing import Any, BinaryIO, TextIO
 
 #: MCP protocol revisions the server accepts; an unsupported client request falls back to the last entry.
 PROTOCOLS = ("2025-06-18", "2025-11-25")
@@ -337,16 +337,24 @@ class Server:
             return
         self._request(method, request_id, params)
 
-    def run(self, source: TextIO) -> None:
-        """Read bounded JSON lines and cancel every unresolved decision at end of input."""
-        while line := source.readline(MAX_LINE + 1):
-            if len(line) > MAX_LINE:
-                while line and not line.endswith("\n"):
-                    line = source.readline(MAX_LINE + 1)
+    def run(self, source: BinaryIO) -> None:
+        """Decode each bounded UTF-8 frame independently and cancel pending decisions at EOF."""
+        # UTF-8 uses up to four bytes per character. Allow the extra CR in CRLF before checking character length.
+        maximum_bytes = 4 * MAX_LINE + 1
+        while line := source.readline(maximum_bytes + 1):
+            if len(line) > maximum_bytes:
+                while line and not line.endswith(b"\n"):
+                    line = source.readline(maximum_bytes + 1)
                 self.error(None, -32700, "message exceeds transport limit")
                 continue
+            if line.endswith(b"\r\n"):
+                line = line[:-2] + b"\n"
             try:
-                message = json.loads(line, object_pairs_hook=_object, parse_constant=_invalid_constant)
+                decoded = line.decode("utf-8")
+                if len(decoded) > MAX_LINE:
+                    self.error(None, -32700, "message exceeds transport limit")
+                    continue
+                message = json.loads(decoded, object_pairs_hook=_object, parse_constant=_invalid_constant)
             except (ValueError, RecursionError):
                 self.error(None, -32700, "invalid JSON")
                 continue
@@ -361,9 +369,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stdio", required=True, action="store_true")
     parser.parse_args(argv)
     # MCP stdio is UTF-8 even when a native Windows console uses another encoding.
-    sys.stdin.reconfigure(encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
-    Server(sys.stdout, sys.stderr).run(sys.stdin)
+    Server(sys.stdout, sys.stderr).run(sys.stdin.buffer)
     return 0
 
 

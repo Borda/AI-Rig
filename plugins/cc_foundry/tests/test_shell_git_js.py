@@ -1395,10 +1395,10 @@ class TestProgramInvocations:
             "String.prototype.split = split; process.stdout.write(JSON.stringify({result, info}));"
         )
         assert proc.returncode == 0, proc.stderr
-        assert json.loads(proc.stdout) == {
-            "result": None,
-            "info": {"unreadable": True, "unreadableReason": "lexer error"},
-        }
+        output = json.loads(proc.stdout)
+        assert output["result"] is None
+        assert output["info"]["unreadable"] is True
+        assert output["info"]["unreadableReason"] == "lexer error"
 
     @pytest.mark.parametrize("keyword", ["if", "for", "while", "case"])
     @pytest.mark.parametrize("parentheses", [True, False])

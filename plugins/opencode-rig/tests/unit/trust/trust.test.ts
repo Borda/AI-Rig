@@ -33,6 +33,24 @@ function reviewRepo(): { root: string; commit: string } {
 const REF = "refs/rig-review/pr-563-0123456789ab"
 
 describe("trust records", () => {
+  it("preserves live trust across recreation at the same path and commit", () => {
+    const project = Project.withCommit()
+    const commit = project.git("rev-parse", "HEAD")
+    const artifactRoot = project.path("artifacts")
+    mkdirSync(join(tmpdir(), "opencode"), { recursive: true })
+    const worktree = mkdtempSync(join(tmpdir(), "opencode/review-"))
+    try {
+      project.git("worktree", "add", "--detach", worktree, commit)
+      writeTrust(artifactRoot, { commit, worktree, ref: REF, words: TRUST_WORDS })
+      project.git("worktree", "remove", worktree)
+      expect(trustFor(artifactRoot, worktree).status).toBe("absent")
+      project.git("worktree", "add", "--detach", worktree, commit)
+      expect(trustFor(artifactRoot, worktree).status).toBe("trusted")
+    } finally {
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
   it("records a matching commit and resolves it for its worktree", () => {
     const review = reviewRepo()
     try {
@@ -113,6 +131,11 @@ describe("trust records", () => {
 })
 
 describe("effective command and own worktrees", () => {
+  it.each([";", "|", "||", "\n", "&"])("refuses a directory prefix joined by %j", (operator) => {
+    const directory = process.cwd().replaceAll("\\", "/")
+    expect(effectiveCommand(`cd "${directory}" ${operator} pytest`, directory)).toBeUndefined()
+  })
+
   it("parses one leading cd and leaves a plain command in the project root", () => {
     expect(effectiveCommand("pytest tests -q", "/repo")).toEqual({
       directory: "/repo",

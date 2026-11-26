@@ -194,6 +194,23 @@ function gitAllowedClass(words: string[]): GuardrailClass {
   return ["add", "checkout", "restore", "switch", "rm"].includes(verb) ? "other" : "read-only-git"
 }
 
+/** Admit only authentication status options that leave credentials masked. */
+function authStatusSafe(args: string[]): boolean {
+  const host = /^[A-Za-z0-9.][A-Za-z0-9.-]*$/
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!
+    if (arg === "--active") continue
+    const value =
+      arg === "--hostname" || arg === "-h"
+        ? args[++index]
+        : arg.startsWith("--hostname=")
+          ? arg.slice("--hostname=".length)
+          : undefined
+    if (!host.test(value ?? "")) return false
+  }
+  return true
+}
+
 /** Recognize only explicit GitHub read forms; every other literal invocation is guarded. */
 function githubClass(words: string[]): GuardrailClass {
   if (words[1]?.startsWith("-")) return "unparsed-git"
@@ -213,7 +230,10 @@ function githubClass(words: string[]): GuardrailClass {
     return "read-only-git"
   }
   if (words[2]?.startsWith("-")) return "unparsed-git"
-  if (words[1] === "auth") return words[2] === "status" ? "read-only-git" : "remote-mutation"
+  if (words[1] === "auth") {
+    if (words[2] !== "status") return "remote-mutation"
+    return authStatusSafe(words.slice(3)) ? "read-only-git" : "unparsed-git"
+  }
   if (
     !"pr issue repo run workflow release gist label secret variable project alias extension cache codespace org ruleset attestation"
       .split(" ")
@@ -221,6 +241,20 @@ function githubClass(words: string[]): GuardrailClass {
   )
     return "remote-mutation"
   return ["view", "list", "status", "diff", "checks"].includes(words[2] ?? "") ? "read-only-git" : "remote-mutation"
+}
+
+/** Identify an implicit checkout path that has unstaged tracked changes. */
+export function checkoutMayDiscard(fragment: string, cwd: string): boolean {
+  const match =
+    /^git[ \t]+checkout[ \t]+(?:(?:-q|--quiet|--guess|--no-guess)[ \t]+)*(?:"([^"\\$`]+)"|'([^']+)'|([^\s"'\\$`*?[\]{}()<>;&|]+))$/.exec(
+      fragment,
+    )
+  const operand = match?.[1] ?? match?.[2] ?? match?.[3]
+  if (!operand || /^[-:~]/.test(operand)) return false
+  const result = runGit(cwd, ["--literal-pathspecs", "ls-files", "-z", "--modified", "--", operand], {
+    maxBuffer: 4_000_000,
+  })
+  return !result.error && result.status === 0 && result.stdout.length > 0
 }
 
 /** Classify normalized executable words, keeping argument boundaries intact. */

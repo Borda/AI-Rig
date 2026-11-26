@@ -36,7 +36,11 @@ Call `bridge_implement` with required `task` and current `binding_id`; preserve 
 
 Return compact public envelope. `verdict`, `findings`, `files_touched`, `remaining`, and `blockers` must carry incomplete work and blockers; verbose evidence stays in workspace-relative `transcript_path`, never inline `details`. Before accepting consequential work, reread reported files and run relevant project checks. Refuse another cross-host dispatch at trusted inherited depth one.
 
-After a `stalled` status, edit the workspace only after the peer is confirmed terminated (terminal peer status or confirmed cancellation) or the original hard cutoff has passed. `stalled` and `cancel_requested` do not confirm peer termination. Portable subprocess APIs cannot guarantee peer cleanup after abrupt supervisor death, and a dead supervisor cannot enforce the hard cutoff; its peer may survive that deadline. Never signal a process identifier from a job record: it may have been reused. Then inspect the worktree delta and changed files before further edits.
+<!-- policy-sibling: plugins/bridge_cc-codex/claude-skills/review/SKILL.md, plugins/bridge_cc-codex/claude-skills/advise/SKILL.md, plugins/bridge_cc-codex/claude-skills/implement/SKILL.md, plugins/bridge_cc-codex/claude-skills/result/SKILL.md, plugins/bridge_cc-codex/codex-skills/review/SKILL.md, plugins/bridge_cc-codex/codex-skills/advise/SKILL.md (confidence reporting) -->
+
+Report confidence from the envelope: `confidence` is a number only when `status=complete`, derived by the bridge as 1.00 minus the deductions in `confidence_gaps`; otherwise it is `null` and `confidence_null_reason` names the exact cause from the closed set in `rules/envelope.md` §Confidence. Report that code beside the status, carry each `confidence_gaps` line as a named gap, and never substitute a number.
+
+After a `stalled` status, edit the workspace only after the peer is confirmed terminated (terminal peer status or confirmed cancellation). `stalled` and `cancel_requested` do not confirm peer termination. Portable subprocess APIs cannot guarantee peer cleanup after abrupt supervisor death, and a dead supervisor cannot enforce the hard cutoff; its peer may survive that deadline. Never signal a process identifier from a job record: it may have been reused. Then inspect the worktree delta and changed files before further edits.
 
 <!-- policy-sibling: plugins/bridge_cc-codex/claude-skills/implement/SKILL.md (provider-stop guidance; intentional difference: the peer is Claude and calls use model arguments, not `--model`) -->
 

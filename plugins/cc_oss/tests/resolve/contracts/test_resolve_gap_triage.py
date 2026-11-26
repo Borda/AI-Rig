@@ -98,6 +98,8 @@ def _write_envelope(run_dir: Path, data: dict, findings: list[dict]) -> None:
     (run_dir / "review-validation.json").write_text(json.dumps(data), encoding="utf-8", newline="\n")
     rows = "".join(json.dumps(row) + "\n" for row in findings)
     (run_dir / "findings.jsonl").write_text(rows, encoding="utf-8", newline="\n")
+    # A versioned allocated run is consumable only with the parent's record that it passed the gates.
+    (run_dir / "review-publication.published").write_text("", encoding="utf-8")
 
 
 def _envelope(run_dir: Path) -> dict:

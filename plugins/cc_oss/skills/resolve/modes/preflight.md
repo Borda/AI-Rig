@@ -134,7 +134,17 @@ case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "report" > "${TMPDIR:-/tmp}/oss-resol
 : > "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}"  # empty = no PR branch; Step 9.0 would otherwise re-merge a prior PR's target into local work
 : > "${TMPDIR:-/tmp}/resolve-remote-head-ref-${CSID}"
 : > "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}"  # Step 4 or local report mode must publish this run's commit reference
+# rest of Step 4's PR refs: report mode never publishes them, so a stale PR head would key its gap ledger and drift check
+: > "${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}"
+: > "${TMPDIR:-/tmp}/resolve-remote-imports-${CSID}" || exit 1  # Step 5 records the commits imported during this run
+: > "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}"
+: > "${TMPDIR:-/tmp}/resolve-is-cross-repo-${CSID}"
+: > "${TMPDIR:-/tmp}/resolve-head-repo-owner-${CSID}"
+: > "${TMPDIR:-/tmp}/resolve-head-repo-name-${CSID}"
+: > "${TMPDIR:-/tmp}/resolve-local-sha-${CSID}"
 echo targeted > "${TMPDIR:-/tmp}/resolve-change-scope-${CSID}"  # Step 8 prelude overwrites; a run that skips Step 8 must not inherit last run's lint-only (it would skip QA)
+: > "${TMPDIR:-/tmp}/resolve-run-dir-${CSID}"  # Step 9 mints this run's report dir; a stale one would let Step 11 overwrite the previous run's report
+git stash list --format=%H > "${TMPDIR:-/tmp}/resolve-stash-before-${CSID}" 2>/dev/null || echo unavailable > "${TMPDIR:-/tmp}/resolve-stash-before-${CSID}"  # Step 11 lists stashes that appeared during the run
 ```
 
 <!-- branch: unsupported-flags — isolated; ≤1 call; fires only when unknown flags present -->

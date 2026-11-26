@@ -26,7 +26,7 @@ const SENTINEL_PREFIX = "foundry-profile-state-";
 const STATE_KEY = "REPORT_DIR";
 // File `timing_analyzer.py` writes as its `--output` (Step 2) and Step 4 reads.
 const REPORT_FILENAME = "report.md";
-// Step 1 always builds ".reports/profile/$STAMP"; requiring the marker keeps the
+// Step 1 always builds a unique ".reports/profile/$STAMP-<suffix>"; requiring the marker keeps the
 // hook from acting on a state file holding anything else.
 const REPORT_DIR_PARTS = [".reports", "profile"];
 // Enforcement window measured from the sentinel's mtime (see KNOWN LIMITATION).
@@ -128,7 +128,7 @@ function isReportPath(value, api, reportParts) {
  * Absolute form of the state file's stored report dir, or null when it cannot be
  * one.
  *
- * Step 1 assigns the relative `.reports/profile/$STAMP`, so the stored value is
+ * Step 1 assigns the relative `.reports/profile/$STAMP-<suffix>`, so the stored value is
  * normally relative and only means anything against the profile's own working
  * directory.
  */

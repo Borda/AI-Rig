@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _oss_shell_plugin import render_shell
 from _skill_source import read_skill_source
 from _text_io import bash_block_after, bash_blocks, bash_path, write_lf
 
@@ -166,7 +167,9 @@ def test_straggler_gate_requires_recorded_commit_mode(
     write_lf(impl / "challenge-log.txt", "")
     write_lf(impl / "skipped-items.txt", "")
     _sentinels(tmp_path, {"impl-dir": bash_path(impl), "commit-mode": commit_mode})
-    result = _run(bash_block_after(_doc("SKILL.md"), "**Straggler gate"), repo, tmp_path)
+    root = _RESOLVE.parents[1]
+    block = bash_block_after(_doc("SKILL.md"), "**Straggler gate")
+    result = _run(render_shell(block, root, "oss"), repo, tmp_path, CLAUDE_PLUGIN_ROOT=bash_path(root))
     assert (result.returncode == 0) is (commit_mode == "stage"), result.stdout + result.stderr
     assert ("! BLOCKED" in result.stdout) is (commit_mode != "stage")
 
@@ -268,7 +271,8 @@ def test_final_report_missing_commit_mode_stays_unset(pr_repo: tuple[Path, str, 
     result = _run(block + '\nprintf "COMMIT_MODE=%s\\n" "$COMMIT_MODE"', repo, tmp_path)
     assert result.returncode == 0, result.stderr
     assert "COMMIT_MODE=unset\n" in result.stdout
-    assert "commits not pushed" in result.stdout
+    assert "PUSH_STATUS=none" in result.stdout
+    assert "commits not pushed" not in result.stdout
     assert _git(repo, "branch", "--show-current") == "alias"
 
 

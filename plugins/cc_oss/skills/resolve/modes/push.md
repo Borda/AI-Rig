@@ -13,6 +13,11 @@ PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PUSH_AUTH < "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}" 2>/dev/null || PUSH_AUTH="unset"
 echo "PUSH_AUTH=$PUSH_AUTH"
+# the push question can idle for hours: the run dir's report names this step meanwhile
+IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/resolve-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
+IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR=""
+IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
+[ -z "$_RUN_DIR" ] || python "$PLUGIN_ROOT/bin/resolve_report_stub.py" mark --run-dir "$_RUN_DIR" --pr "$_PR_NUMBER" --impl-dir "$_IMPL_DIR" --step "Step 10 — push step reached (push intent $PUSH_AUTH)"  # timeout: 5000
 # fresh shell (Check 43) — unbound here → empty push scope
 IFS= read -r FORK_REMOTE < "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}" 2>/dev/null || FORK_REMOTE=""
 IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-remote-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""
@@ -55,21 +60,25 @@ Branch on the printed `PUSH_AUTH`:
 
 Unanswered → (b) when the push still needs its own `Approve` (`PUSH_AUTH` `push` or `unset`). `PUSH_AUTH=push-run` and unanswered → no push: the user never saw this drift and the run approval did not name it; record `not-attempted`, print `` → Push not attempted — the target moved and the drift question went unanswered; run `git push` manually when ready. ``, and continue to Step 11. `BASE_FRESH` `yes` or `unknown` → no drift question.
 
-**Push confirmation — one `AskUserQuestion` call.** Per `git-commit.md` push-safety rule ("Never push without explicit user confirmation") this question precedes any `git push`. It is the `git-push` question: the user's `Approve` lets foundry's approval hook record a single-use push token for one push of this branch at this HEAD, which the push guard spends on the `git push` below. Second-longest idle window (measured up to 11 h). Boundary-2 contract already names every file Step 11 needs, so Q1's question text closes with the `/compact` hint (last bullet below) — never as reply text before the call: 5.5-family models may return reply text written before a tool call as an empty progress update.
+**Push confirmation — one `AskUserQuestion` call.** When Step 10 needs a separate confirmation, ask the `git-push` question from `git-commit.md` before running the push. The user's `Approve` lets foundry's approval hook record a single-use token for this branch at this HEAD to the remote shown in the question. Second-longest idle window (measured up to 11 h). Put the `/compact` hint inside Q1 just before the final ask. The Boundary-2 contract already names every file Step 11 needs, and 5.5-family models may return reply text written before a tool call as an empty progress update.
 
-Q1 — push: header `git-push`, `multiSelect` false. Its question text must surface:
+Q1 — push: header `git-push`, `multiSelect` false. Render these context lines in Q1, in order, before the final ask.
 
 - Target remote and branch: `$FORK_REMOTE/$HEAD_REF`
+- HEAD read with `git rev-parse HEAD` in the checkout being pushed, using `git -C <WT_PUSH>` for a worktree
 - Diff stat: `$PUSH_STAT` (e.g. `3 files changed, 47 insertions(+), 12 deletions(-)`)
 - Commit count and last subject: `$PUSH_COUNT commits — last: "$LAST_SUBJECT"`
 - Target drift, only when `BASE_FRESH` is not `yes`: `no` → `⚠ origin/<BASE_REF> advanced <BASE_BEHIND> commits since the last merge — newest: "<first listed subject>"`; `unknown` → `⚠ could not verify origin/<BASE_REF> is merged`
 - The command it approves: `` `git push` ``, or with a `WT_PUSH` path `` `git -C <WT_PUSH> push <FORK_REMOTE> <HEAD_REF>` `` (its branch, HEAD and commits read with `git -C <WT_PUSH>`)
+- Not covered: force, delete, tags, other refs, other remotes, URLs.
 - Last line: `` Long wait? `/compact` now — commits landed, challenge log + item map in <IMPL_DIR>, resume lossless. ``
+
+Leave one blank line after the context and end Q1 with `Push {branch} to {configured remote name}?` using the literal branch and remote. The guard reads the approved remote from that final question line for a plain `git push`.
 
 Options: exactly these two labels.
 
-- **Approve** — this push, once: proceed with `git push` below
-- **Hold** — skip this push; leave the branch as it is, the user pushes manually later
+- **Approve** — this push, once. Use the option description `one push of this branch at this HEAD to this remote; token valid 15 minutes; up to eight pending approvals per scope`.
+- **Hold** — skip this push and cancel only a pending approval for this same question in this session.
 
 `PUSH_AUTH=skip` with `BASE_FRESH=no` → still print the drift line beside the skip message, so the manual push is not made blind.
 
@@ -204,8 +213,8 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 echo not-attempted > "${TMPDIR:-/tmp}/resolve-push-status-${CSID}"  # timeout: 3000
 ```
 
-**Retire the run approval** — `PUSH_AUTH=push-run` only, once the outcome above is recorded and whatever it is. The `git-push-run` token lasts 12 h and is single-use; an unspent one (push refused, skipped, aborted, or pushed after the fallback `git-push` answer) would let a later lead push of this branch go through without a question. Revoking it is the one deletion the approval guard allows, and `-f` makes an already spent token a no-op:
+**Retire the run approval** — `PUSH_AUTH=push-run` only, once the outcome above is recorded and whatever it is. The `git-push-run` token lasts 12 h and is single-use. An unspent token could authorize a later lead push of this branch. The revocation command removes the primary pending run-push token and pending run-push slots in the git common directory across worktrees. It leaves spent claims and the active reservation in place.
 
 ```bash
-rm -f "$(git rev-parse --git-common-dir)/claude-push-run-approval.json"  # timeout: 5000
+rm -f "$(git rev-parse --git-common-dir)"/claude-push-run-approval.json{,.slot-*}  # timeout: 5000
 ```

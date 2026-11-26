@@ -79,6 +79,21 @@ class TestProportionalExecution:
         assert "only when explicitly requested" in medium
 
 
+def test_unrun_remediation_challenge_is_a_limitation_not_a_gate() -> None:
+    """A remediation whose bounded challenge cannot run still completes on closed findings and passing gates.
+
+    A denied bridge call or an unavailable route once left a remediation with local commits and passing checks reported
+    incomplete and asking for authorization; the contract keeps that outcome a named limitation instead.
+    """
+    remediation = _proportional_execution().split("Code Remediate remains a single pass", 1)[1].split("**Outside", 1)[0]
+    assert "not an explicit independence requirement" in remediation
+    assert "completes on its closed selected findings and passing gates" in remediation
+    assert "`implementation challenge not run: <reason>`" in remediation
+    assert "`implementation-challenge-not-run`" in remediation
+    assert "opens no question, unresolved row or incomplete status" in remediation
+    assert "never claims independent coverage" in remediation
+
+
 def test_remediation_review_is_one_pass_without_implying_a_loop() -> None:
     """A required closure challenge does not silently create repeated review cycles.
 

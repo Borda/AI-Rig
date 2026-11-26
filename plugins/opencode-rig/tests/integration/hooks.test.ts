@@ -18,6 +18,41 @@ async function evaluate(harness: Awaited<ReturnType<typeof createHarness>>, even
 }
 
 describe("permission evaluate hook", () => {
+  it.each([
+    { action: "shell", resources: ["git push"] },
+    { action: "execute", resources: ["git reset --hard HEAD"] },
+    { action: "shell", resources: ["git commit -m x"] },
+    { action: "execute", resources: ["git unknown-action"] },
+    { action: "shell", resources: [null] },
+  ])("keeps a configured deny and its message for $action $resources", async (request) => {
+    const harness = await createHarness(Project.withCommit())
+    const event = { ...request, effect: "deny", message: "Configured deny" }
+    expect(await evaluate(harness, event)).toMatchObject({ effect: "deny", message: "Configured deny" })
+  })
+
+  it.each(["git checkout Makefile", 'git checkout --quiet "Makefile"', "git status && git checkout Makefile"])(
+    "warns before restoring an implicitly named modified tracked path: %s",
+    async (command) => {
+      const project = Project.withCommit({ Makefile: "all:\n" })
+      project.write("Makefile", "all:\n\ntest:\n")
+      const harness = await createHarness(project)
+      const event = await evaluate(harness, shellEvent([command], "ask"))
+      expect(event.message).toMatch(/destructive local operation requires confirmation/)
+      expect(project.read("Makefile")).toBe("all:\n\ntest:\n")
+    },
+  )
+
+  it.each(["git checkout topic", "git checkout Untracked", "git checkout Makefile"])(
+    "keeps the configured prompt for a branch, untracked path or clean path: %s",
+    async (command) => {
+      const project = Project.withCommit({ Makefile: "all:\n" })
+      project.git("branch", "topic")
+      project.write("Untracked", "local\n")
+      const harness = await createHarness(project)
+      expect((await evaluate(harness, shellEvent([command], "ask"))).message).toBeUndefined()
+    },
+  )
+
   it("escalates a remote mutation that the configured rules allowed", async () => {
     const harness = await createHarness(Project.withCommit())
     const event = await evaluate(harness, shellEvent(["git push origin main"]))

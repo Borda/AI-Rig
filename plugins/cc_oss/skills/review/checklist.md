@@ -4,7 +4,7 @@
 
 ## CRITICAL Patterns (must block merge)
 
-- `pickle.load` / `torch.load` without `weights_only=True` on external data → arbitrary code execution via insecure deserialization
+- `pickle.load` on external data, or `torch.load` without `weights_only=True` on external checkpoints → arbitrary code execution via insecure deserialization (`pickle.load` has no `weights_only` keyword)
 - Hardcoded secret in source (password, API key, token)
 - `debug=True` in production web server entry point
 

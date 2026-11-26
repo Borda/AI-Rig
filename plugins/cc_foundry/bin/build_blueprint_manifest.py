@@ -19,22 +19,19 @@ bug class here — it lets a crafted command collide with a manifest digest.
 
 Normalization pipeline (applied to a block, and to each logical command)
 -----------------------------------------------------------------------
-a. ``\\r\\n`` and lone ``\\r`` become ``\\n``; every line is right-stripped of whitespace.
+a. ``\\r\\n`` and lone ``\\r`` become ``\\n``; unquoted trailing whitespace is stripped.
 c. Trailing ``#`` comments are removed, quote-aware, and only where ``#`` starts a word —
    i.e. it is at line start or directly preceded by a space/tab. Consequences, all
    deliberate: ``http://x#y`` survives, ``${V:-#x}`` survives, a ``#`` inside single or
    double quotes survives, and ``\\#`` survives. Quote state is tracked **across lines**,
    so a ``#`` inside a multi-line quoted string is left alone.
-b. Leading and trailing blank lines are dropped and internal blank runs collapse to one.
+b. Outside quotes, leading and trailing blank lines are dropped and internal blank runs collapse to one.
 d. No intra-line whitespace collapsing and no quote rewriting — two commands that differ
    only in spacing or quoting must never collide.
 
-Steps are applied in the order a → c → b, i.e. comment stripping runs before blank
-collapsing. This is exactly equivalent to the lettered order with (b) re-run after (c),
-because blank lines carry no quote state. The fate of a comment-only line is therefore
-fixed and must be matched by the hook: it becomes an empty line, and that empty line is
-then folded by the blank collapse — a lone comment line between two commands leaves
-exactly one blank line, and a leading or trailing comment line leaves nothing.
+Comment stripping runs before blank collapsing. A comment-only line between commands
+leaves one blank line, and a leading or trailing comment line leaves none. A multiline
+quoted word keeps its trailing blanks and blank lines as part of the word.
 
 Known accepted edge case: comment stripping is applied per physical line, before
 backslash-continuation joining, while real bash decides comment-vs-word status only
@@ -228,7 +225,7 @@ import re
 import shlex
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 
@@ -236,11 +233,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _blueprint_danger import (
     _ASSIGNMENT,
+    _LEX_REDIRECTION,
     SHELL_INTERPRETERS,
     _assignment_end,
     _case_arm_chain,
     _case_label_end,
     _case_line_arm,
+    _close_expansion,
+    _close_quote,
     _command_words,
     _function_body,
     _function_name,
@@ -436,32 +436,32 @@ def strip_line_comment(line: str, quote: str | None = None) -> tuple[str, str | 
     return line.rstrip(), quote
 
 
-def collapse_blank_lines(lines: list[str]) -> list[str]:
-    """Drop leading/trailing blank lines and collapse internal blank runs to one.
+def _quoted_end(text: str, index: int) -> int | None:
+    """Return the end of a quoted span, or None if it stays open."""
+    return _close_expansion(text, index) if text[index] == "`" else _close_quote(text, index)
 
-    Args:
-        lines: Right-stripped lines.
 
-    Returns:
-        New list with blank runs collapsed.
-
-    Examples:
-        >>> collapse_blank_lines(["", "a", "", "", "b", "", ""])
-        ['a', '', 'b']
-        >>> collapse_blank_lines(["", ""])
-        []
-        >>> collapse_blank_lines(["a"])
-        ['a']
-    """
-    out: list[str] = []
-    for line in lines:
-        if line:
-            out.append(line)
-        elif out and out[-1]:
-            out.append("")
-    while out and not out[-1]:
-        out.pop()
-    return out
+def _unquoted_lines(text: str) -> Iterator[str]:
+    """Yield right-stripped lines, keeping quoted spans inside a line intact."""
+    start = index = 0
+    while index < len(text):
+        char = text[index]
+        if char in "'\"`":
+            end = _quoted_end(text, index)
+            if end is None:
+                yield text[start:]
+                return
+            index = end
+            continue
+        if char == "\n" or (char == "#" and (index == start or text[index - 1] in " \t")):
+            yield text[start:index].rstrip()
+            newline = text.find("\n", index)
+            if newline < 0:
+                return
+            start = index = newline + 1
+            continue
+        index += 2 if char == "\\" and text[index + 1 : index + 2] != "\n" else 1
+    yield text[start:].rstrip()
 
 
 def normalize(text: str) -> str:
@@ -489,13 +489,14 @@ def normalize(text: str) -> str:
         >>> normalize("# only a comment")
         ''
     """
-    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    quote: str | None = None
-    stripped: list[str] = []
-    for line in lines:
-        cleaned, quote = strip_line_comment(line.rstrip(), quote)
-        stripped.append(cleaned)
-    return "\n".join(collapse_blank_lines(stripped))
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines: list[str] = []
+    for line in _unquoted_lines(text):
+        if line or (lines and lines[-1]):
+            lines.append(line)
+    if lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines)
 
 
 def sha256_text(text: str) -> str:
@@ -783,8 +784,20 @@ _KAGGLE_GROUPS: frozenset[str] = frozenset({"competitions", "datasets", "kernels
 _KAGGLE_READ_VERBS: frozenset[str] = frozenset({"list", "files", "leaderboard", "status"})
 #: Suffix of a consume-marker rename target (``"$F"`` → ``"$F.done"``).
 _MARKER_SUFFIX = re.compile(r"\.[A-Za-z0-9_-]+")
-#: Long ``curl`` options that send data or write a local file.
-_CURL_WRITE_PREFIXES: tuple[str, ...] = ("--data", "--form", "--upload-file", "--output", "--remote-name", "--json")
+_FIXED_UNQUOTED = re.compile(r"""[^\s'"\\$`*?\[\]{}~<>()|;&]+""")
+_FIXED_DOUBLE_QUOTED = re.compile(r'"(?:\\[^$`]|[^"\\$`])*"')
+_PYTHON_FLAGS = re.compile(r"-[BEIOPSbsu]+")
+_PYTHON_CODE_FLAG = re.compile(r"-[BEIOPSbsu]*c")
+_NODE_INFO_FLAGS = _INFO_FLAGS | {"-v"}
+_NODE_FLAGS = frozenset({"-c", "--check"})
+_CURL_FLAGS = frozenset({"--silent", "--show-error", "--fail", "--globoff", "--disable"})
+_CURL_VALUES = frozenset({"--request", "--url", "--url-query", "--connect-timeout", "--max-time"})
+_CURL_SHORT = re.compile(r"-[fsSgq]*(?:(X|m)(.*))?")
+_CURL_SHORT_VALUES = {"X": "--request", "m": "--max-time"}
+_HTTP_URL = re.compile(r"https?://[^\s\\]+", re.IGNORECASE)
+_CURL_TIME = re.compile(r"[0-9]+(?:\.[0-9]+)?")
+_UNLINK_LOCAL = re.compile(r"\.temp/(?:[\w.-]+/)*[\w.-]+", re.ASCII)
+_UNLINK_SENTINEL = re.compile(r"\$\{TMPDIR:-/tmp\}/[\w.-]+-(?:\$\{CSID\}[\w.-]*|\$CSID(?:[.-][\w.-]*)?)", re.ASCII)
 #: Options taking a separate value, per wrapper, so the wrapped command word is found after them.
 _XARGS_VALUE_OPTIONS: frozenset[str] = frozenset({"-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a"})
 _TIMEOUT_VALUE_OPTIONS: frozenset[str] = frozenset({"-s", "-k", "--signal", "--kill-after"})
@@ -840,6 +853,27 @@ def _unquote_leading(text: str) -> str:
     return stripped[1:]
 
 
+def _fixed_word(raw: str) -> str | None:
+    """Return the value of a single shell word in the supported literal forms."""
+    if _FIXED_UNQUOTED.fullmatch(raw):
+        return raw
+    if len(raw) >= 2 and raw[0] == raw[-1] == "'" and "'" not in raw[1:-1]:
+        return raw[1:-1]
+    if _FIXED_DOUBLE_QUOTED.fullmatch(raw):
+        return re.sub(r'\\(["\\])|\\\n', r"\1", raw[1:-1])
+    return None
+
+
+def _program_args(args: list[str]) -> Iterator[str]:
+    """Yield program arguments without separate shell redirections and their targets."""
+    words = iter(args)
+    for word in words:
+        if _LEX_REDIRECTION.fullmatch(word):
+            next(words, None)
+        elif word.endswith(("<()", ">()")) or not _REDIRECTION_HEAD.match(word):
+            yield word
+
+
 def _skip_options(args: list[str], with_value: frozenset[str]) -> int:
     """Return the index of the first word after a wrapper's options.
 
@@ -879,7 +913,7 @@ def _python_use(args: list[str], known: frozenset[str]) -> str | None:
         True
         >>> _python_use(["-", "<<PY"], frozenset())
         'python -'
-        >>> _python_use(["-c", "'import", "sys;", "print(1)'"], frozenset()) is None
+        >>> _python_use(["-c", "'import sys; print(1)'"], frozenset()) is None
         True
         >>> _python_use(["-c", '"$CODE"'], frozenset())
         'python -c'
@@ -892,31 +926,64 @@ def _python_use(args: list[str], known: frozenset[str]) -> str | None:
         >>> _python_use(['"$ROOT/bin/delete_reports.py"'], frozenset({"@python:ROOT"}))
         'mutating helper delete_reports.py'
     """
-    index = 0
-    while index < len(args):
-        word = args[index].strip("'\"")
+    words = _program_args(args)
+    for raw in words:
+        word = _fixed_word(raw)
         if word in _INFO_FLAGS:
             return None
         if word == "-m":
-            module = args[index + 1].strip("'\"") if index + 1 < len(args) else ""
-            if module in {"cProfile", "doctest"} and any("$" in arg or "`" in arg for arg in args[index + 2 :]):
-                return f"python -m {module} dynamic script"
-            return None if module in SAFE_PYTHON_MODULES else f"python -m {module}".rstrip()
+            return _python_module(words)
         if word == "-":
             heredocs = _heredoc_operators(" ".join(args))
             return None if heredocs and all(quoted for _, quoted, _ in heredocs) else "python -"
-        if _has_short_flag([word], "c"):
-            return None if _is_literal_code(args[index + 1 :]) else f"python {word}"
-        if not word.startswith("-"):
-            return _helper_use(word, known)
-        index += 2 if word in ("-W", "-X") else 1
+        if word and _PYTHON_CODE_FLAG.fullmatch(word):
+            return None if _is_literal_code(next(words, "")) else f"python {word}"
+        if word and _PYTHON_FLAGS.fullmatch(word):
+            continue
+        return _python_script(raw, word, words, known)
     return "python"
 
 
-#: A script whose file name says it commits, deletes, reverts or unlinks something.
+def _python_module(words: Iterator[str]) -> str | None:
+    """Admit listed module modes and refuse dynamic scripts passed to executable modules."""
+    module = _fixed_word(next(words, "")) or ""
+    if module in {"cProfile", "doctest"} and any("$" in arg or "`" in arg for arg in words):
+        return f"python -m {module} dynamic script"
+    return None if module in SAFE_PYTHON_MODULES else f"python -m {module}".rstrip()
+
+
+def _python_script(raw: str, word: str | None, words: Iterator[str], known: frozenset[str]) -> str | None:
+    """Judge a script operand and refuse unresolved interpreter options."""
+    if word == "--":
+        raw = next(words, "")
+        word = _fixed_word(raw)
+    if word is None and not (raw.startswith('"$') and raw.endswith('"') and '"' not in raw[1:-1]):
+        return f"python {raw}".rstrip()
+    script = word if word is not None else raw[1:-1]
+    if not script or script.startswith("-"):
+        return f"python {raw}".rstrip()
+    return _helper_use(script, known)
+
+
+#: Helpers known to commit, delete, reset, clone or run configured commands although their file names do not say so.
+#: Each one must also be listed in :data:`_MUTATING_HELPERS`; naming it here is what makes that review required, since
+#: the name pattern alone would let it through unreviewed.
+_MUTATING_HELPER_NAMES = (
+    "dev_scope_findings.py",
+    "evolution_scan.py",
+    "heal_git_artifacts.py",
+    "merge_specialist_batch.py",
+    "resolve_commit_hooks.py",
+    "resolve_group_replay.py",
+    "retro_scan.py",
+    "review_claim_repro.py",
+    "review_env_provision.py",
+    "run_config_command.py",
+)
+#: A script whose file name says it commits, deletes, reverts or unlinks something, or one of the known helpers above.
 _MUTATING_HELPER = re.compile(
     r"^(?:commit|purge|remove|revert|delete|reset|prune|unlink|wipe|drop|uninstall)_|symlink|clean"
-    r"|^(?:resolve_commit_hooks|retro_scan|run_config_command)\.py$"
+    rf"|^(?:{'|'.join(re.escape(name) for name in _MUTATING_HELPER_NAMES)})$"
 )
 #: Mutating plugin helpers the manifest admits, each with the guard that bounds what it changes. The danger check sees
 #: only the command line, never what a script does, so a helper whose name matches :data:`_MUTATING_HELPER` stays out
@@ -952,10 +1019,28 @@ _MUTATING_HELPERS = {
         " matches the displayed fingerprint; approved formatter recovery restages only selected paths and"
         " retries once, refusing recovery after unrelated worktree or index changes"
     ),
+    "resolve_group_replay.py": (
+        "oss:resolve grouped commit: replays the run's own recorded item commits into a private index and commits one"
+        " topic group through the resolve hook-approval boundary; the working tree is never written, the index is put"
+        " back to the saved target after every call, and nothing is committed on failure; never pushes"
+    ),
     "retro_scan.py": (
         "research:retro: reads the sanitized JSONL history and creates the supplied --out-dir; writes only"
         " dead-iters.json and suspicious-jumps.json beneath that directory, supplied as the caller's RUN_DIR;"
         " does not alter the input ledger or experiment state"
+    ),
+    "review_claim_repro.py": (
+        "oss:review benchmark-claim reproduction: refuses a --work-dir inside the reviewed repository; the shipped"
+        " fence passes a per-head, per-session ${TMPDIR:-/tmp} dir; deletes and re-creates only <work-dir>/base as a"
+        " shared clone checked out at the base commit; runs base and head code only through"
+        " untrusted_code_guard.py run with an approval the contributor-code gate already bound, never binding one"
+        " itself; never writes the reviewed checkout, its refs or a remote"
+    ),
+    "review_env_provision.py": (
+        "oss:review environment provisioning: builds or reuses one virtual environment per repository and head under"
+        " the per-user temporary root returned by its env_root(), outside the reviewed tree; installs only base-declared"
+        " package names from the official index as wheels (no source builds); PR-added, URL, VCS or index-routed names"
+        " stay with the contributor-code gate; deletes only a broken environment directory it made there; no git writes"
     ),
     "revert_iteration_commit.py": "reverts HEAD only when its subject is this iteration's experiment commit",
     "run_config_command.py": (
@@ -994,24 +1079,20 @@ def _helper_use(script: str, known: frozenset[str] = frozenset()) -> str | None:
     return None
 
 
-def _is_literal_code(args: list[str]) -> bool:
-    """Report whether an inline code argument is a quoted string bash passes through unexpanded.
+def _is_literal_code(word: str) -> bool:
+    """Report whether the entire inline code argument is a literal quoted shell word.
 
     Examples:
-        >>> _is_literal_code(["'print($x)'"])
+        >>> _is_literal_code("'print($x)'")
         True
-        >>> _is_literal_code(['"print(1)"'])
+        >>> _is_literal_code('"print(1)"')
         True
-        >>> _is_literal_code(['"print($X)"'])
+        >>> _is_literal_code('"print($X)"')
         False
-        >>> _is_literal_code(["print"])
+        >>> _is_literal_code("print")
         False
     """
-    text = " ".join(args).lstrip()
-    if not text or text[0] not in "'\"":
-        return False
-    code = _unquote_leading(text)
-    return text[0] == "'" or not any(char in code for char in "$`")
+    return word.startswith(("'", '"')) and _fixed_word(word) is not None
 
 
 def _node_use(args: list[str], known: frozenset[str]) -> str | None:
@@ -1025,15 +1106,25 @@ def _node_use(args: list[str], known: frozenset[str]) -> str | None:
         >>> _node_use([], frozenset())
         'node'
     """
-    for raw in args:
-        word = raw.strip("'\"")
-        if word in _INFO_FLAGS or word == "-v":
-            return None
-        if word in ("-", "-e", "--eval", "-p", "--print") or word.startswith(("--eval=", "--print=")):
-            return f"node {word}"
-        if not word.startswith("-"):
-            return None
-    return "node"
+    words = _program_args(args)
+    info = False
+    for raw in words:
+        word = _fixed_word(raw)
+        if word in _NODE_INFO_FLAGS:
+            info = True
+        elif word == "--":
+            return _node_script(next(words, ""))
+        elif word not in _NODE_FLAGS:
+            return f"node {raw}" if word is None or word.startswith("-") else _node_script(raw)
+    return None if info else "node"
+
+
+def _node_script(raw: str) -> str | None:
+    """Recognize a fixed script operand, as opposed to stdin or a Node subcommand."""
+    word = _fixed_word(raw)
+    if word and ("/" in word or word.endswith((".js", ".cjs", ".mjs"))):
+        return None
+    return f"node {raw}".rstrip()
 
 
 def _awk_use(args: list[str], known: frozenset[str]) -> str | None:
@@ -1156,25 +1247,35 @@ def _sed_short_options(token: str, following: list[str]) -> tuple[list[str], int
     return [], 0, None
 
 
-def _curl_method(tokens: list[str], index: int) -> str | None:
-    """Return the HTTP method a ``curl`` token sets, or None when it sets none.
+def _curl_value(option: str, value: str) -> str | None:
+    """Judge the literal operand of a known curl option."""
+    if option == "--request":
+        return None if value == "GET" else f"curl -X {value}".rstrip()
+    if option == "--url":
+        return None if _HTTP_URL.fullmatch(value) else "curl --url"
+    if option == "--url-query":
+        return None if value and "@" not in value else "curl --url-query"
+    return None if _CURL_TIME.fullmatch(value) else f"curl {option}"
 
-    Examples:
-        >>> _curl_method(["-X", "POST"], 0)
-        'POST'
-        >>> _curl_method(["--request=DELETE"], 0)
-        'DELETE'
-        >>> _curl_method(["-s"], 0) is None
-        True
-    """
-    token = tokens[index]
-    if token in ("-X", "--request"):
-        return tokens[index + 1] if index + 1 < len(tokens) else ""
-    if token.startswith("--request="):
-        return token.removeprefix("--request=")
-    if token.startswith("-X") and len(token) > 2:
-        return token[2:]
-    return None
+
+def _curl_option(word: str, words: Iterator[str]) -> str | None:
+    """Consume a recognized curl option and its operand, refusing every other option."""
+    if word.startswith("--"):
+        option, separator, value = word.partition("=")
+        if word in _CURL_FLAGS:
+            return None
+        if option not in _CURL_VALUES:
+            return f"curl {word}"
+    else:
+        short = _CURL_SHORT.fullmatch(word)
+        if short is None or word == "-":
+            return f"curl {word}"
+        letter, value = short.groups()
+        if letter is None:
+            return None
+        option, separator = _CURL_SHORT_VALUES[letter], bool(value)
+    operand = value if separator else _fixed_word(next(words, ""))
+    return _curl_value(option, operand or "")
 
 
 def _curl_use(args: list[str], known: frozenset[str]) -> str | None:
@@ -1188,21 +1289,20 @@ def _curl_use(args: list[str], known: frozenset[str]) -> str | None:
         >>> _curl_use(["-o", "out.html", "https://example.com"], frozenset())
         'curl -o'
     """
-    tokens = [arg.strip("'\"") for arg in args]
-    if any("$(" in token or "`" in token for token in tokens):
-        return "curl substituted argument"
-    for index, token in enumerate(tokens):
-        method = _curl_method(tokens, index)
-        if method is not None and method.upper() != "GET":
-            return f"curl -X {method}"
-        if token.startswith((*_CURL_WRITE_PREFIXES, "--trace", "--dump-header", "--config")) or any(
-            _has_short_flag([token], flag) for flag in "dDFToOK"
-        ):
-            return f"curl {token}"
-        if token in {"--url-query"} or token.startswith("--url-query="):
-            operand = token.partition("=")[2] if "=" in token else next(iter(tokens[index + 1 : index + 2]), "")
-            if "@" in operand:
-                return "curl --url-query file"
+    words = _program_args(args)
+    options = True
+    for raw in words:
+        word = _fixed_word(raw)
+        if word is None:
+            return "curl nonliteral argument"
+        if options and word == "--":
+            options = False
+        elif options and word.startswith("-"):
+            offender = _curl_option(word, words)
+            if offender is not None:
+                return offender
+        elif not _HTTP_URL.fullmatch(word):
+            return f"curl {word}".rstrip()
     return None
 
 
@@ -1393,12 +1493,21 @@ def _shell_use(args: list[str], known: frozenset[str]) -> str | None:
         if token in _INFO_FLAGS:
             return None
         if _has_short_flag([token], "c"):
-            return _unlisted(_unquote_leading(" ".join(args[index + 1 :])), known)
+            word = next(iter(args[index + 1 : index + 2]), "")
+            return _shell_code_use(word, known, "shell -c")
         if not token.startswith("-"):
             state_script = _is_state_path(token, known) and PurePath(token).name in _STATE_SCRIPTS
             own = token.startswith(("${CLAUDE_PLUGIN_ROOT", "$CLAUDE_PLUGIN_ROOT/")) or state_script
             return None if own and ".." not in token else f"shell script {token}"
     return None
+
+
+def _shell_code_use(word: str, known: frozenset[str], caller: str) -> str | None:
+    """Judge one fixed code word and keep an informative offender for an unfixed word."""
+    body = _fixed_word(word)
+    if body is not None:
+        return _unlisted(body, known)
+    return _unlisted(_unquote_leading(word), known) or caller
 
 
 def _is_state_path(path: str, known: frozenset[str]) -> bool:
@@ -1467,7 +1576,7 @@ def _source_use(args: list[str], known: frozenset[str]) -> str | None:
 
 
 def _unlink_use(args: list[str], known: frozenset[str]) -> str | None:
-    """Judge ``unlink``: only a state path may be removed.
+    """Judge ``unlink``: only a literal path within a recognized state root may be removed.
 
     Examples:
         >>> _unlink_use(['"${TMPDIR:-/tmp}/x-${CSID}"'], frozenset()) is None
@@ -1475,8 +1584,18 @@ def _unlink_use(args: list[str], known: frozenset[str]) -> str | None:
         >>> _unlink_use(['"$dest"'], frozenset())
         'unlink'
     """
-    path = args[0].strip("'\"") if args else ""
-    return None if _is_state_path(path, known) else "unlink"
+    operands = list(_program_args(args))
+    if operands[:1] == ["--"]:
+        operands = operands[1:]
+    if len(operands) != 1:
+        return "unlink"
+    raw = operands[0]
+    if raw.startswith('"') and raw.endswith('"') and _UNLINK_SENTINEL.fullmatch(raw[1:-1]):
+        return None
+    path = _fixed_word(raw)
+    if path and _UNLINK_LOCAL.fullmatch(path) and not {".", ".."}.intersection(path.split("/")):
+        return None
+    return "unlink"
 
 
 def _kaggle_use(args: list[str], known: frozenset[str]) -> str | None:
@@ -1548,9 +1667,9 @@ def _trap_use(args: list[str], known: frozenset[str]) -> str | None:
         >>> _trap_use(["cleanup", "EXIT"], frozenset({"cleanup"})) is None
         True
     """
-    if not args or args[0].strip("'\"") in ("", "-"):
+    if not args or _fixed_word(args[0]) in ("", "-"):
         return None
-    return _unlisted(_unquote_leading(" ".join(args)), known)
+    return _shell_code_use(args[0], known, "trap")
 
 
 #: Command-specific judgements for command words outside :data:`SAFE_COMMANDS`, fed the raw words after the
@@ -1623,7 +1742,7 @@ def _words_unlisted(words: list[str], known: frozenset[str]) -> str | None:
     if not head or head in SAFE_COMMANDS or head in known:
         return None
     check = _ALLOWLIST_CHECKS.get(head)
-    if head in {"sed", "awk", "curl"}:
+    if head in {"sed", "awk"}:
         try:
             return check(shlex.split(" ".join(words[1:])), known)
         except ValueError:
@@ -1754,6 +1873,27 @@ def _mask_substitutions(text: str) -> tuple[str, list[str]]:
     return "".join(pieces), bodies
 
 
+def _splice_shell_lines(text: str) -> str:
+    """Remove unquoted continuation pairs without inserting an argument boundary."""
+    if "\\\n" not in text:
+        return text
+    pieces: list[str] = []
+    start = index = 0
+    while index < len(text):
+        char = text[index]
+        if char in "'\"`":
+            index = _quoted_end(text, index) or len(text)
+        elif char == "\\":
+            if text.startswith("\\\n", index):
+                pieces.append(text[start:index])
+                start = index + 2
+            index += 2
+        else:
+            index += 1
+    pieces.append(text[start:])
+    return "".join(pieces)
+
+
 def _unlisted(command: str, known: frozenset[str]) -> str | None:
     """Judge every command in ``command``, substitution bodies included, against the allowlist.
 
@@ -1770,8 +1910,7 @@ def _unlisted(command: str, known: frozenset[str]) -> str | None:
     command, live, unterminated = _split_heredocs(command)
     if unterminated:
         return "unterminated heredoc"
-    # a backslash-newline continues the command; left in, the backslash reads as a command word
-    masked, bodies = _mask_substitutions(command.replace("\\\n", " "))
+    masked, bodies = _mask_substitutions(_splice_shell_lines(command))
     segments = _top_level_segments(masked)
     defined = {_function_name(_command_words(text)) for text, _ in segments}
     known = known | {name for name in defined if name}

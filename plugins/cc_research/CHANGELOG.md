@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.35.1
+
+- Confidence Block rule: scores come from named gaps only (no constant reviewer score, null or blocked contributions excluded and named, required controls enforced, closure notes dropped), same as foundry.
+- Adversarial loops use `foundry:challenger --codex-full` for each round when Foundry is installed, subject to the Codex quota stop. `bridge:review` remains the route for installations with Bridge alone. Loops fix findings in previously existing code within scope, require closure evidence across affected filter routes, and ask about redesign if an invariant stays open or returns after three fix rounds.
+- Blueprint digests preserve whitespace and blank lines inside quoted shell data, so changing a quoted value requires permission even when the surrounding command still matches a shipped blueprint.
+- Agent wake-ups on Windows find deliverables listed with Git Bash `/c/...` paths, so a finished agent no longer stays pending.
+
 ## 0.35.0
 
 - Shared rules:

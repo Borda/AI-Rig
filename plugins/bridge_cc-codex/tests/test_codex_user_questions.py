@@ -1,5 +1,8 @@
 """Check independently loadable Codex question guidance and its authorization boundaries."""
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +13,55 @@ GUIDE_PATH = PLUGIN_ROOT / QUESTION_REFERENCE
 DETAILS_PATH = PLUGIN_ROOT / "rules/codex-user-questions-details.md"
 SKILLS = sorted((PLUGIN_ROOT / "codex-skills").glob("*/SKILL.md"))
 SKILL_CASES = [pytest.param(skill, id=skill.parent.name) for skill in SKILLS]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("server", "tool", "arguments"),
+    [
+        pytest.param(
+            "user_questions_mcp.py",
+            "ask_user",
+            {"decision_id": "test-decision", "scope_digest": "a" * 64, "question": "Continue?"},
+            id="questions",
+        ),
+        pytest.param("bridge_mcp.py", "bridge_bind_workspace", {}, id="workspace-binding"),
+    ],
+)
+@pytest.mark.parametrize(
+    "invalid_frame",
+    [pytest.param(b'{"x":"\xff"}', id="invalid-byte"), pytest.param(b'{"x":"\xe2\x82"}', id="truncated-sequence")],
+)
+def test_invalid_utf8_keeps_stdio_open_and_cancels_pending_at_eof(
+    server: str, tool: str, arguments: dict[str, str], invalid_frame: bytes, tmp_path: Path
+) -> None:
+    """Reject malformed UTF-8 without losing the following frame or the pending decision's EOF receipt."""
+    initialize = {"protocolVersion": "2025-11-25", "capabilities": {"elicitation": {}}}
+    requests = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": initialize},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": tool, "arguments": arguments}},
+        {"jsonrpc": "2.0", "id": 3, "method": "ping"},
+    ]
+    first, second, ping = (json.dumps(request).encode("utf-8") for request in requests)
+
+    result = subprocess.run(
+        [sys.executable, str(PLUGIN_ROOT / "bin" / server), "--stdio"],
+        input=b"\n".join((first, second, invalid_frame, ping)) + b"\n",
+        capture_output=True,
+        cwd=tmp_path,
+        timeout=10,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
+    initialized, form, rejected, alive, cancelled = (json.loads(line) for line in result.stdout.splitlines())
+    assert initialized["id"] == 1
+    assert form["method"] == "elicitation/create"
+    assert rejected["id"] is None
+    assert rejected["error"]["code"] == -32700
+    assert alive == {"jsonrpc": "2.0", "id": 3, "result": {}}
+    assert cancelled["id"] == 2
+    assert cancelled["result"]["structuredContent"]["status"] == "cancelled"
 
 
 @pytest.fixture

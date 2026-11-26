@@ -92,7 +92,7 @@ else
             IFS= read -r _CHECK < "$IMPL_DIR/code-safety-check.txt" 2>/dev/null || _CHECK="ask reason=check-failed"
             case "$_CHECK" in
                 sandbox)
-                    if python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" bind --head "$PR_HEAD_OID" --base "origin/$BASE_REF" --scope run --tier sandbox --out "$IMPL_DIR/code-approval.txt" > /dev/null; then
+                    if python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" record --head "$PR_HEAD_OID" --base "origin/$BASE_REF" --scope run --tier sandbox --out "$IMPL_DIR/code-approval.txt" > /dev/null; then
                         echo sandbox > "$IMPL_DIR/pr-code-decision.txt"; _PRCODE=recorded
                         echo "→ PR code: --sandbox given; every run stays in the sandbox at head ${PR_HEAD_OID:0:12}, no question"
                         cat "$IMPL_DIR/code-scan.txt"
@@ -108,7 +108,7 @@ else
             esac
             IFS= read -r _CHECK < "$IMPL_DIR/code-safety-check.txt" 2>/dev/null || _CHECK="ask reason=check-failed"
             [ "$_DEC" != stale ] || _CHECK="ask reason=stale-approval"  # a refusal the renewal in the stale block could not clear is never re-bound without asking
-            if [ "$_CHECK" = auto ] && python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" bind --head "$PR_HEAD_OID" --base "origin/$BASE_REF" --scope run --out "$IMPL_DIR/code-approval.txt" > /dev/null; then
+            if [ "$_CHECK" = auto ] && python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" record --head "$PR_HEAD_OID" --base "origin/$BASE_REF" --scope run --out "$IMPL_DIR/code-approval.txt" > /dev/null; then
                 echo auto > "$IMPL_DIR/pr-code-decision.txt"; _PRCODE=auto
                 echo "→ PR code: review and this scan both found nothing at head ${PR_HEAD_OID:0:12}; runs in the sandbox, no question"
                 cat "$IMPL_DIR/code-scan.txt"
@@ -145,7 +145,7 @@ IFS= read -r PR_HEAD_OID < "${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}" 2>/dev/
 IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
 [ -n "$IMPL_DIR" ] && [ -n "$PR_HEAD_OID" ] && [ -n "$BASE_REF" ] || { echo "! BLOCKED — IMPL_DIR, PR head or base ref sentinel missing"; exit 1; }
 IFS= read -r _BIND_HEAD < "$IMPL_DIR/pr-code-rebind-head.txt" 2>/dev/null || _BIND_HEAD=""; [ -n "$_BIND_HEAD" ] || _BIND_HEAD="$PR_HEAD_OID"  # after a stale refusal the answer binds the commit the refusal was about, not the PR head
-python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" bind --head "$_BIND_HEAD" --base "origin/$BASE_REF" --scope run --out "$IMPL_DIR/code-approval.txt" > /dev/null || { echo "! BLOCKED — guard bind failed; PR code stays unapproved"; exit 1; }  # timeout: 60000
+python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" record --head "$_BIND_HEAD" --base "origin/$BASE_REF" --scope run --out "$IMPL_DIR/code-approval.txt" > /dev/null || { echo "! BLOCKED — guard record failed; PR code stays unapproved"; exit 1; }  # timeout: 60000
 echo sandbox > "$IMPL_DIR/pr-code-decision.txt"
 ```
 
@@ -159,7 +159,7 @@ IFS= read -r PR_HEAD_OID < "${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}" 2>/dev/
 IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
 [ -n "$IMPL_DIR" ] && [ -n "$PR_HEAD_OID" ] && [ -n "$BASE_REF" ] || { echo "! BLOCKED — IMPL_DIR, PR head or base ref sentinel missing"; exit 1; }
 IFS= read -r _BIND_HEAD < "$IMPL_DIR/pr-code-rebind-head.txt" 2>/dev/null || _BIND_HEAD=""; [ -n "$_BIND_HEAD" ] || _BIND_HEAD="$PR_HEAD_OID"  # after a stale refusal the answer binds the commit the refusal was about, not the PR head
-python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" bind --head "$_BIND_HEAD" --base "origin/$BASE_REF" --scope run --tier env-only --decision unsandboxed --out "$IMPL_DIR/code-approval.txt" > /dev/null || { echo "! BLOCKED — guard bind failed; PR code stays unapproved"; exit 1; }  # timeout: 60000
+python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" record --head "$_BIND_HEAD" --base "origin/$BASE_REF" --scope run --tier env-only --decision unsandboxed --out "$IMPL_DIR/code-approval.txt" > /dev/null || { echo "! BLOCKED — guard record failed; PR code stays unapproved"; exit 1; }  # timeout: 60000
 echo unsandboxed > "$IMPL_DIR/pr-code-decision.txt"
 ```
 
@@ -198,7 +198,7 @@ if python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" scan --head "$_NOW" --ba
     IFS= read -r _CHECK < "$IMPL_DIR/code-rebind-check.txt" 2>/dev/null || _CHECK="ask reason=check-failed"
     case "$_CHECK" in
         auto|sandbox)
-            if python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" bind --head "$_NOW" --base "origin/$BASE_REF" --scope run --tier sandbox --out "$IMPL_DIR/code-approval.txt" > /dev/null; then
+            if python -I "$PLUGIN_ROOT/bin/untrusted_code_guard.py" record --head "$_NOW" --base "origin/$BASE_REF" --scope run --tier sandbox --out "$IMPL_DIR/code-approval.txt" > /dev/null; then
                 echo sandbox > "$IMPL_DIR/pr-code-decision.txt"
                 echo "→ PR code: the base merge changed the approval's inputs; the rescan of ${_NOW:0:12} shows no objection, so the sandbox approval is renewed, no question"
                 cat "$IMPL_DIR/code-scan.txt"

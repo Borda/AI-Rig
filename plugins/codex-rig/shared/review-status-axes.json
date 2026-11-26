@@ -1,0 +1,451 @@
+{
+  "check_ids": {
+    "critical-findings": "The review confirmed at least one critical finding.",
+    "format": "The format gate failed or timed out.",
+    "independent-review-coverage": "Required independent specialist coverage was not established; parent substitutes or missing reviewers covered one or more triggered axes.",
+    "lint": "The lint gate failed or timed out.",
+    "review": "The review diff check gate failed or timed out.",
+    "source-refused": "The source guard refused gate execution before any gate ran (dirty, ignored inputs, head mismatch or failed inspection).",
+    "tests": "The test gate failed or timed out.",
+    "types": "The type-check gate failed or timed out.",
+    "verification-readiness": "Verification readiness is blocked or incomplete."
+  },
+  "description": "Code Review result status axes: closed failed-check identifiers and the truth table relating gates_status, review_status, review_decision, verification readiness and the independent-coverage state (row field coverage, default unknown) to the overall result status. review_status_axes.py loads this file; every row is a contract fixture.",
+  "gate_check_ids": [
+    "lint",
+    "format",
+    "types",
+    "tests",
+    "review"
+  ],
+  "schema_version": 1,
+  "truth_table": [
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "APPROVE",
+        "review_status": "assessed"
+      },
+      "checks_failed": [],
+      "critical": 0,
+      "id": "assessed-clean",
+      "readiness": "complete",
+      "status": "pass",
+      "valid": true
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "MAJOR_REVISION",
+        "review_status": "assessed"
+      },
+      "checks_failed": [],
+      "critical": 0,
+      "id": "assessed-needs-revision-gates-pass",
+      "readiness": "complete",
+      "status": "pass",
+      "valid": true
+    },
+    {
+      "axes": {
+        "gates_status": "fail",
+        "review_decision": "MINOR_EDITS",
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "tests",
+        "verification-readiness"
+      ],
+      "critical": 0,
+      "id": "assessed-gate-failed",
+      "readiness": "incomplete",
+      "status": "fail",
+      "valid": true
+    },
+    {
+      "axes": {
+        "gates_status": "timeout",
+        "review_decision": null,
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "tests",
+        "verification-readiness"
+      ],
+      "critical": 0,
+      "id": "assessed-gate-timeout",
+      "readiness": "incomplete",
+      "status": "timeout",
+      "valid": true
+    },
+    {
+      "axes": {
+        "gates_status": "fail",
+        "review_decision": null,
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "source-refused",
+        "verification-readiness"
+      ],
+      "critical": 0,
+      "id": "assessed-source-refused",
+      "readiness": "blocked",
+      "status": "fail",
+      "valid": true
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "APPROVE",
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "verification-readiness"
+      ],
+      "critical": 0,
+      "id": "assessed-readiness-blocked-gates-pass",
+      "readiness": "blocked",
+      "status": "fail",
+      "valid": true
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "MAJOR_REVISION",
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "independent-review-coverage"
+      ],
+      "coverage": "not-established",
+      "critical": 0,
+      "id": "assessed-independent-coverage-missing",
+      "readiness": "complete",
+      "status": "fail",
+      "valid": true
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "MAJOR_REVISION",
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "independent-review-coverage"
+      ],
+      "coverage": "required-unmet",
+      "critical": 0,
+      "id": "assessed-required-independence-unmet",
+      "readiness": "complete",
+      "status": "fail",
+      "valid": true
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "APPROVE",
+        "review_status": "assessed"
+      },
+      "checks_failed": [],
+      "coverage": "not-established",
+      "critical": 0,
+      "id": "assessed-low-risk-parent-only-pass",
+      "readiness": "complete",
+      "status": "pass",
+      "valid": true
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "MAJOR_REVISION",
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "independent-review-coverage"
+      ],
+      "coverage": "established",
+      "critical": 0,
+      "id": "assessed-independent-reviewers-without-overlap",
+      "readiness": "complete",
+      "status": "fail",
+      "valid": true
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "MAJOR_REVISION",
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "critical-findings"
+      ],
+      "critical": 1,
+      "id": "assessed-critical-finding",
+      "readiness": "complete",
+      "status": "fail",
+      "valid": true
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": null,
+        "review_status": "unavailable"
+      },
+      "checks_failed": [],
+      "critical": 0,
+      "id": "unavailable-collection-failure",
+      "readiness": null,
+      "status": "fail",
+      "valid": true
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": null,
+        "review_status": "closed"
+      },
+      "checks_failed": [],
+      "critical": 0,
+      "id": "closed-terminal",
+      "readiness": null,
+      "status": "pass",
+      "valid": true
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "MAJOR_REVISION",
+        "review_status": "assessed"
+      },
+      "checks_failed": [],
+      "critical": 0,
+      "error": "status-axes-fail-without-named-check",
+      "id": "fail-without-named-check",
+      "readiness": "complete",
+      "status": "fail",
+      "valid": false
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "MAJOR_REVISION",
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "specialist-coverage"
+      ],
+      "critical": 0,
+      "error": "status-axes-unknown-check:specialist-coverage",
+      "id": "free-form-coverage-id",
+      "readiness": "complete",
+      "status": "fail",
+      "valid": false
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "MAJOR_REVISION",
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "confidence-not-acceptable"
+      ],
+      "critical": 0,
+      "error": "status-axes-unknown-check:confidence-not-acceptable",
+      "id": "confidence-as-hard-gate",
+      "readiness": "complete",
+      "status": "fail",
+      "valid": false
+    },
+    {
+      "axes": {
+        "gates_status": "fail",
+        "review_decision": "APPROVE",
+        "review_status": "assessed"
+      },
+      "checks_failed": [],
+      "critical": 0,
+      "error": "status-axes-pass-with-failed-gates",
+      "id": "pass-with-failed-gates",
+      "readiness": "complete",
+      "status": "pass",
+      "valid": false
+    },
+    {
+      "axes": {
+        "gates_status": "fail",
+        "review_decision": "MINOR_EDITS",
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "verification-readiness"
+      ],
+      "critical": 0,
+      "error": "status-axes-gate-failure-unnamed",
+      "id": "gate-failure-unnamed",
+      "readiness": "incomplete",
+      "status": "fail",
+      "valid": false
+    },
+    {
+      "axes": {
+        "gates_status": "timeout",
+        "review_decision": null,
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "tests",
+        "verification-readiness"
+      ],
+      "critical": 0,
+      "error": "status-axes-timeout-mismatch",
+      "id": "timeout-status-mismatch",
+      "readiness": "incomplete",
+      "status": "fail",
+      "valid": false
+    },
+    {
+      "axes": {
+        "gates_status": "fail",
+        "review_decision": "MINOR_EDITS",
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "tests"
+      ],
+      "critical": 0,
+      "error": "status-axes-readiness-unnamed",
+      "id": "readiness-open-unnamed",
+      "readiness": "blocked",
+      "status": "fail",
+      "valid": false
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "MAJOR_REVISION",
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "verification-readiness"
+      ],
+      "critical": 0,
+      "error": "status-axes-readiness-not-open",
+      "id": "readiness-named-while-complete",
+      "readiness": "complete",
+      "status": "fail",
+      "valid": false
+    },
+    {
+      "axes": {
+        "gates_status": "fail",
+        "review_decision": "MAJOR_REVISION",
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "tests"
+      ],
+      "critical": 2,
+      "error": "status-axes-critical-findings-unnamed",
+      "id": "critical-finding-unnamed",
+      "readiness": "complete",
+      "status": "fail",
+      "valid": false
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "MINOR_EDITS",
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "critical-findings"
+      ],
+      "critical": 0,
+      "error": "status-axes-critical-findings-absent",
+      "id": "critical-named-without-finding",
+      "readiness": "complete",
+      "status": "fail",
+      "valid": false
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "APPROVE",
+        "review_status": "unavailable"
+      },
+      "checks_failed": [],
+      "critical": 0,
+      "error": "status-axes-terminal-decision",
+      "id": "unavailable-with-decision",
+      "readiness": null,
+      "status": "fail",
+      "valid": false
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": null,
+        "review_status": "unavailable"
+      },
+      "checks_failed": [],
+      "critical": 0,
+      "error": "status-axes-unavailable-must-fail",
+      "id": "unavailable-passing",
+      "readiness": null,
+      "status": "pass",
+      "valid": false
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "MAJOR_REVISION",
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "source-refused"
+      ],
+      "critical": 0,
+      "error": "status-axes-gate-named-while-passing",
+      "id": "source-refused-while-gates-pass",
+      "readiness": "complete",
+      "status": "fail",
+      "valid": false
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "MAJOR_REVISION",
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "independent-review-coverage"
+      ],
+      "coverage": "unknown",
+      "critical": 0,
+      "error": "status-axes-coverage-evidence-missing",
+      "id": "coverage-named-without-evidence",
+      "readiness": "complete",
+      "status": "fail",
+      "valid": false
+    },
+    {
+      "axes": {
+        "gates_status": "pass",
+        "review_decision": "MAJOR_REVISION",
+        "review_status": "assessed"
+      },
+      "checks_failed": [
+        "verification-readiness"
+      ],
+      "coverage": "required-unmet",
+      "critical": 0,
+      "error": "status-axes-coverage-unnamed",
+      "id": "required-independence-unnamed",
+      "readiness": "blocked",
+      "status": "fail",
+      "valid": false
+    }
+  ]
+}

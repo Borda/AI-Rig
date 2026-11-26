@@ -8,7 +8,7 @@ it.each([
   "Basic setup instructions follow",
   "the bearer of bad news",
   "Basic instructions follow",
-  "basic dXNlcjpzZWNyZXQ=",
+  "basic setup instructions follow",
   "max_token=500",
   "token_count=12",
   "secretary=Alice",

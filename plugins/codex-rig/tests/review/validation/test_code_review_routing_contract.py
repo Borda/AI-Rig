@@ -117,11 +117,12 @@ def _routing_record(
     }
 
 
-def _write_inventory(out: Path, *, files: bytes = b"", untracked: bytes = b"", numstat: bytes = b"") -> None:
+def _write_inventory(out: Path, *, files: bytes = b"", untracked: bytes = b"", numstat: bytes | None = b"") -> None:
     """Write the three collected path inventories routing validation derives mechanical evidence from."""
     (out / "files.txt").write_bytes(files)
     (out / "untracked.txt").write_bytes(untracked)
-    (out / "numstat.txt").write_bytes(numstat)
+    if numstat is not None:
+        (out / "numstat.txt").write_bytes(numstat)
 
 
 def _write_routing(out: Path, record: dict[str, Any]) -> Path:
@@ -688,6 +689,38 @@ class TestRoutingValidation:
         assert (tmp_path / "review-routing.json").read_bytes() == original
 
 
+@pytest.mark.parametrize(
+    ("files", "numstat", "changed_lines", "unknown_rows", "tier"),
+    [
+        pytest.param(b"notes.txt\n", b"unavailable:command-failed:diff-numstat\n", 0, 1, "BROAD", id="unavailable"),
+        pytest.param(b"notes.txt\n", None, 0, 1, "BROAD", id="absent"),
+        pytest.param(b"notes.txt\n", b"", 0, 1, "BROAD", id="empty-for-tracked-change"),
+        pytest.param(b"notes.txt\n", b"0\t0\n", 0, 1, "BROAD", id="missing-path"),
+        pytest.param(b"notes.txt\n", b"-\t-\tnotes.txt\n", 0, 1, "BROAD", id="binary"),
+        pytest.param(b"notes.txt\nmore.txt\n", b"1\t0\tnotes.txt\n", 1, 1, "BROAD", id="incomplete"),
+        pytest.param(b"notes.txt\n", b"0\t0\tother.txt\n", 0, 1, "BROAD", id="unrelated-path"),
+        pytest.param(b"notes.txt\n", b"0\t0\tnotes.txt\n8\t0\tother.txt\n", 0, 1, "BROAD", id="extra-path"),
+        pytest.param(b"notes.txt\n", b"0\t0\tnotes.txt\n0\t0\tnotes.txt\n", 0, 1, "BROAD", id="duplicate-path"),
+        pytest.param(b"notes.txt\n", b'0\t0\t"notes.txt\\"\n', 0, 1, "BROAD", id="trailing-escape"),
+        pytest.param(b"notes.txt\n", b'0\t0\t"notes.txt\\x"\n', 0, 1, "BROAD", id="truncated-hex-escape"),
+        pytest.param(b'"notes\\\\q.txt"\n', b'0\t0\t"notes\\q.txt"\n', 0, 1, "BROAD", id="unsupported-escape"),
+        pytest.param(b"notes.txt\n", b"9" * 5000 + b"\t0\tnotes.txt\n", 0, 1, "BROAD", id="oversized-counter"),
+        pytest.param(b"notes.txt\n", b"0\t0\tnotes.txt\n", 0, 0, "TRIVIAL", id="known-zero"),
+        pytest.param(b"", b"", 0, 0, "TRIVIAL", id="empty-without-tracked-changes"),
+    ],
+)
+def test_mechanical_tier_requires_complete_tracked_size_evidence(
+    tmp_path: Path, files: bytes, numstat: bytes | None, changed_lines: int, unknown_rows: int, tier: str
+) -> None:
+    """Unknown tracked size raises the risk floor, while an explicit or inapplicable zero preserves it."""
+    _write_inventory(tmp_path, files=files, numstat=numstat)
+
+    observed_tier, evidence, _ = _VALIDATOR.derive_mechanical_risk(tmp_path)
+
+    assert observed_tier == tier
+    assert evidence[1:] == [f"changed_lines={changed_lines}", f"unknown_size_rows={unknown_rows}"]
+
+
 class TestPathInventoryRouting:
     """Quoted, literal, and newline-bearing paths resolve to one consistent source inventory."""
 
@@ -711,7 +744,7 @@ class TestPathInventoryRouting:
         (tmp_path / "diff.patch").write_text(patch, encoding="utf-8", newline="\n")
         # The PR listing contains literal GitHub paths and must not be unquoted as a local Git listing.
         (tmp_path / "untracked.txt").write_bytes(b"")
-        (tmp_path / "numstat.txt").write_bytes(b"")
+        (tmp_path / "numstat.txt").write_bytes("".join(f"0\t0\t{json.dumps(path)}\n" for path in paths).encode())
         _write_routing(tmp_path, _routing_record(_signals(), evidence=_size_evidence(2, 0)))
 
         tier, evidence, required_signals = _VALIDATOR.derive_mechanical_risk(tmp_path)
@@ -726,7 +759,11 @@ class TestPathInventoryRouting:
         """Git's escaped quotes and backslashes in a local listing decode to the same literal paths as PR metadata."""
         from review_routing import read_review_paths
 
-        (tmp_path / "files.txt").write_bytes(b'"\\"auth\\""\n"\\"bad\\\\x.py\\""\n')
+        _write_inventory(
+            tmp_path,
+            files=b'"\\"auth\\""\n"\\"bad\\\\x.py\\""\n',
+            numstat=b'0\t0\t"\\"auth\\""\n0\t0\t"\\"bad\\\\x.py\\""\n',
+        )
 
         paths = read_review_paths(tmp_path, "files.txt")
 
@@ -739,7 +776,7 @@ class TestPathInventoryRouting:
         ``pr.json`` is empty, yet the local listing names a C-quoted Python file, which still needs sw-engineer.
         """
         _write_json(tmp_path / "pr.json", {})
-        _write_inventory(tmp_path, files=b'"module_\\303\\251.py"\n')
+        _write_inventory(tmp_path, files=b'"module_\\303\\251.py"\n', numstat=b'0\t0\t"module_\\303\\251.py"\n')
         _write_routing(tmp_path, _routing_record(_signals(), evidence=_size_evidence(1, 0)))
 
         with pytest.raises(SystemExit, match="sw-engineer"):
@@ -762,6 +799,7 @@ class TestPathInventoryRouting:
             encoding="utf-8",
             newline="\n",
         )
+        (tmp_path / "numstat.txt").write_bytes(f"0\t0\t{json.dumps(path)}\n".encode())
         _write_routing(tmp_path, _routing_record(_signals(), evidence=_size_evidence(1, 0)))
 
         with pytest.raises(SystemExit, match="sw-engineer"):

@@ -988,6 +988,12 @@ class TestClosedReviewResult:
         assert "closed-review-final-handoff-mismatch" in completed.stderr
         candidate = run / "result.candidate.json"
         assert not candidate.exists()
+        result["metadata"]["status_axes"] = {
+            "schema_version": 1,
+            "gates_status": "pass",
+            "review_status": "closed",
+            "review_decision": None,
+        }
         write_json(candidate, result)
         with pytest.raises(SystemExit, match="closed-review-final-handoff-mismatch"):
             review_validator._validate_result(run, candidate, run, "thread", run)
@@ -1032,6 +1038,7 @@ class TestClosedReviewResult:
             },
         )
         original_result = historic.read_bytes()
+        archived = historic.rename(tmp_path / "historical-result.json")
         completed = subprocess.run(
             [
                 sys.executable,
@@ -1067,7 +1074,8 @@ class TestClosedReviewResult:
             completed.stdout if expected_failure else notes.read_text()
         )
         assert (notes.read_bytes() == prior) is bool(expected_failure)
-        assert (historic.read_bytes() == original_result) is bool(expected_failure)
+        assert archived.read_bytes() == original_result
+        assert historic.exists() is (expected_failure is None)
 
     def test_write_result_omits_remediation_fields(
         self, review_validator: ModuleType, shared_validator: ModuleType, closed_result: Path

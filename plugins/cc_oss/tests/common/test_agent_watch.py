@@ -32,6 +32,25 @@ def write_batch(tmp_path: Path) -> Callable[[str, str], Path]:
     return write
 
 
+class TestMsysToNative:
+    """Git Bash drive paths become native Windows paths only on Windows."""
+
+    @pytest.mark.parametrize(
+        ("raw", "windows", "expected"),
+        [
+            pytest.param("/c/Users/me/out.md", True, "C:/Users/me/out.md", id="git-bash-drive"),
+            pytest.param("/cygdrive/d/work/out.md", True, "D:/work/out.md", id="cygdrive-drive"),
+            pytest.param("/c/Users/me/out.md", False, "/c/Users/me/out.md", id="posix-unchanged"),
+            pytest.param("C:\\Users\\me\\out.md", True, "C:\\Users\\me\\out.md", id="native-unchanged"),
+            pytest.param("/tmp/run/out.md", True, "/tmp/run/out.md", id="non-drive-unchanged"),
+            pytest.param("-", True, "-", id="envelope-placeholder"),
+        ],
+    )
+    def test_maps_only_drive_prefixed_paths_on_windows(self, raw: str, windows: bool, expected: str) -> None:
+        """Rewrite the leading drive segment on Windows; any other input comes back byte for byte."""
+        assert aw.msys_to_native(raw, windows) == expected
+
+
 class TestClassify:
     """Status of one agent row from its deliverable and deadline."""
 

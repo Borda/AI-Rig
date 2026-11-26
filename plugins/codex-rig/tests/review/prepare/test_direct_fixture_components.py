@@ -235,7 +235,7 @@ def test_direct_component_admission_excludes_large_unrelated_source(tmp_path: Pa
     assert prepared.returncode == 0, prepared.stderr
     plan_path = run / "direct-plan.json"
     plan = json.loads(plan_path.read_bytes())
-    assert plan["schema_version"] == 3
+    assert plan["schema_version"] == 4
     assert len(plan_path.read_bytes()) > 10000000
     inputs = producer["_direct_review_inputs"](run, plan)
     assert sum(len(inputs[item["input_id"]].encode()) for item in selected) < 12000

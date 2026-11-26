@@ -583,7 +583,7 @@
       },
       {
         "head": "\u2192 specialist branches kept as recovery \u2014 git cherry could not",
-        "now": "\u2192 specialist branches kept as recovery \u2014 git cherry could not"
+        "now": "\u2192 specialist branches kept as recovery \u2014 awaiting the final report's content check"
       },
       {
         "head": "\u2192 specialist branches kept as recovery \u2014 the staged diff is n",
@@ -790,11 +790,11 @@
     "status_lines": [
       {
         "head": "! BLOCKED \u2014 GATE_GROUND is",
-        "now": "! BLOCKED \u2014 GATE_GROUND is"
+        "now": "! BLOCKED \u2014 invalid terminal rejection:"
       },
       {
         "head": "! BLOCKED \u2014 GATE_REASON still holds the placeholder; substitute the e",
-        "now": "! BLOCKED \u2014 GATE_REASON still holds the placeholder; substitute the e"
+        "now": "! BLOCKED \u2014 invalid terminal rejection:"
       },
       {
         "head": "! BLOCKED \u2014 PR snapshot missing; rerun the Step-0 snapshot block",
@@ -834,7 +834,7 @@
       },
       {
         "head": "\u2192 existing report: <PRIOR_REPORT>",
-        "now": "\u2192 existing report: <PRIOR_REPORT>"
+        "now": "\u2192 saved to $REPORT_DIR/review-report.md"
       },
       {
         "head": "\u2192 saved to",

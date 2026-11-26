@@ -106,6 +106,24 @@ MANIFEST: list[dict[str, object]] = [
         ],
     },
     {
+        # Gap-ledger schema owner: validates and appends a run's gaps.jsonl, carries gaps of an identical-head rerun
+        # and checks the known-limits file. Review, resolve and remediate runs of each harness emit the ledger, and a
+        # plugin may be installed alone, so each emitting plugin ships its own copy.
+        "canonical": "plugins/cc_foundry/bin/gap_ledger.py",
+        "copies": [
+            "plugins/cc_oss/bin/gap_ledger.py",
+            "plugins/codex-rig/shared/gap_ledger.py",
+        ],
+    },
+    {
+        # Prefixed copy, same rationale as cross-validation-protocol.md below: the gap-ledger contract for oss
+        # review and resolve emitters.
+        "canonical": "plugins/cc_foundry/skills/_shared/gap-ledger.md",
+        "copies": [
+            "plugins/cc_oss/skills/_shared/foundry--gap-ledger.md",
+        ],
+    },
+    {
         # Adversarial-loop checker: appends rounds, prints the progress table and enforces the
         # repeat root-cause and third-occurrence rules. Codex owns the canonical source; without
         # a local copy a Claude loop runs ledger-less and those rules never fire.
@@ -544,10 +562,10 @@ MANIFEST: list[dict[str, object]] = [
 
 
 def _differs(a: Path, b: Path) -> bool:
-    """Return True if files differ in bytes or executable bit, or either is unreadable/missing.
+    """Return True if files differ in bytes or execute permissions, or either is unreadable/missing.
 
-    The executable bit is compared on POSIX only: a copied ``bin/`` executable that lost it no longer runs from PATH,
-    while native Windows does not record the bit reliably.
+    Compare owner, group and other execute bits on POSIX, where each bit controls who can launch the copy.
+    Native Windows does not record those bits reliably.
 
     Args:
         a: First file path.
@@ -563,7 +581,7 @@ def _differs(a: Path, b: Path) -> bool:
     try:
         if a.read_bytes() != b.read_bytes():
             return True
-        return os.name != "nt" and bool(a.stat().st_mode & 0o111) != bool(b.stat().st_mode & 0o111)
+        return os.name != "nt" and (a.stat().st_mode & 0o111) != (b.stat().st_mode & 0o111)
     except OSError:
         return True
 
@@ -600,12 +618,17 @@ def apply(root: Path, manifest: list[dict[str, object]]) -> list[str]:
 
     Returns:
         Relative paths of copies that were rewritten.
+
+    Raises:
+        FileNotFoundError: Any canonical is missing or is not a file. No copy is rewritten if preflight fails.
     """
+    missing = [str(entry["canonical"]) for entry in manifest if not (root / str(entry["canonical"])).is_file()]
+    if missing:
+        raise FileNotFoundError(f"canonical missing: {', '.join(missing)}")
+
     updated: list[str] = []
     for entry in manifest:
         canonical = root / str(entry["canonical"])
-        if not canonical.is_file():
-            continue
         for rel in entry["copies"]:  # type: ignore[union-attr]
             copy = root / str(rel)
             if _differs(canonical, copy):
@@ -625,7 +648,11 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root)
 
     if args.apply:
-        updated = apply(root, MANIFEST)
+        try:
+            updated = apply(root, MANIFEST)
+        except FileNotFoundError as exc:
+            print(f"SHARED-DRIFT: {exc}", file=sys.stderr)
+            return 1
         if updated:
             print("\n".join(f"PROPAGATED: {u}" for u in updated))
         else:

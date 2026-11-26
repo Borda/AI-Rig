@@ -120,13 +120,33 @@ describe("inspection sequence", () => {
   })
 
   it("moves the effective directory on a literal cd and marks verification", () => {
-    expect(
-      inspectionSequence("echo ok && cd /tmp/opencode/review-x && pytest -q", "/repo", "standard", () => true),
-    ).toMatchObject({
-      ok: true,
-      kind: "verification",
-      directory: resolve("/tmp/opencode/review-x"),
-    })
+    expect(inspectionSequence("cd /tmp/opencode/review-x && pytest -q", "/repo", "standard", () => true)).toMatchObject(
+      {
+        ok: true,
+        kind: "verification",
+        directory: resolve("/tmp/opencode/review-x"),
+      },
+    )
+  })
+
+  it.each([
+    "echo ok && cd %s && pytest -q",
+    "cd %s | pytest -q",
+    "echo ok | cd %s && pytest -q",
+    "echo ok || cd %s && pytest -q",
+    "cd %s || pytest -q",
+    "cd %s; pytest -q",
+    "cd %s\npytest -q",
+    "cd %s && echo ok || pytest -q",
+    "cd %s && echo ok; pytest -q",
+    "cd %s && echo ok\npytest -q",
+    "cd %s && echo ok & pytest -q",
+    "cd %s && && pytest -q",
+    "cd %s && echo ok && 'cd' / && pytest -q",
+  ])("refuses a command with an unproven effective directory: %s", (shape) => {
+    const directory = resolve("review tree").replaceAll("\\", "/")
+    const command = shape.replace("%s", `"${directory}"`)
+    expect(inspectionSequence(command, process.cwd(), "standard", () => true).ok).toBe(false)
   })
 
   it.each(["ls && ./evil", "cd relative && pytest -q", "cd /tmp/x &&", "git status && ./pytest"])(

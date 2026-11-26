@@ -144,6 +144,7 @@
         "trigger": "explicit risk reason from review-routing.json"
       }
     ],
+    "status_axes": "derived by write-result.py from gates.json and this metadata; never author it: {schema_version: 1, gates_status: pass|fail|timeout, review_status: assessed|unavailable|closed, review_decision: recommendation or null}",
     "write_parallel_eligible": false
   },
   "schema_version": 3,

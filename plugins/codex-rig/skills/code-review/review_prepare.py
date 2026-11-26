@@ -58,14 +58,16 @@ tests exercise the CLI; validate_artifacts.py remains the independent acceptance
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import importlib.util
+import inspect
 import json
 import os
 import re
 import shlex
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -82,6 +84,7 @@ if str(SKILL_DIRECTORY) not in sys.path:
 import review_batches  # noqa: E402
 import review_context  # noqa: E402
 import review_routing  # noqa: E402
+import review_run_state  # noqa: E402
 import validate_artifacts as validator  # noqa: E402
 
 #: Plugin shared directory placed on the import path for the collect_diff helper.
@@ -240,6 +243,36 @@ def _dispatch_message(plan_path: Path, role: str, attempt: int = 1, *, provenanc
         bounded=plan.get("consumer_policy", {}).get("consumer_id") == "challenge-resolve",
         challenge_response=plan.get("challenge_response"),
     )
+
+
+def _records_checkpoint(checkpoint: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Record ``checkpoint`` in the run stub after a successful Code Review preparation or assembly.
+
+    Challenge-only and fixture-discovery calls belong to other workflows or write nothing, so they record nothing.
+    Recording is idempotent, so a repeated call on a frozen run leaves the run directory byte-identical. The stub is a
+    diagnostic, not review evidence: a filesystem error while writing it, or a run directory or stub the writer refuses,
+    is reported on stderr and never undoes a successful preparation.
+    """
+
+    def decorate(function: Callable[..., Any]) -> Callable[..., Any]:
+        signature = inspect.signature(function)
+
+        @functools.wraps(function)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            result = function(*args, **kwargs)
+            bound = signature.bind(*args, **kwargs)
+            bound.apply_defaults()
+            if not bound.arguments.get("challenge_only") and not bound.arguments.get("fixture_discovery"):
+                try:
+                    review_run_state.mark(Path(bound.arguments["out"]).resolve(), checkpoint)
+                except (OSError, ValueError) as error:
+                    # A refused directory or redirected stub is as diagnostic as a write error; preparation stands.
+                    print(f"run-state-unrecorded:{checkpoint}:{error}", file=sys.stderr)
+            return result
+
+        return wrapper
+
+    return decorate
 
 
 def _json_bytes(value: object) -> bytes:
@@ -608,7 +641,7 @@ def _direct_review_inputs(
         ).decode("utf-8"),
         "direct-diff": delivered("direct-diff", out / "diff.patch"),
     }
-    if plan.get("schema_version") == 3:
+    if plan.get("schema_version") in {3, 4}:
         for identity in ("direct-plan", "direct-diff"):
             aggregate = inputs.pop(identity)
             if identity == "direct-diff":
@@ -632,7 +665,7 @@ def _direct_review_inputs(
         # Bind raw whitespace to the verified source identity; equal bytes in another file need fresh approval.
         header = _json_bytes({"source_root": plan["source_root"], "path": record["path"]}).decode("utf-8")
         inputs[f"direct-source:{index}"] = header + "\n--- UTF-8 source ---\n" + record["content"]
-    if plan.get("schema_version") == 3:
+    if plan.get("schema_version") in {3, 4}:
         # Bind every input to this review, including raw source whose matches may disappear under JSON escaping.
         context = _json_bytes(
             {
@@ -650,6 +683,16 @@ def _direct_review_inputs(
     return inputs
 
 
+def _direct_task_pointer(out: Path, context: dict[str, Any]) -> str:
+    """Render the spawn message for a frozen direct task and its recorded digest."""
+    task_path = (out.resolve() / context["context_path"]).as_posix()
+    return (
+        f"Read and follow the frozen reviewer task at {json.dumps(task_path, ensure_ascii=False)} "
+        f"(SHA-256 {context['context_sha256']}). "
+        "Use static file reads only. Return any executable probe as a request to the parent."
+    )
+
+
 def prepare_direct(
     out: Path,
     run_id: str,
@@ -663,13 +706,16 @@ def prepare_direct(
     fixture_discovery: bool = False,
     fixture_selections: object = None,
 ) -> dict[str, Any]:
-    """Freeze one small source-pointer task for every routed native reviewer."""
+    """Freeze each routed reviewer's full task and emit its short digest-bound launch message."""
     if not run_id.strip() or not parent_thread_id.strip():
         raise ValueError("review-identity-empty")
     if model is not None and (not isinstance(model, str) or not model.strip()):
         raise ValueError("review-model-selection-invalid")
     if any((out / name).exists() for name in ("inspection-plan.json", "batch-inventory.json", "batch-dispatch.json")):
         raise ValueError("review-preparation-route-conflict")
+    plan_path = out / "direct-plan.json"
+    # The previous producer could regenerate a frozen version-three run without changing its issued arguments.
+    schema_version = 3 if plan_path.is_file() and validator._load_json(plan_path).get("schema_version") == 3 else 4
     if not fixture_discovery:
         review_routing.synchronize_routing(out)
     routing = validator._load_json(out / "review-routing.json")
@@ -753,21 +799,20 @@ def prepare_direct(
         context_path = f"tasks/{role}.md"
         context_sha = hashlib.sha256(message.encode("utf-8")).hexdigest()
         files[out / context_path] = message.encode("utf-8")
-        contexts.append(
-            {
-                "role_id": role,
-                "context_path": context_path,
-                "context_sha256": context_sha,
-                "source_paths": selections[role],
-                "role_card_sha256": card["role_card_sha256"],
-            }
-        )
+        context = {
+            "role_id": role,
+            "context_path": context_path,
+            "context_sha256": context_sha,
+            "source_paths": selections[role],
+            "role_card_sha256": card["role_card_sha256"],
+        }
+        contexts.append(context)
         calls.append(
             {
                 "role": role,
                 "arguments": {
                     "task_name": f"review_{role.replace('-', '_')}_{context_sha[:12]}_a1",
-                    "message": message,
+                    "message": _direct_task_pointer(out, context) if schema_version == 4 else message,
                     "fork_turns": "none",
                     **({"model": model} if model is not None else {}),
                     "reasoning_effort": card["model_reasoning_effort"],
@@ -775,7 +820,7 @@ def prepare_direct(
             }
         )
     plan = {
-        "schema_version": 3,
+        "schema_version": 4,
         "model_selection": {"mode": "explicit", "model": model} if model is not None else {"mode": "inherit"},
         "consumer_policy": {"consumer_id": "code-review"},
         "review_run_id": run_id,
@@ -797,6 +842,8 @@ def prepare_direct(
             for brief in briefs.values()
         },
     }
+    if schema_version == 3:
+        plan = {**plan, "schema_version": 3}
     if "inert_fixture_admissions" in routing:
         plan["inert_fixture_admissions"] = routing["inert_fixture_admissions"]
     inputs = _direct_review_inputs(out, plan, files)
@@ -805,10 +852,10 @@ def prepare_direct(
     for text in inputs.values():
         if validator.review_input_has_sensitive_material(text, plan.get("inert_fixture_admissions", [])):
             raise ValueError("review-direct-sensitive-material")
-    files[out / "direct-plan.json"] = _json_bytes(plan)
+    files[plan_path] = _json_bytes(plan)
     dispatch = {
         "mode": "direct-review",
-        "plan_sha256": hashlib.sha256(files[out / "direct-plan.json"]).hexdigest(),
+        "plan_sha256": hashlib.sha256(files[plan_path]).hexdigest(),
         "calls": calls,
         "context_bytes": sum(len(files[out / item["context_path"]]) for item in contexts),
         "dispatch_bytes": len(_json_bytes(calls)),
@@ -825,6 +872,7 @@ def _direct_failure_evidence(out: Path, codex_home: Path, context: dict[str, Any
     normal direct validator; inspect only this original role so other retry histories never form a recursive graph.
     """
     plan = validator._load_json(out / "direct-plan.json")
+    plan_version = plan.get("schema_version")
     role = context["role_id"]
     task = f"review_{role.replace('-', '_')}_{context['context_sha256'][:12]}_a1"
     parent = _runtime_parent_rows(validator._read_jsonl(validator._find_rollout(codex_home, plan["parent_thread_id"])))
@@ -838,7 +886,8 @@ def _direct_failure_evidence(out: Path, codex_home: Path, context: dict[str, Any
     if len(calls) != 1:
         raise ValueError(f"review-direct-failure-spawn-not-unique:{role}")
     call = calls[0]
-    if plan.get("schema_version") in {2, 3}:
+    pointer = None
+    if plan_version in {2, 3, 4}:
         card = validator._load_role_card(out / "role-cards", role)
         selection = plan.get("model_selection")
         if (
@@ -861,6 +910,13 @@ def _direct_failure_evidence(out: Path, codex_home: Path, context: dict[str, Any
             or arguments.get("fork_turns") != "none"
         ):
             raise ValueError(f"review-direct-failure-controls-invalid:{role}")
+        if plan_version == 4:
+            task_path = validator._resolve_path(out, context["context_path"])
+            if validator._sha256(task_path) != context["context_sha256"]:
+                raise ValueError(f"review-direct-task-changed:{role}")
+            pointer = _direct_task_pointer(out, context)
+            if arguments.get("message") != pointer:
+                raise ValueError(f"review-direct-spawn-pointer-mismatch:{role}")
         observed_model = (
             selected_model if selected_model is not None else validator._inherited_parent_model(parent, call)
         )
@@ -884,7 +940,7 @@ def _direct_failure_evidence(out: Path, codex_home: Path, context: dict[str, Any
         completed = validator._event_payloads(rows, "task_complete")
         has_result = any(str(event.get("last_agent_message", "")).strip() for event in completed)
         aborted = validator._event_payloads(rows, "turn_aborted")
-        if plan.get("schema_version") in {2, 3}:
+        if plan_version in {2, 3, 4}:
             if len(completed) == 1 and has_result and not aborted:
                 turn = review_execution_validation._child_turn_context(
                     rows, completed[0].get("turn_id"), only_turn=True
@@ -913,7 +969,7 @@ def _direct_failure_evidence(out: Path, codex_home: Path, context: dict[str, Any
                 codex_home,
                 plan["parent_thread_id"],
                 attempt,
-                (out / context["context_path"]).read_text(encoding="utf-8"),
+                pointer or (out / context["context_path"]).read_text(encoding="utf-8"),
                 direct_delivery=True,
                 model=selected_model,
                 effort=card["model_reasoning_effort"],
@@ -944,7 +1000,7 @@ def _direct_failure_evidence(out: Path, codex_home: Path, context: dict[str, Any
         if not aborted and not completed:
             raise ValueError(f"review-direct-child-failure-unverified:{role}")
         evidence["child"] = rows
-    elif plan.get("schema_version") not in {2, 3}:
+    elif plan_version not in {2, 3, 4}:
         receipt = receipts[0]["payload"].get("output", "")
         try:
             decoded = json.loads(receipt)
@@ -993,7 +1049,7 @@ def _direct_failure_evidence(out: Path, codex_home: Path, context: dict[str, Any
                     raise ValueError("review-direct-failure-evidence-invalid") from None
                 pending.append((decoded, False))
     # Scan the retained failure evidence before routing an unverifiable no-child launch to a fresh review.
-    if not children and plan.get("schema_version") in {2, 3}:
+    if not children and plan_version in {2, 3, 4}:
         raise ValueError(f"review-direct-failure-no-child-rerun-fresh:{role}")
     return evidence
 
@@ -1048,7 +1104,7 @@ def prepare_direct_retry(out: Path, codex_home: Path, role: str, reason: str) ->
     card = validator._load_role_card(out / "role-cards", role)
     arguments = {
         "task_name": f"review_{role.replace('-', '_')}_{retry_context['context_sha256'][:12]}_a2",
-        "message": message,
+        "message": _direct_task_pointer(out, retry_context) if plan["schema_version"] == 4 else message,
         "fork_turns": "none",
         **(
             {"model": card["model"]}
@@ -1179,6 +1235,7 @@ def assemble_direct(out: Path, codex_home: Path) -> dict[str, Any]:
     return summary
 
 
+@_records_checkpoint("dispatch-prepared")
 def prepare(
     out: Path,
     run_id: str,
@@ -1842,6 +1899,7 @@ def manifest_header(plan: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+@_records_checkpoint("reviewers-joined")
 def assemble(out: Path, codex_home: Path, challenge_only: bool = False) -> dict[str, Any]:
     """Assemble and validate actual specialist evidence after the complete wave has joined."""
     out = out.resolve()

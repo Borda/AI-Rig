@@ -1896,7 +1896,7 @@ function collectWords(words, found, depth, target, scripts = new Set(), facts = 
   let subscript = -1;
   words.forEach((word, j) => {
     const name = programName(word);
-    if (name === target.name) found.push(withXargsTail(words, j));
+    if (name === target.name) appendInvocation(words, j, facts, found, target.literalArguments);
     else if (
       SOURCE_RUNNERS.has(name) &&
       (name !== "." || j === commandStart(words)) &&
@@ -2729,6 +2729,16 @@ function withXargsTail(words, j) {
   return [...shown, XARGS_TAIL];
 }
 
+/** Keep shell literalness aligned with argv, including any arguments xargs replaces or appends. */
+function appendInvocation(words, at, facts, found, literalArguments) {
+  const argv = withXargsTail(words, at);
+  found.push(argv);
+  literalArguments?.set(
+    argv,
+    argv.map((word, i) => word !== XARGS_TAIL && !!(facts[at + i] & WORD_LITERAL)),
+  );
+}
+
 /** Index of the word a simple command runs, past keywords, precommand modifiers, their options and assignments. */
 function commandStart(words) {
   let s = 0;
@@ -3159,10 +3169,12 @@ function retainInvocations(lexed, target, depth = 0) {
   if (!lexed || !target.readable) return;
   for (const words of lexed.commands) {
     if (lexed.incomplete.has(words)) continue;
+    const facts = lexed.wordFacts.get(words);
     for (let at = 0; at < words.length; at += 1) {
-      if (programName(words[at]) === target.name) target.readable.push(withXargsTail(words, at));
+      if (programName(words[at]) === target.name)
+        appendInvocation(words, at, facts, target.readable, target.literalArguments);
     }
-    if (depth >= MAX_NESTING || !lexed.wordFacts.get(words).every((fact) => fact & WORD_LITERAL)) continue;
+    if (depth >= MAX_NESTING || !facts.every((fact) => fact & WORD_LITERAL)) continue;
     for (const at of executablePrograms(words)) {
       if (!SOURCE_RUNNERS.has(programName(words[at]))) continue;
       for (const source of sourceArguments(words, at, {}) || []) {
@@ -3548,6 +3560,7 @@ function findInvocations(command, target, info = {}, exact = null) {
   run.unreadableReason = "";
   run.readable = [];
   run.prefix = [];
+  run.literalArguments = info.literalArguments;
   const scripts = new Set();
   let lexed;
   for (let pass = 0; pass < MAX_NESTING; pass += 1) {
@@ -3854,15 +3867,24 @@ function namesProgram(command, name) {
  * program: no exact argv exists, so the caller fails closed. `info.unreadable` (optional object) is
  * set when quoting bash and zsh read differently was found, for any program: such quoting may hide
  * the program word itself; `info.unreadableReason` names that syntax ("" when there is none). May
- * repeat an invocation; callers test with `some`/`filter`, never count.
+ * repeat an invocation; callers test with `some`/`filter`, never count. `info.literalArguments` maps each
+ * lexed argv (including `info.exactInvocations`) to booleans at the corresponding argument indexes.
+ * Coarse readings have no literalness proof.
  */
 function programInvocations(command, name, info = {}) {
   try {
     const program = String(name).toLowerCase();
     const target = program === GIT.name ? GIT : programTarget(program);
+    const literalArguments = (info.literalArguments = new WeakMap());
+    const normalize = (tokens) => {
+      const argv = tokens.map(unmarkGlobs);
+      const literals = literalArguments.get(tokens);
+      if (literals) literalArguments.set(argv, literals);
+      return argv;
+    };
     const found = findInvocations(command, target, info);
-    info.exactInvocations = (info.exactInvocations || []).map((tokens) => tokens.map(unmarkGlobs));
-    return target.approximate ? null : found.map((tokens) => tokens.map(unmarkGlobs));
+    info.exactInvocations = (info.exactInvocations || []).map(normalize);
+    return target.approximate ? null : found.map(normalize);
   } catch (error) {
     info.unreadable = true;
     info.unreadableReason = error.message === "command inspection deadline exceeded" ? error.message : "lexer error";

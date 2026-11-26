@@ -28,6 +28,10 @@
       "kind": "command",
       "src": "skills/distill/modes/memory.md:13"
     },
+    "00fa647741c480af8e933f5a574360ca196a89f476a781286c36635adf0a72e7": {
+      "kind": "command",
+      "src": "skills/profile/SKILL.md:54"
+    },
     "0102c649a57b38c61a0c04ec661ecbfd86e82f593491bad44a8aa0def00b8bfb": {
       "kind": "command",
       "src": "skills/investigate/SKILL.md:170"
@@ -115,7 +119,7 @@
     },
     "054207d9ed534892b511f6ed0bcc1e82f886dcff1dbf44c9da472eb3396ed7eb": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:53"
+      "src": "skills/profile/SKILL.md:54"
     },
     "05547aae7c64485929b587135831329a9e8df702cbead2dc0fbd579e09fe3391": {
       "kind": "command",
@@ -198,7 +202,7 @@
     },
     "09b1e104420e1dc818079635887efd565cafcc85b2bd3be5916b973f0a8e0e87": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:88"
+      "src": "skills/profile/SKILL.md:95"
     },
     "09d37a26da5606e79d10d83126aa839004a306d96e9d9c30d432e2bfd099176a": {
       "kind": "command",
@@ -273,10 +277,6 @@
       "kind": "command",
       "src": "skills/_shared/bin-authoring-guide.md:227"
     },
-    "0ce9730180c31e4bc5fc867a3be56690d1d35d808d66520654481b646f042c48": {
-      "kind": "command",
-      "src": "rules/_full/external-data.md:59"
-    },
     "0d1b651f8ee63e96da7e9b8e03901d1240d55c53edccf4df1570c4ee4ae50e8f": {
       "kind": "command",
       "src": "skills/_shared/bin-authoring-guide.md:52"
@@ -287,7 +287,7 @@
     },
     "0d5a58e0bcf6c9f9bcf9345b0bd47b20badd729bf287b976939aa3d5ceafba01": {
       "kind": "block",
-      "src": "skills/profile/SKILL.md:88",
+      "src": "skills/profile/SKILL.md:95",
       "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nwhile IFS== read -r K V; do case \"$K\" in REPORT_DIR) REPORT_DIR=$V;; SINCE) SINCE=$V;; SESSION_ID) SESSION_ID=$V;; TOP_N) TOP_N=$V;; esac; done < \"${TMPDIR:-/tmp}/foundry-profile-state-${CSID}\"\nset --; [ -n \"$SESSION_ID\" ] && set -- --session-id \"$SESSION_ID\"\npython \"$PLUGIN_ROOT/bin/cost_analyzer.py\" \\\n    --since \"$SINCE\" \\\n    --top-n \"$TOP_N\" \\\n    --output \"$REPORT_DIR/cost.md\" \\\n    \"$@\" 2>>\"$REPORT_DIR/warnings.log\"\nCOST_EXIT=$?\nif [ \"$COST_EXIT\" -eq 0 ] && [ -s \"$REPORT_DIR/report.md\" ]; then\n  printf '\\n' >> \"$REPORT_DIR/report.md\"\n  cat \"$REPORT_DIR/cost.md\" >> \"$REPORT_DIR/report.md\"\nfi\necho \"cost_exit=$COST_EXIT\"\nSTATUS=complete\n[ \"$COST_EXIT\" -lt 2 ] || STATUS=partial\necho '{\"status\":\"'\"$STATUS\"'\",\"cost_exit\":'\"$COST_EXIT\"',\"since\":\"'\"$SINCE\"'\",\"session_id\":\"'\"$SESSION_ID\"'\",\"top_n\":'\"$TOP_N\"'}' > \"$REPORT_DIR/result.jsonl\""
     },
     "0d81cc951b135c4586130f327c797edc7d207f5cfaa25a41d0712c116cd4970b": {
@@ -413,6 +413,10 @@
       "kind": "command",
       "src": "skills/calibrate/templates/routing-pipeline-prompt.md:16"
     },
+    "13d2e2eb24a9e7fac48b403949d6d531c11c2111e448721317d4421948b55871": {
+      "kind": "command",
+      "src": "skills/profile/SKILL.md:54"
+    },
     "14103738647ebfbbbcc90cc479b649f8472e6f68fa2511dcb9b49bdae0d72728": {
       "kind": "command",
       "src": "skills/audit/modes/steps-4-5-7.md:234"
@@ -452,10 +456,6 @@
     "154fc337e62d7fa559cb93ff49a2a21a8bf93773c2e25498c6ee92baa36e69bf": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills-gaps.md:51"
-    },
-    "157048c2b8070c5d753795404c12fc04dbd66ce34c066467f480ab2872007114": {
-      "kind": "command",
-      "src": "skills/profile/SKILL.md:53"
     },
     "1570f5eb6e64ac68339c17c7ab5884bcc06c4b240d496db0bd2414acc60ea7de": {
       "kind": "block",
@@ -554,10 +554,6 @@
     "1a34e471e273819e9e989b8f639a24115bac53db36da41dc3383f15b89d8d569": {
       "kind": "command",
       "src": "skills/manage/modes/create.md:82"
-    },
-    "1a37fe21e199d68c34abc4397116c3c39c9f21749e053c042ce5caf7cc3c37d5": {
-      "kind": "command",
-      "src": "skills/profile/SKILL.md:53"
     },
     "1a6b7a60f11186c37f5ad8fd71f37eedcf84676684d6356df296fa4081af393a": {
       "kind": "command",
@@ -663,7 +659,7 @@
     },
     "1eadd878b798033c7ba27f82154220c9a8bd15e21f984c44d3c71032e26e7f4c": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:53"
+      "src": "skills/profile/SKILL.md:54"
     },
     "1eb4234133c9f0c618108e8d09ec44cbfb7a5e46c7080699715ad80cc4f2ed9e": {
       "kind": "command",
@@ -738,6 +734,10 @@
       "kind": "command",
       "src": "agents/perf-optimizer.md:219"
     },
+    "227261377e4cf6564c515a752e202f11f79e002342b7eb5dfab0b47ae79bc800": {
+      "kind": "command",
+      "src": "skills/profile/SKILL.md:121"
+    },
     "231af042225761824e68c1d2e4ffac206234adff8d003228aa4497532f97154c": {
       "kind": "command",
       "src": "skills/calibrate/modes/apply.md:17"
@@ -745,10 +745,6 @@
     "2367679338e67a825c3ab40e7664af13f66fc73f3c28f8577ce5bb68ddaeb0b0": {
       "kind": "block",
       "src": "rules/external-data.md:18"
-    },
-    "23eefbf744adbe1d035200bf130dbb080b24625ecf0f4325d5bb5f213a2fbdd3": {
-      "kind": "block",
-      "src": "rules/_full/git-commit.md:238"
     },
     "246b52808f7483875dcd35d639221bff2109f874ac7c287a46dd788fc64bd7c9": {
       "kind": "block",
@@ -899,6 +895,10 @@
       "kind": "command",
       "src": "skills/_shared/quality-stack.md:144"
     },
+    "2c4f0042fe53ff3ba8c97c4402fb64aa40fc211566314c8093f283a7f8523dba": {
+      "kind": "command",
+      "src": "skills/profile/SKILL.md:54"
+    },
     "2c5426bb735b1a7a9ac306ac632707cd6b307421eceff57036b057082e4339ee": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills-bash.md:124"
@@ -913,11 +913,11 @@
     },
     "2d12ef042fbe60f784a7e6a8836e6b5921213c6729d859999382d763b3952dad": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:88"
+      "src": "skills/profile/SKILL.md:95"
     },
     "2d62302a32175ecb1d7971c012f7b1be56867189c2032018ae4cfb588db3c253": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:88"
+      "src": "skills/profile/SKILL.md:95"
     },
     "2d832f9807ec4e9b4d842dc0228c6e414f9015660edd84de76acdde4c00af995": {
       "kind": "command",
@@ -1001,6 +1001,10 @@
       "kind": "command",
       "src": "skills/audit/modes/fix.md:142"
     },
+    "33273587e9a4d5e888a2d17ba6f3cbde2ebf2d18a726a36351744a2383df020d": {
+      "kind": "command",
+      "src": "skills/profile/SKILL.md:54"
+    },
     "33754218240de09e738137b5a323c8b7fbcbaa7cd541655041229144b8c04033": {
       "kind": "command",
       "src": "skills/audit/SKILL.md:178"
@@ -1043,10 +1047,6 @@
       "kind": "block",
       "src": "skills/audit/templates/checks-shared.md:338"
     },
-    "3627b1a21a06a72eb2068e8ab5a2a510aae70008c265e4cc261df674d38cc14f": {
-      "kind": "command",
-      "src": "rules/_full/external-data.md:59"
-    },
     "364a786f8aca217e93dc222949825aaa4d8d3ff5092d88866548829a24900689": {
       "kind": "block",
       "src": "skills/investigate/SKILL.md:206",
@@ -1072,6 +1072,10 @@
     "37518c512414fc327dae7de87d8f0b48adf146e3ce6082376a77c3f2b3b1ac62": {
       "kind": "command",
       "src": "skills/calibrate/modes/rules.md:51"
+    },
+    "37d6917fffcbef4d05c95a44723a69c482b62af15f3b7caf90ace53c212387d9": {
+      "kind": "command",
+      "src": "skills/profile/SKILL.md:54"
     },
     "37e4088f8db02ed4f28ff86fddf15f403018c4e4607122561ffc5338d21b9bbf": {
       "kind": "command",
@@ -1137,7 +1141,7 @@
     },
     "3adb2eaf526b0123df0d01ce36875ac6c6e357c24b7cf2f460cb8175500471e0": {
       "kind": "command",
-      "src": "rules/_full/git-commit.md:182"
+      "src": "rules/_full/git-commit.md:190"
     },
     "3b2fe39feecef5df990f1b41e42f87faf6f9839d05d6fded821ff765c33bb9b1": {
       "kind": "command",
@@ -1313,7 +1317,7 @@
     },
     "44676a7f021bec8dda0a7b5e654a871a85e0396417b02be5bfe8b952b2c1f148": {
       "kind": "block",
-      "src": "rules/_full/python-testing.md:144"
+      "src": "rules/_full/python-testing.md:149"
     },
     "44aa9d64636826d09bee7abd82aa36c5a31fac8a6ead7bdb29dae70de7e92638": {
       "kind": "block",
@@ -1376,6 +1380,11 @@
     "47084e438d79c73a3385c5e160c101a77aaf62bdf753d6c96c8d45346fabef8f": {
       "kind": "command",
       "src": "skills/_shared/quality-stack.md:144"
+    },
+    "471a014dd19c0eeae9c25f3de6ecb09a27d89efbdc6c70bc4b0d2efcf422a1fe": {
+      "kind": "block",
+      "src": "skills/profile/SKILL.md:54",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\npython \"$PLUGIN_ROOT/bin/parse-skill-flags.py\" --flags noop --value-flags since,session-id,top-n,pair-label,pair-side --keep-state profile --inlined -- \"$ARGUMENTS\" >/dev/null || exit $?\nIFS= read -r SINCE < \"${TMPDIR:-/tmp}/profile-since-${CSID}\" 2>/dev/null; SINCE=\"${SINCE:-24h}\"\nIFS= read -r TOP_N < \"${TMPDIR:-/tmp}/profile-top-n-${CSID}\" 2>/dev/null; TOP_N=\"${TOP_N:-5}\"\nIFS= read -r SESSION_ID < \"${TMPDIR:-/tmp}/profile-session-id-${CSID}\" 2>/dev/null || SESSION_ID=\"\"\n{ IFS= read -r PAIR_LABEL && ! IFS= read -r; } < \"${TMPDIR:-/tmp}/profile-pair-label-${CSID}\" || { echo \"! BLOCKED \u2014 expected a single --pair-label value\"; exit 1; }\nIFS= read -r PAIR_SIDE < \"${TMPDIR:-/tmp}/profile-pair-side-${CSID}\" 2>/dev/null || PAIR_SIDE=\"\"\n[[ $SINCE =~ ^[0-9]+[smhd]$ && $TOP_N =~ ^[0-9]+$ && $SESSION_ID =~ ^[A-Za-z0-9._-]*$ ]] || { echo \"! BLOCKED \u2014 invalid --since/--top-n/--session-id\"; exit 1; }\n[[ $PAIR_LABEL =~ ^[A-Za-z0-9._:/-]{0,80}$ ]] || { echo \"! BLOCKED \u2014 invalid --pair-label\"; exit 1; }\ncase \"$PAIR_SIDE:${PAIR_LABEL:+set}\" in before:set|after:set|:) ;; *) echo \"! BLOCKED \u2014 --pair-label LABEL and --pair-side before|after go together\"; exit 1;; esac\nSTAMP=\"$(date -u +%Y-%m-%dT%H-%M-%SZ)\" || exit $?\nmkdir -p .reports/profile || exit $?\nREPORT_DIR=\"$(mktemp -d \".reports/profile/$STAMP-XXXXXXXX\")\" || exit $?\n{\n  echo \"REPORT_DIR=$REPORT_DIR\"\n  echo \"SINCE=$SINCE\"\n  echo \"SESSION_ID=$SESSION_ID\"\n  echo \"TOP_N=$TOP_N\"\n  echo \"PAIR_LABEL=$PAIR_LABEL\"\n  echo \"PAIR_SIDE=$PAIR_SIDE\"\n} | tee \"${TMPDIR:-/tmp}/foundry-profile-state-${CSID}\" || exit $?\nset --; [ -n \"$SESSION_ID\" ] && set -- --session-id \"$SESSION_ID\"\npython \"$PLUGIN_ROOT/bin/timing_analyzer.py\" \\\n    --since \"$SINCE\" \\\n    --top-n \"$TOP_N\" \\\n    --output \"$REPORT_DIR/report.md\" \\\n    \"$@\" 2>\"$REPORT_DIR/warnings.log\"\nTIME_EXIT=$?\necho \"time_exit=$TIME_EXIT\"\n[ \"$TIME_EXIT\" -lt 2 ] || { echo \"! BLOCKED \u2014 timing_analyzer exit $TIME_EXIT; see $REPORT_DIR/warnings.log\"; exit 1; }\n[ \"$TIME_EXIT\" -eq 0 ] || { echo \"No sessions in window; stopping.\"; exit 1; }"
     },
     "473e407767a6c5a1a00cdad999de2ee7a8e836709eb77c4c10de80a01cf6f281": {
       "kind": "command",
@@ -1496,7 +1505,7 @@
     },
     "4ce39ff325a5070a26354ef93294511e07edf375f9e76bd0096c0de636b56961": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:88"
+      "src": "skills/profile/SKILL.md:95"
     },
     "4d0a170edf59b5dda6e7b62409e05e42b6d3de2aa72e5a994c36fec9bf96a3b4": {
       "kind": "block",
@@ -1539,6 +1548,10 @@
     "4ef922ad5df7ba386ff01ca461c03e49e0f8cdac240f5e1bd636b6c005fd32d6": {
       "kind": "block",
       "src": "skills/audit/templates/checks-setup.md:61"
+    },
+    "4f0c59501718b0460e53a5fd266d4ecf6d4eb0d440ea53712fb5f8cd541a372e": {
+      "kind": "command",
+      "src": "skills/profile/SKILL.md:121"
     },
     "4f3b95cb1a5a8e699e3c099cc5e42459e028e87c91f247591dd88d7b844c62df": {
       "kind": "command",
@@ -1699,15 +1712,6 @@
       "kind": "command",
       "src": "skills/distill/modes/external.md:175"
     },
-    "565c9260122c4269459063cdb123d65dd6209e019b61fccc4aa7072fa0fba20e": {
-      "kind": "command",
-      "src": "rules/_full/external-data.md:59"
-    },
-    "567adac547cf4ee9199639b74b2bd2ca85bb2c8c1de137877c64a2b9bd518924": {
-      "kind": "block",
-      "src": "skills/profile/SKILL.md:53",
-      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\npython \"$PLUGIN_ROOT/bin/parse-skill-flags.py\" --flags noop --value-flags since,session-id,top-n --keep-state profile --inlined -- \"$ARGUMENTS\" >/dev/null\nIFS= read -r SINCE < \"${TMPDIR:-/tmp}/profile-since-${CSID}\" 2>/dev/null; SINCE=\"${SINCE:-24h}\"\nIFS= read -r TOP_N < \"${TMPDIR:-/tmp}/profile-top-n-${CSID}\" 2>/dev/null; TOP_N=\"${TOP_N:-5}\"\nIFS= read -r SESSION_ID < \"${TMPDIR:-/tmp}/profile-session-id-${CSID}\" 2>/dev/null || SESSION_ID=\"\"\n[[ $SINCE =~ ^[0-9]+[smhd]$ && $TOP_N =~ ^[0-9]+$ && $SESSION_ID =~ ^[A-Za-z0-9._-]*$ ]] || { echo \"! BLOCKED \u2014 invalid --since/--top-n/--session-id\"; exit 1; }\nSTAMP=\"$(date -u +%Y-%m-%dT%H-%M-%SZ)\"\nREPORT_DIR=\".reports/profile/$STAMP\"\nmkdir -p \"$REPORT_DIR\"\n{\n  echo \"REPORT_DIR=$REPORT_DIR\"\n  echo \"SINCE=$SINCE\"\n  echo \"SESSION_ID=$SESSION_ID\"\n  echo \"TOP_N=$TOP_N\"\n} | tee \"${TMPDIR:-/tmp}/foundry-profile-state-${CSID}\"\nset --; [ -n \"$SESSION_ID\" ] && set -- --session-id \"$SESSION_ID\"\npython \"$PLUGIN_ROOT/bin/timing_analyzer.py\" \\\n    --since \"$SINCE\" \\\n    --top-n \"$TOP_N\" \\\n    --output \"$REPORT_DIR/report.md\" \\\n    \"$@\" 2>\"$REPORT_DIR/warnings.log\"\nTIME_EXIT=$?\necho \"time_exit=$TIME_EXIT\"\n[ \"$TIME_EXIT\" -lt 2 ] || { echo \"! BLOCKED \u2014 timing_analyzer exit $TIME_EXIT; see $REPORT_DIR/warnings.log\"; exit 1; }\n[ \"$TIME_EXIT\" -eq 0 ] || { echo \"No sessions in window; stopping.\"; exit 1; }"
-    },
     "5694c452a8648104fea3a5a6dcab78d246075360e83d6c4b85d06fe37febacfb": {
       "kind": "command",
       "src": "skills/setup/SKILL.md:554"
@@ -1739,7 +1743,7 @@
     },
     "57cbabdf8c18003dfec3feac498fe8d2d93a17316142a48a1d8b4794e2c800fc": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:53"
+      "src": "skills/profile/SKILL.md:54"
     },
     "57e0a3a0256adc5c27848986d10f846f6dceb9236f7f605947e41f80b1d1fcda": {
       "kind": "command",
@@ -1829,10 +1833,6 @@
       "kind": "command",
       "src": "agents/challenger.md:52"
     },
-    "5bd050b60d2efd480f5049949b03052792999da680bd3dbf6cb22da267ed8d09": {
-      "kind": "command",
-      "src": "rules/_full/external-data.md:59"
-    },
     "5c28acf118e974f71626fac1bc5003522ca2d5a159f5781fbd070f49a5fa9abf": {
       "kind": "block",
       "src": "skills/_shared/bin-authoring-guide.md:213"
@@ -1852,10 +1852,6 @@
     "5c7597d2fd1eb46dacad380d92a6e454813a6b857064fef5dff27214fd94dac5": {
       "kind": "command",
       "src": "skills/audit/SKILL.md:294"
-    },
-    "5cae1909b09ce40b44ee450b586ab3da88e3af30495feecf5bc23298728ce99e": {
-      "kind": "command",
-      "src": "rules/_full/external-data.md:59"
     },
     "5ce1b26233b32d4799e66c54346680f2dc9693c8b144278c1ed3b1e4ae04b4fb": {
       "kind": "command",
@@ -2013,10 +2009,6 @@
     "63f8fe5d50cc42ccb06352b4e47207f436780d9ffc3c4abc9fbd12eb9cfe6817": {
       "kind": "command",
       "src": "skills/investigate/SKILL.md:77"
-    },
-    "644a4b268cd2309381469cd98b274104a95ea60b19e593d69125d356a499719b": {
-      "kind": "command",
-      "src": "rules/_full/external-data.md:59"
     },
     "64ab676cac50f67d4b7f9546d17166d5f26fd41758c27d6ac51c47d148f0bed5": {
       "kind": "command",
@@ -2212,7 +2204,7 @@
     },
     "6f358249ed50202060e30ef9173077a168b0fb2be0e8ae4908a9f3754e5a0955": {
       "kind": "command",
-      "src": "rules/_full/git-commit.md:182"
+      "src": "rules/_full/git-commit.md:190"
     },
     "6f41de39291a7b27c8c0ff272c66ac3d9d09036e4b833526afd1397155ceae46": {
       "kind": "command",
@@ -2525,7 +2517,7 @@
     },
     "7f17d630d90f32646abd0ccfe8e8f8f435519a0c020ce7340ad8b842a5952ed1": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:88"
+      "src": "skills/profile/SKILL.md:95"
     },
     "7f5ff6196ebde676e9ec83a9124d5557296d819941bdb8b7549b3f9ab40ca6a6": {
       "kind": "command",
@@ -2628,7 +2620,7 @@
     },
     "84c368496eed509aa3217768e5b39d247c9b15e48fbcd65e948c236d92e47dd2": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:53"
+      "src": "skills/profile/SKILL.md:54"
     },
     "852de8470bc89d5279d6262d6ec0f839faae238fb136702847836ca11a9b66d3": {
       "kind": "command",
@@ -2697,7 +2689,7 @@
     },
     "86d9fcece94ea0d3a167fbbeed02aeb91ff1b1bd0a5c911853d3533aed2b97f0": {
       "kind": "command",
-      "src": "rules/_full/git-commit.md:182"
+      "src": "rules/_full/git-commit.md:190"
     },
     "86f33d659f185714f54c4bacf5dd0b83986f6ff79d8fd6e2afa7d53b20cc6709": {
       "kind": "command",
@@ -2869,13 +2861,9 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-skills-bash.md:244"
     },
-    "8e8edc46fbb08aa6c7b439e8e2b4a6fbeb1ce6b4aebd91221ec691f42e0db741": {
-      "kind": "command",
-      "src": "rules/_full/external-data.md:59"
-    },
     "8eacd35ee4c6a84309a3e9fadbd9b8ec7bc3b736ea2737c8e1b56fde04e2692b": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:88"
+      "src": "skills/profile/SKILL.md:95"
     },
     "8f445be870246b6a73ad0bc906ee3b88be743fea9464b8d29ed91af53bc4509e": {
       "kind": "block",
@@ -2945,7 +2933,7 @@
     },
     "928a503bc36618b17d482abe913ceff6ca5c33d7170d276e3e7da6f580f7cbaa": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:53"
+      "src": "skills/profile/SKILL.md:54"
     },
     "92b6136fbb865193e77edd5748d1025df809e9375dbdf4d0a822379e62538dc2": {
       "kind": "command",
@@ -2972,6 +2960,10 @@
     "935da3cf5c8367eb0429e4e465ce8170c36a9854f00a6571a68a9652ade5cf60": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills-contract.md:126"
+    },
+    "93bb4f3e234e744cdee9268be29529aa09dcb0f9c8ed56a32d9109f509cf27d9": {
+      "kind": "command",
+      "src": "skills/profile/SKILL.md:54"
     },
     "9412becb5b43e43d033ec8b0103c58230e82b963c650ed958d9c209498965cfa": {
       "kind": "command",
@@ -3185,7 +3177,7 @@
     },
     "9da76b85c08dad7b39ba9b70c849a3310574ab811364d9862da1be2b3d6a7e9b": {
       "kind": "command",
-      "src": "rules/_full/git-commit.md:182"
+      "src": "rules/_full/git-commit.md:190"
     },
     "9dd3d96add8bf06ef5a47d84f8cd8ecf4d9580a11b1b08b5727e96d7f8eeef96": {
       "kind": "block",
@@ -3206,7 +3198,7 @@
     },
     "9e4ac15fb432703c6b26e0fde44fef6f123cb2ac068d3973e1143a0212d35351": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:53"
+      "src": "skills/profile/SKILL.md:54"
     },
     "9e5d6485b67aacc685714b92a054763899dfd9394e8c4c9ec148f6c2b7dfc6cc": {
       "kind": "command",
@@ -3571,7 +3563,7 @@
     },
     "b04c24b3b24d77173e31b4e5ed41bf1c58e3fc60eb9fabf3bde1e24c636f86a7": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:88"
+      "src": "skills/profile/SKILL.md:95"
     },
     "b054f496784c6967fce4dc768521656d5f916b806c06f67bc615621b60a533d2": {
       "kind": "command",
@@ -3583,7 +3575,7 @@
     },
     "b08edfab7e0c0acf8a304333f507ca7bc028d6382b521f401d449b51d43158e6": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:53"
+      "src": "skills/profile/SKILL.md:54"
     },
     "b0bd8190affad383fac0903bc7d92110670054645e0ca63997adfd27f2772bac": {
       "kind": "command",
@@ -3703,10 +3695,6 @@
       "kind": "block",
       "src": "skills/_shared/bin-authoring-guide.md:227"
     },
-    "b95ad6a4234fe5c855b54abd47b7cb5c669731cb04e5c802d3325bd488f6963d": {
-      "kind": "command",
-      "src": "rules/_full/external-data.md:59"
-    },
     "b963a42541f98bbdad6f07968af10b7fe3258e5d9c42f949dbaaa884a496dc38": {
       "kind": "command",
       "src": "skills/audit/templates/checks-setup.md:172"
@@ -3744,7 +3732,7 @@
     },
     "bb46b5fd1b404eae4c7a16f8b2bad1dc7bdd5b899506297aed7bcd1208efc8ae": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:88"
+      "src": "skills/profile/SKILL.md:95"
     },
     "bb9e82a1437a82da5c2ad0e56784efcd8863148f44afaaacd629c394d6cbee7f": {
       "kind": "command",
@@ -3873,6 +3861,10 @@
     "c18da57374eb78ff199d351cee265f8a386be2dd28e85da201292dfbb9f43155": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills-crossplugin.md:180"
+    },
+    "c2095c25edf03d51b676e6bbbd8a62a5b61c74866c15ce04263453b7b9c58448": {
+      "kind": "command",
+      "src": "skills/profile/SKILL.md:54"
     },
     "c215d0b6cc4c84f5c45c606ad2d078114e79c9f317e9f163c7aa190533726093": {
       "kind": "command",
@@ -4058,7 +4050,7 @@
     },
     "cc0ef620e91a542c0cafcac6cc17cb1bfa354e774a3ba03efba9da4cd99487cd": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:53"
+      "src": "skills/profile/SKILL.md:54"
     },
     "cc44663b6abf9313af747d472ac7ee4deeb2a2c221bbef1b00b5d2ecfbef77c2": {
       "kind": "block",
@@ -4156,7 +4148,7 @@
     },
     "d0b7d246b38cbfcda15772ca0d82f30833f72cc3043af840095f37ec08675b7f": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:53"
+      "src": "skills/profile/SKILL.md:54"
     },
     "d0c2c3421d4739f1ceb62ab47365f4793a6e49d4b7a0c0fc151b911f498b55be": {
       "kind": "command",
@@ -4176,7 +4168,7 @@
     },
     "d1433c3676348d84c584ec00ebc2fc7a923d9365c6f19cc8f74821eb7de65a71": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:53"
+      "src": "skills/profile/SKILL.md:54"
     },
     "d152352c860228ade6a121e1f4ca0a3c68ad211d865863c23ed9af90c3eec806": {
       "kind": "block",
@@ -4256,7 +4248,7 @@
     },
     "d50ac0ab1a42a0d7dd276f152022712dcfdfe7f0e0ac2aa93e9e232ea1d3dee8": {
       "kind": "block",
-      "src": "rules/public-github.md:24"
+      "src": "rules/public-github.md:26"
     },
     "d527493285b7670c34ba7116d8a9cac83519a14b76a4a68a48e3d929bb8771d4": {
       "kind": "command",
@@ -4265,6 +4257,10 @@
     "d56095786587093198dfcbaabbb61c03086c15f8101467842aef30a1252bc712": {
       "kind": "command",
       "src": "skills/audit/templates/checks-setup.md:207"
+    },
+    "d58cacaa053816b7390bdaed0fe5816c1089cb80f164a06e52ef28acfe68c52f": {
+      "kind": "command",
+      "src": "skills/profile/SKILL.md:54"
     },
     "d62e2d4e2d6443f7dfd7f4fe5701a4f541d27f633e0299043667a88e3e15d0fd": {
       "kind": "block",
@@ -4496,7 +4492,7 @@
     },
     "e2c5a81ea03e4047992f1cef82c8b2e2d95d94890e835484cc85de39e3546e48": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:53"
+      "src": "skills/profile/SKILL.md:54"
     },
     "e2d1a08cd4909a08e55de19c41292d37a388799e9ec31e529df3dac514e77906": {
       "kind": "command",
@@ -4603,7 +4599,7 @@
     },
     "e899536d159552e316b754181789f089970a5be473a01adec0ef91b070203f4f": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:53"
+      "src": "skills/profile/SKILL.md:54"
     },
     "e8b63a73eddd66113233ec055f1007c94672fc5a7d9b3083df77f64d7f588091": {
       "kind": "command",
@@ -4642,10 +4638,6 @@
       "kind": "command",
       "src": "rules/_full/claude-config.md:133"
     },
-    "ea6ababc2bec33a7249ed5ae66429fa57bbfce94adf309bf22ef42a9acc4def2": {
-      "kind": "block",
-      "src": "rules/_full/external-data.md:59"
-    },
     "eaba3374082c9dbed8ac680db4317e8212e92fdad74077eb52c6f09ca9403e44": {
       "kind": "command",
       "src": "skills/audit/templates/checks-shared.md:440"
@@ -4661,6 +4653,10 @@
     "eb85436f8384fe8483d552ab7c8ba109953d911677f510d2e71cbbcb7a27eeb9": {
       "kind": "command",
       "src": "skills/calibrate/SKILL.md:398"
+    },
+    "eb9ed6ed09e65be56ef80dc1e15217144c447febae0c655830b5b7ee2286a4e9": {
+      "kind": "command",
+      "src": "skills/profile/SKILL.md:54"
     },
     "ebea4fd9ec1cc238a1f75261bf3c01301969e376db557bc7901569436bd7a016": {
       "kind": "command",
@@ -4894,6 +4890,11 @@
       "kind": "command",
       "src": "skills/calibrate/templates/pipeline-prompt.md:95"
     },
+    "f79424e2f68294645e0bd4c56383a7ff22fd06cd3d49088f8c2bce05a47f85c4": {
+      "kind": "block",
+      "src": "skills/profile/SKILL.md:121",
+      "template": "PLUGIN_ROOT=$(python \"${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py\" --plugin-name foundry) || exit $?; export PLUGIN_ROOT\nexport CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"\n\nwhile IFS== read -r K V; do case \"$K\" in REPORT_DIR) REPORT_DIR=$V;; PAIR_LABEL) PAIR_LABEL=$V;; PAIR_SIDE) PAIR_SIDE=$V;; esac; done < \"${TMPDIR:-/tmp}/foundry-profile-state-${CSID}\"\n[ -n \"$PAIR_LABEL\" ] || { echo \"pair=not-requested\"; exit 0; }\npython \"$PLUGIN_ROOT/bin/profile_pair.py\" record --label=\"$PAIR_LABEL\" --side \"$PAIR_SIDE\" --report \"$REPORT_DIR\" --append-to \"$REPORT_DIR/report.md\""
+    },
     "f7ebc5b181ef9ac843f99c2479a3c1f8f50ce59e3445d433d5c7f144552c59a9": {
       "kind": "block",
       "src": "skills/audit/templates/checks-security.md:89"
@@ -5025,7 +5026,7 @@
     },
     "ffd38bc7d2e90d356d128187ec2e4423aa3bfc068b72341f1510ca87cf034c0e": {
       "kind": "command",
-      "src": "skills/profile/SKILL.md:53"
+      "src": "skills/profile/SKILL.md:54"
     },
     "ffd6c6bd2b3865a3d926b5e25cf24eadedeced9e5e8d5f6d3dbb56b87dda03f3": {
       "kind": "command",
@@ -5036,6 +5037,6 @@
       "src": "skills/audit/templates/checks-skills-sweep.md:33"
     }
   },
-  "plugin": "cc_foundry@0.85.0",
+  "plugin": "cc_foundry@0.86.0",
   "schema": 2
 }

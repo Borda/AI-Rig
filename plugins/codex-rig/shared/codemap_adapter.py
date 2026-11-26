@@ -9,7 +9,7 @@ decisions can distinguish healthy context from degraded context.
 
 ## Scope
 
-It calls only ``codemap-py doctor --json`` and public query commands; absence or incompatibility is non-fatal and
+It calls only ``codemap-py context``, ``doctor --json`` and public query commands. Provider failures are non-fatal and
 callers retain local inspection. ``CODEMAP_BIN`` is accepted only when it names an absolute, non-symlink executable, and
 ``--provider-root`` accepts one caller-selected active install root when ``CODEMAP_BIN`` is unset. It never searches
 installation caches. Every subprocess is bounded by the requested timeout.
@@ -22,6 +22,8 @@ or standard), repository root, timeout, ``--provider-root``, ``--diff-file`` for
 ``--out`` path; it always prints the same JSON payload that it writes. The probe form also accepts ``--provider-root``.
 The review batch never runs ``diff-impact`` without a diff file, because diffing a detached review worktree against its
 own ``HEAD`` reports zero changed files as a complete answer.
+With a checkout receipt alongside ``--out``, it requests context for a verified commit or local source snapshot and
+saves the producer record to ``codemap-structural-context.json``. An older launcher uses the legacy batch.
 
 ## Used by
 
@@ -62,15 +64,22 @@ whereas a failed optional query is represented in the JSON outcome and the CLI e
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field, fields
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
+
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from collect_diff import verify_review_worktree
 
 #: Identifier of the Codemap integration protocol this adapter speaks, recorded in every context artifact.
 PROTOCOL_VERSION = "codemap-py.integration.v1"
@@ -118,6 +127,29 @@ FOLLOW_UP_QUERY_KINDS = ("callers", "dependencies", "test-impact")
 FOLLOW_UP_QUERY_LIMIT = 3
 #: Default per-subprocess timeout, in seconds, for Codemap probe and query calls.
 _DEFAULT_TIMEOUT = 15.0
+
+# Allow the producer's two 120-second stages with 15 seconds of grace each and its 10-second HEAD probe.
+_CONTEXT_TIMEOUT = 285.0
+_CONTEXT_SCHEMA = "codemap-py.structural-context"
+_CONTEXT_FILENAME = "codemap-structural-context.json"
+_HEAD_OID = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+_UNAVAILABLE_CONTEXT_CAUSES = frozenset(
+    {
+        "codemap-not-installed",
+        "codemap-interpreter-unsupported",
+        "codemap-timeout",
+        "index-missing",
+        "index-stale",
+        "index-root-mismatch",
+        "index-busy",
+        "index-build-failed",
+        "query-failed",
+        "context-request-invalid",
+        "head-mismatch",
+        "source-unavailable",
+        "diff-unavailable",
+    }
+)
 #: Error text recorded for a query that needs a target when the caller supplied none.
 _MISSING_TARGET_ERROR = "target required, none supplied"
 #: Error text recorded for a supplied target no route accepts: an empty side around `::`, or more than one `::`.
@@ -396,10 +428,11 @@ class StructuralContext:
     diff_file: str | None = None
     #: One `<subcommand>: <cause>` line per query gap, so a `degraded` or `stale` status always names its cause.
     status_reasons: tuple[str, ...] = field(default_factory=tuple)
+    structural_context: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the JSON shape written once to a run artifact."""
-        return {
+        payload = {
             "protocol_version": self.protocol_version,
             "artifact_schema_version": self.artifact_schema_version,
             "category": self.category,
@@ -412,6 +445,9 @@ class StructuralContext:
             "queries": [outcome.to_dict() for outcome in self.queries],
             "index_path_divergence": [record.to_dict() for record in self.index_path_divergence],
         }
+        if self.structural_context is not None:
+            payload["structural_context"] = self.structural_context
+        return payload
 
 
 def _run_json(
@@ -428,14 +464,19 @@ def _run_json(
         ``(exit_code, parsed_json_or_none, error_message_or_none)``.
     """
     try:
-        completed = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False, cwd=cwd)  # noqa: S603 - argv list, no shell
-    except (OSError, subprocess.SubprocessError) as error:
+        # Decode here, not through `text=True`: on Windows the pipes are read by threads, where a decode error is only
+        # printed and the captured output comes back empty instead of raising to this handler.
+        completed = subprocess.run(argv, capture_output=True, timeout=timeout, check=False, cwd=cwd)  # noqa: S603 - argv list, no shell
+        stdout, stderr = completed.stdout.decode("utf-8"), completed.stderr.decode("utf-8")
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
         return -1, None, str(error)
     try:
-        return completed.returncode, json.loads(completed.stdout), None
+        return completed.returncode, json.loads(stdout), None
     except json.JSONDecodeError:
-        detail = completed.stderr.strip() or completed.stdout.strip() or "non-JSON output"
+        detail = stderr.strip() or stdout.strip() or "non-JSON output"
         return completed.returncode, None, detail
+    except (ValueError, RecursionError) as error:
+        return completed.returncode, None, str(error)
 
 
 def _configured_launcher_is_valid(candidate: Path) -> bool:
@@ -579,21 +620,25 @@ def _run_one_query(
     exit_code, payload, error = _run_json(_query_argv(launcher, spec, target, root, diff_file), timeout, root)
     if exit_code != 0 or payload is None:
         return _failed_query_outcome(spec.subcommand, target, exit_code, payload, error)
+    diff_text = read_diff_text(diff_file) if spec.requires_diff_file and diff_file is not None else ""
+    return _successful_query_outcome(spec.subcommand, target, payload, diff_text)
+
+
+def _successful_query_outcome(subcommand: str, target: str | None, payload: Any, diff_text: str | None) -> QueryOutcome:
+    """Project either CLI route's successful query answer into the existing outcome fields."""
     metadata_error = _query_metadata_error(payload)
     if metadata_error is not None:
-        return _failed_query_outcome(spec.subcommand, target, -1, payload, f"query payload invalid: {metadata_error}")
+        return _failed_query_outcome(subcommand, target, -1, payload, f"query payload invalid: {metadata_error}")
     body = payload if isinstance(payload, dict) else {}
     index = body.get("index", {})
     index = index if isinstance(index, dict) else {}
     changed_files = body.get("changed_files")
     changed_files = changed_files if isinstance(changed_files, int) and not isinstance(changed_files, bool) else None
     answer, answer_truncated = _bounded_answer(body)
-    # The provider maps post-images only; the adapter reads the same diff back to name what that leaves unanalysed.
-    diff_text = read_diff_text(diff_file) if spec.requires_diff_file and diff_file is not None else ""
     return QueryOutcome(
-        subcommand=spec.subcommand,
+        subcommand=subcommand,
         target=target,
-        exit_code=exit_code,
+        exit_code=0,
         stale=index.get("stale", False),
         query_complete=index.get("query_complete", index.get("exhaustive", False)),
         not_covered=tuple(index.get("not_covered", ())),
@@ -604,7 +649,7 @@ def _run_one_query(
         root_mismatch=index.get("root_mismatch") is True,
         note=_reported_text(index, "note"),
         changed_files=changed_files,
-        adapter_gap=change_set_gap(spec.subcommand, answer, diff_text),
+        adapter_gap=change_set_gap(subcommand, answer, diff_text),
         answer=answer,
         answer_truncated=answer_truncated,
     )
@@ -729,13 +774,23 @@ def read_diff_text(path: Path) -> str | None:
         return None
 
 
+def _unmapped_gap(answer: dict) -> str | None:
+    """Describe mapping gaps using the bounded answer that artifact validators can also read."""
+    changed, modules = answer.get("changed_files"), answer.get("changed_modules")
+    if type(changed) is int and changed > 0 and isinstance(modules, list) and not modules:
+        return f"all {changed} changed Python files unmapped by the index"
+    unmapped = answer.get("unmapped_files")
+    if isinstance(unmapped, list) and unmapped:
+        return "some changed Python files unmapped by the index"
+    return None
+
+
 def change_set_gap(subcommand: str, answer: Any, diff_text: str | None) -> str | None:
     """Return every gap a change-set answer leaves that the provider's own completeness flags do not report.
 
     The provider maps only post-image ``.py`` paths and still calls the answer complete when:
 
-    - none of the changed Python files it read maps to a module — a mismatched index, or a change that only adds
-      modules — so the artifact holds no blast radius at all;
+    - one or more changed Python files it read do not map to modules;
     - the diff deletes a Python module, including a rename's old path, whose importers it therefore never checks;
     - it read no Python file at all because every Python change lacks a text hunk (mode, binary, or empty file).
 
@@ -755,13 +810,11 @@ def change_set_gap(subcommand: str, answer: Any, diff_text: str | None) -> str |
     """
     if subcommand != "diff-impact" or not isinstance(answer, dict):
         return None
+    mapping_gap = _unmapped_gap(answer)
     changed = answer.get("changed_files")
     if type(changed) is not int:
-        return None
-    gaps: list[str] = []
-    modules = answer.get("changed_modules")
-    if changed > 0 and isinstance(modules, list) and not modules:
-        gaps.append(f"all {changed} changed Python files unmapped by the index")
+        return mapping_gap
+    gaps = [mapping_gap] if mapping_gap else []
     if diff_text is None:
         gaps.append(_UNREADABLE_DIFF_GAP)
     else:
@@ -1199,6 +1252,314 @@ def _query_plan(category: str, query_kind: str, target: str | None) -> tuple[tup
     return (_FACT_QUERY_SPECS[query_kind],), _normalized_fact_target(query_kind, target)
 
 
+@dataclass(frozen=True)
+class _ReviewSource:
+    """Identify the receipt's Git anchor and the collector directory when an overlay was reviewed."""
+
+    head: str
+    mirror: Path | None = None
+
+
+def _review_source(run: Path, root: Path) -> _ReviewSource | None:
+    """Read source identity and kind from the checkout receipt matching this root."""
+    receipts = (
+        ("local-checkout.json", "worktree", "expected_head"),
+        ("pr/local-checkout.json", "worktree", "expected_head"),
+        ("local-source/review-worktree.json", "review_worktree", "revision"),
+        ("review-worktree.json", "review_worktree", "revision"),
+        ("local-worktree-owner.json", "worktree", "expected_head"),
+    )
+    for name, path_key, head_key in receipts:
+        try:
+            receipt = json.loads((run / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        head = _reported_text(receipt, head_key)
+        path = _reported_text(receipt, path_key)
+        if head is None or _HEAD_OID.fullmatch(head) is None or path is None:
+            continue
+        if Path(path) != root:
+            continue
+        if name.endswith("local-checkout.json") and (
+            receipt.get("diff_source") != "verified-local-checkout"
+            or receipt.get("head_matches_pr") is not True
+            or receipt.get("local_head") != head
+        ):
+            continue
+        if path_key == "review_worktree":
+            return _ReviewSource(head, (run / name).parent)
+        if name == "local-worktree-owner.json":
+            if receipt.get("checkout_mode") != "local-review":
+                continue
+            if receipt.get("scope") in ("working-tree", "path"):
+                return _ReviewSource(head, run / "local-source")
+            if receipt.get("scope") != "commit":
+                continue
+        return _ReviewSource(head)
+    return None
+
+
+def verified_review_head(run: Path, root: Path) -> str | None:
+    """Return the receipt's Git anchor, which is the base revision for a local mirror."""
+    source = _review_source(run, root)
+    return source.head if source else None
+
+
+def _mirror_identity(mirror: Path, head: str, diff: Path) -> tuple[str, str]:
+    """Verify retained overlay bytes with the collector and bind both the snapshot and the requested diff."""
+    snapshot = mirror / "source-snapshot.json"
+    before = snapshot.read_bytes()
+    if _reported_text(json.loads(before), "revision") != head:
+        raise ValueError("local mirror snapshot revision disagrees with its checkout receipt")
+    verify_review_worktree(mirror)
+    if snapshot.read_bytes() != before:
+        raise ValueError("local mirror snapshot changed during verification")
+    return hashlib.sha256(before).hexdigest(), hashlib.sha256(diff.read_bytes()).hexdigest()
+
+
+def structural_context_status(
+    record: dict[str, Any], queries: tuple[QueryOutcome, ...] | list[QueryOutcome]
+) -> tuple[str, tuple[str, ...]]:
+    """Map a normalized producer summary, checking that it agrees with its projected query."""
+    status = record.get("status")
+    cause, detail = record.get("cause"), record.get("detail")
+    caveats = record.get("degraded_reasons")
+    if (
+        not isinstance(detail, str)
+        or not isinstance(caveats, list)
+        or any(not isinstance(reason, str) or not reason.strip() for reason in caveats)
+    ):
+        raise ValueError("invalid context diagnostic")
+    if status == "unavailable" and not queries and not caveats:
+        if isinstance(cause, str) and cause in _UNAVAILABLE_CONTEXT_CAUSES and detail:
+            return STATUS_DEGRADED, (f"context: {cause}: {detail}",)
+    if status == "not-applicable" and cause == "non-python-scope" and not queries and not caveats:
+        return STATUS_AVAILABLE, ()
+    if status not in (STATUS_AVAILABLE, STATUS_DEGRADED) or cause is not None or len(queries) != 1:
+        raise ValueError("invalid context status, cause, or query count")
+    outcome = queries[0]
+    if (
+        outcome.subcommand != "diff-impact"
+        or outcome.target is not None
+        or outcome.exit_code != 0
+        or outcome.error is not None
+        or outcome.stale
+        or outcome.root_mismatch
+        or outcome.changed_files is None
+        or (status == STATUS_AVAILABLE and (not outcome.query_complete or caveats))
+        or (status == STATUS_DEGRADED and not caveats)
+    ):
+        raise ValueError("context status disagrees with query evidence")
+    reasons = tuple(f"context: {reason}" for reason in caveats)
+    # The legacy completeness guard also covers a complete-looking answer that skipped a hunk-free Python change.
+    if status == STATUS_AVAILABLE and _has_evidence_gap((outcome,)):
+        return STATUS_DEGRADED, gap_reasons(queries)
+    hint = _reported_text(outcome.answer, "hint")
+    if hint:
+        reasons += (f"diff-impact: hint: {hint}",)
+    return status, reasons
+
+
+def _context_diagnostic(text: str) -> str:
+    """Keep a single bounded diagnostic line in the adapter artifact."""
+    lines = text.strip().splitlines()
+    return lines[-1][:_ANSWER_TEXT_LIMIT] if lines else "no diagnostic"
+
+
+def _refused_request(diagnostic: str) -> bool:
+    """Tell whether the producer's last diagnostic line is its usage refusal, ``{"error": "invalid_context_request"}``.
+
+    The producer refuses a request it can never serve as written (an index base inside the root, a malformed head)
+    before any query runs, so the refusal is the adapter's request defect, never a failed query.
+
+    Examples:
+        >>> _refused_request('{"error": "invalid_context_request", "detail": "--index-dir must be outside"}')
+        True
+        >>> _refused_request("Traceback (most recent call last): boom")
+        False
+    """
+    try:
+        payload = json.loads(diagnostic.splitlines()[-1]) if diagnostic else None
+    except (ValueError, RecursionError):
+        return False
+    return isinstance(payload, dict) and payload.get("error") == "invalid_context_request"
+
+
+def _context_index_base(root: Path, run: Path) -> Path:
+    """Return the producer's index base: an explicit ``CODEMAP_INDEX_DIR`` outside the reviewed root, else the run's.
+
+    A relative override (``.cache/codemap``) names a directory beside the caller's own checkout, so it resolves against
+    this process's working directory, as the provider resolves the variable itself; the producer runs in the run
+    directory and would read it differently. An override that still lands inside the reviewed root would make the
+    producer refuse the request, so the run's own ``codemap-index`` serves instead.
+    """
+    override = os.environ.get("CODEMAP_INDEX_DIR")
+    if override:
+        base = Path(override).expanduser()
+        base = (base if base.is_absolute() else Path.cwd() / base).resolve()
+        if not base.is_relative_to(root.resolve()):
+            return base
+    return run / "codemap-index"
+
+
+def _read_provider_context(argv: list[str], timeout: float, run: Path) -> dict[str, Any] | None:
+    """Read the producer's JSON or describe a transport failure.
+
+    Return None for a legacy launcher.
+    """
+    try:
+        completed = subprocess.run(  # noqa: S603 - argv list, no shell
+            argv, capture_output=True, encoding="utf-8", errors="replace", timeout=timeout, cwd=run, check=False
+        )
+    except subprocess.TimeoutExpired as error:
+        return {"status": "unavailable", "cause": "codemap-timeout", "detail": _context_diagnostic(str(error))}
+    except OSError as error:
+        cause = "codemap-not-installed" if isinstance(error, FileNotFoundError) else "query-failed"
+        return {"status": "unavailable", "cause": cause, "detail": _context_diagnostic(str(error))}
+
+    diagnostic = (completed.stderr or completed.stdout).strip()
+    if completed.returncode == 2 and (
+        "unknown command 'context'" in diagnostic
+        or (diagnostic.startswith("usage: codemap-py") and not diagnostic.startswith("usage: codemap-py context"))
+    ):
+        return None
+    if completed.returncode == 2 and _refused_request(diagnostic):
+        return {"status": "unavailable", "cause": "context-request-invalid", "detail": _context_diagnostic(diagnostic)}
+    if completed.returncode == 0:
+        try:
+            record = json.loads(completed.stdout)
+        except (ValueError, RecursionError):
+            record = None
+        if isinstance(record, dict) and record.get("schema") == _CONTEXT_SCHEMA and record.get("schema_version") == 1:
+            return record
+        diagnostic = "provider returned an invalid structural context record"
+    cause = "codemap-interpreter-unsupported" if completed.returncode == 127 else "query-failed"
+    return {"status": "unavailable", "cause": cause, "detail": _context_diagnostic(diagnostic)}
+
+
+def _project_provider_context(
+    record: dict[str, Any], root: Path, diff: Path, source: _ReviewSource, snapshot: str | None
+) -> tuple[dict[str, Any], tuple[QueryOutcome, ...]]:
+    """Keep bounded context and its query only when the producer answered for the requested source."""
+    status = record.get("status")
+    if record.get("schema") == _CONTEXT_SCHEMA and (
+        record.get("root") != str(root)
+        or record.get("diff_file") != str(diff)
+        or record.get("expected_head") != (None if source.mirror else source.head)
+        or (status in (STATUS_AVAILABLE, STATUS_DEGRADED) and record.get("head") != source.head)
+    ):
+        raise ValueError("provider record does not match the requested root, diff and head")
+    diff_text = read_diff_text(diff) if status in (STATUS_AVAILABLE, STATUS_DEGRADED, "not-applicable") else None
+    if status == "not-applicable" and change_set_gap("diff-impact", {"changed_files": 0}, diff_text):
+        raise ValueError("provider reported non-Python scope over a diff that may contain Python changes")
+    cause = record.get("cause")
+    if status == "unavailable" and (not isinstance(cause, str) or cause not in _UNAVAILABLE_CONTEXT_CAUSES):
+        cause = "query-failed"
+    summary = {
+        "root": root.as_posix(),
+        "expected_head": source.head,
+        "status": status,
+        "cause": cause,
+        "detail": _context_diagnostic(_reported_text(record, "detail") or "") if cause else "",
+        "degraded_reasons": record.get("degraded_reasons", []),
+        "fallback": None,
+    }
+    if snapshot is not None:
+        summary["source_snapshot_sha256"] = snapshot
+    fallback = record.get("fallback")
+    if (
+        status == "unavailable"
+        and cause not in ("head-mismatch", "source-unavailable", "diff-unavailable")
+        and record.get("head") == source.head
+        and isinstance(fallback, dict)
+        and fallback.get("method") == "text-search"
+        and fallback.get("confidence") == "low"
+        and fallback.get("query_complete") is False
+    ):
+        summary["fallback"], cut = _bounded_answer(fallback)
+        if cut:
+            summary["fallback_truncated"] = cut
+    queries: tuple[QueryOutcome, ...] = ()
+    if status in (STATUS_AVAILABLE, STATUS_DEGRADED):
+        queries = (_successful_query_outcome("diff-impact", None, record.get("diff_impact"), diff_text),)
+    return summary, queries
+
+
+def _read_mirror_context(
+    argv: list[str], timeout: float, run: Path, mirror: Path, head: str, diff: Path
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Admit a verified overlay and discard the result if source identity changes during the provider query."""
+    try:
+        identity = _mirror_identity(mirror, head, diff)
+        record = _read_provider_context(argv, timeout, run)
+        if _mirror_identity(mirror, head, diff) != identity:
+            raise ValueError("local review snapshot or diff changed during structural analysis")
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
+        return {"status": "unavailable", "cause": "source-unavailable", "detail": str(error)}, None
+    return record, identity[0]
+
+
+def _gather_verified_review(arguments: argparse.Namespace) -> StructuralContext | None:
+    """Use the one-call provider when the existing review invocation provides a verified checkout receipt."""
+    if arguments.category != "review" or arguments.query_kind != "standard":
+        return None
+    if arguments.out is None or arguments.root is None or arguments.diff_file is None:
+        return None
+    run, root, diff = arguments.out.resolve().parent, arguments.root.resolve(), arguments.diff_file.resolve()
+    source = _review_source(run, root)
+    if source is None or run.is_relative_to(root):
+        return None
+    resolution = _resolve_codemap_executable(arguments.provider_root)
+    if resolution.launcher is None:
+        return None
+    index_base = _context_index_base(root, run)
+    argv = [
+        resolution.launcher,
+        "context",
+        "--root",
+        str(root),
+        "--diff-file",
+        str(diff),
+        "--index-dir",
+        str(index_base),
+    ]
+    timeout = _CONTEXT_TIMEOUT if arguments.timeout is None else arguments.timeout
+    sidecar = run / _CONTEXT_FILENAME
+    if source.mirror is None:
+        record = _read_provider_context([*argv, "--expect-head", source.head, "--out", str(sidecar)], timeout, run)
+        snapshot = None
+    else:
+        record, snapshot = _read_mirror_context(argv, timeout, run, source.mirror, source.head, diff)
+    if record is None:
+        return None
+    try:
+        summary, queries = _project_provider_context(record, root, diff, source, snapshot)
+        status, reasons = structural_context_status(summary, queries)
+        if snapshot is not None and record.get("schema") == _CONTEXT_SCHEMA:
+            sidecar.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+    except (OSError, TypeError, ValueError) as error:
+        failure = {"status": "unavailable", "cause": "query-failed", "detail": str(error)}
+        summary, queries = _project_provider_context(failure, root, diff, source, snapshot)
+        status, reasons = structural_context_status(summary, queries)
+    probe = ProbeResult(STATUS_AVAILABLE, "structural context command answered", resolution.launcher, None)
+    if summary["status"] == "unavailable":
+        probe_status = STATUS_AVAILABLE if record.get("schema") == _CONTEXT_SCHEMA else STATUS_INCOMPATIBLE
+        probe = ProbeResult(probe_status, reasons[0], resolution.launcher, None)
+    return StructuralContext(
+        protocol_version=PROTOCOL_VERSION,
+        artifact_schema_version=ARTIFACT_SCHEMA_VERSION,
+        category="review",
+        query_kind="standard",
+        target=arguments.target,
+        status=status,
+        probe=probe,
+        queries=queries,
+        diff_file=str(diff),
+        status_reasons=reasons,
+        structural_context=summary,
+    )
+
+
 def gather_structural_context(
     category: str,
     target: str | None = None,
@@ -1246,6 +1607,9 @@ def gather_structural_context(
             for spec in specs
         )
     status = _reduce_status(probe, queries)
+    reasons = gap_reasons(queries)
+    if category == "review" and query_kind == "standard" and status == STATUS_ABSENT:
+        reasons = (f"context: codemap-not-installed: {probe.detail}",)
     return StructuralContext(
         protocol_version=PROTOCOL_VERSION,
         artifact_schema_version=ARTIFACT_SCHEMA_VERSION,
@@ -1263,7 +1627,7 @@ def gather_structural_context(
         # verdict on the answer, so it is part of the status and its reasons.
         index_path_divergence=_index_path_divergences(probe, queries),
         diff_file=recorded_diff_file,
-        status_reasons=gap_reasons(queries),
+        status_reasons=reasons,
     )
 
 
@@ -1296,7 +1660,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     context_parser.add_argument("--target", default=None, help="Dotted module or module::symbol qname.")
     context_parser.add_argument("--root", type=Path, default=None)
     context_parser.add_argument("--out", type=Path, default=None, help="Also persist JSON to this run-artifact path.")
-    context_parser.add_argument("--timeout", type=float, default=_DEFAULT_TIMEOUT)
+    context_parser.add_argument("--timeout", type=float)
     context_parser.add_argument("--provider-root", type=Path, help="Absolute active installed provider root.")
     context_parser.add_argument(
         "--diff-file", type=Path, default=None, help="Unified diff the review batch's diff-impact query reads."
@@ -1310,6 +1674,10 @@ def main(argv: list[str] | None = None) -> int:
     arguments = _parse_args(argv)
     if arguments.mode == "probe":
         _write_output(probe_codemap(timeout=arguments.timeout, provider_root=arguments.provider_root).to_dict(), None)
+        return 0
+    context = _gather_verified_review(arguments)
+    if context is not None:
+        _write_output(context.to_dict(), arguments.out)
         return 0
     # Review source receipts include untracked files. Keep cache and telemetry writes in the run through the public
     # environment contract. Coordination stays beside the chosen index so existing readers and writers share a gate.
@@ -1326,7 +1694,7 @@ def main(argv: list[str] | None = None) -> int:
             category=arguments.category,
             target=arguments.target,
             root=arguments.root,
-            timeout=arguments.timeout,
+            timeout=_DEFAULT_TIMEOUT if arguments.timeout is None else arguments.timeout,
             query_kind=arguments.query_kind,
             provider_root=arguments.provider_root,
             diff_file=arguments.diff_file,

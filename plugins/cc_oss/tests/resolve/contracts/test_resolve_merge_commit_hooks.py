@@ -81,6 +81,19 @@ def test_each_merge_commit_refreshes_the_approval_before_reading_it(name: str, b
     assert all(refresh[0] < i < commit for i in reads), name
 
 
+@pytest.mark.parametrize(("name", "block"), [pytest.param(n, b, id=f"{n}-{i}") for i, (n, b) in enumerate(_BLOCKS)])
+def test_each_merge_commit_fence_outlasts_the_commit_budget(name: str, block: list[str]) -> None:
+    """The Bash call finishing a merge is never killed before the helper's own budget stops a slow hook run.
+
+    The harness caps one Bash call at 600 s, so the helper's worst case must stay under both that cap and the fence.
+    """
+    from resolve_commit_hooks import MERGE_COMMIT_WORST_CASE
+
+    [commit] = [line for line in block if "--commit-merge" in line and "resolve_commit_hooks.py" in line]
+    fence_ms = int(commit.rsplit("# timeout:", 1)[1].split()[0])
+    assert MERGE_COMMIT_WORST_CASE * 1000 < min(fence_ms, 600_000), name
+
+
 def _git(repo: Path, *args: str, env: dict[str, str]) -> str:
     """Run one git command in ``repo`` with the isolated environment."""
     assert _GIT is not None

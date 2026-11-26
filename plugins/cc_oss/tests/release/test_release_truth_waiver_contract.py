@@ -179,11 +179,17 @@ def _final_gate_text() -> str:
 class TestTruthCheckInstructions:
     """The shipped instructions keep every truth-check rule that guards Removed and Breaking claims."""
 
-    @pytest.mark.parametrize("relative_path", [_CLASSIFY, _GATHER])
-    def test_removed_api_requires_baseline_presence_and_head_absence(self, relative_path: str) -> None:
+    @pytest.mark.parametrize(
+        ("relative_path", "baseline"),
+        [
+            pytest.param(_CLASSIFY, "the published baseline", id="inline"),
+            pytest.param(_GATHER, "`$LAST_TAG`", id="delegated"),
+        ],
+    )
+    def test_removed_api_requires_baseline_presence_and_head_absence(self, relative_path: str, baseline: str) -> None:
         """A shipped API removed at HEAD must survive truth checking as Removed.
 
-        Both truth-check sites must demand presence at ``$LAST_TAG`` and absence at ``HEAD``, and keep the claim when
+        Both truth-check sites must demand presence at the published baseline and absence at ``HEAD``, and keep it when
         the baseline cannot prove otherwise; dropping any phrase lets a real removal vanish from the release notes.
         """
         instructions = _prose(relative_path)
@@ -192,9 +198,9 @@ class TestTruthCheckInstructions:
             phrase in instructions
             for phrase in (
                 "❌ Removed",
-                "present at `$LAST_TAG` and absent at `HEAD`",
+                f"present at {baseline} and absent at `HEAD`",
                 "keep the ❌ Removed claim",
-                "absent at `$LAST_TAG`",
+                f"absent at {baseline}",
             )
         )
 
@@ -315,11 +321,86 @@ class TestTruthCheckInstructions:
         Promotion changes the claim's category, so the baseline check and the user question must run again before the
         Audit changelog step writes anything.
         """
-        instructions = _prose(_CLASSIFY)
-        promotion = instructions[instructions.index("**Apply**:") :]
+        lines = _raw(_CLASSIFY).splitlines()
+        gate = next(line for line in lines if line.startswith("**Post-promotion baseline and item-approval gate**"))
+        promotion = lines[lines.index(gate) :]
 
-        assert "post-promotion" in promotion.lower()
-        assert all(phrase in promotion for phrase in ("$LAST_TAG", "AskUserQuestion", "before Audit changelog"))
+        assert all(phrase in gate for phrase in ("$BASELINE_REF", "before Audit changelog"))
+        assert any("AskUserQuestion" in line for line in promotion)
+        assert all("$LAST_TAG" not in line for line in promotion)
+
+    @pytest.mark.parametrize(
+        ("file", "prefix", "baseline"),
+        [
+            pytest.param(_CLASSIFY, "- Set `REF`", "$BASELINE_REF", id="inline-truth-probe"),
+            pytest.param("modes/release-draft-template.md", "Independently truth-check", "$BASELINE_REF", id="append"),
+            pytest.param("modes/prepare.md", "**b. Draft migration guide**", "$BASELINE_REF", id="prepare-migration"),
+            pytest.param(
+                "modes/adversarial-review.md", "Expand `<REPO_ROOT>`", "`BASELINE_REF`", id="migration-review"
+            ),
+        ],
+    )
+    def test_release_claims_use_the_resolved_published_baseline(self, file: str, prefix: str, baseline: str) -> None:
+        """Truth and migration gates consume the selected baseline when checking a before state."""
+        line = next(line.strip() for line in _raw(file).splitlines() if line.strip().startswith(prefix))
+
+        assert baseline in line
+        assert "`$LAST_TAG`" not in line
+
+    def test_delegated_truth_binds_both_template_spellings_to_the_published_baseline(self) -> None:
+        """The gather agent receives the same ref for its probe and its category decisions."""
+        lines = _raw("modes/delegation.md").splitlines()
+        handoff = next(line for line in lines if line.startswith("Template (loaded above)."))
+
+        assert all(phrase in handoff for phrase in ("`<LAST_TAG>`", "`$LAST_TAG`", "printed `BASELINE_REF`"))
+        assert "qualify old-side claims" in handoff
+
+    @pytest.mark.parametrize(
+        ("prefix", "evidence"),
+        [
+            pytest.param(
+                "**Same-release feature+fix dedup**", "verifying the affected behavior", id="same-release-fix"
+            ),
+            pytest.param(
+                "**Breaking vs Deprecated vs Removed**", "caller-visible deprecation warning", id="deprecation"
+            ),
+        ],
+    )
+    def test_categories_require_published_behavior(self, prefix: str, evidence: str) -> None:
+        """Inline and delegated classification both require category-specific published evidence."""
+        rule = next(line for line in _raw(_CLASSIFY).splitlines() if line.startswith(prefix))
+        assert "`$BASELINE_REF`" in rule
+        assert evidence in rule
+        assert any(prefix in line and "printed commit ID" in line for line in _raw("modes/delegation.md").splitlines())
+
+    @pytest.mark.parametrize(
+        ("path", "prefix", "expected"),
+        [
+            pytest.param(
+                "modes/gather-changes.md",
+                "Cross-reference commit bodies",
+                "candidate pending baseline evidence",
+                id="footer-is-a-candidate",
+            ),
+            pytest.param(
+                _CLASSIFY,
+                "For ❌ Removed, old name",
+                "published deprecation evidence at `$BASELINE_REF`",
+                id="truth-check-verifies-deprecation",
+            ),
+            pytest.param(
+                "modes/release-draft-template.md",
+                "- A ❌ Removed old name",
+                "published deprecation at that commit",
+                id="appended-removal-needs-deprecation-proof",
+            ),
+        ],
+    )
+    def test_category_evidence_is_required_at_each_decision(self, path: str, prefix: str, expected: str) -> None:
+        """A footer, a truth check, or an append merge cannot bypass the published-evidence requirement."""
+        rule = next(line for line in _raw(path).splitlines() if line.strip().startswith(prefix))
+
+        assert expected in rule
 
 
 @_skip_shell_unavailable

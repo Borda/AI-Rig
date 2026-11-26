@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from _platform import FILE_SYMLINKS_AVAILABLE
 from test_finding_presentation import VALIDATOR
 from test_remediation_finalize import HELPER, _draft_handoff, _stale_metadata
 
@@ -66,6 +67,27 @@ def _stage(run: Path, ledger: str, payload: object) -> Path:
 
 class TestStatusEventAppend:
     """Protect the validated, append-only status-event ledger."""
+
+    def test_resolution_events_directory_refuses_draft_fallback(self, valid_run: tuple[Path, dict]) -> None:
+        """Fail derivation when the ledger entry exists as a directory."""
+        run, result = valid_run
+        (run / HELPER.EVENTS_LEDGER).mkdir()
+
+        with pytest.raises(HELPER.DeriveError, match="events-ledger-not-regular"):
+            HELPER.derive_metadata(run, result["metadata"])
+
+    @pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="file symlinks unavailable")
+    @pytest.mark.parametrize("target_name", ["missing-events.jsonl", "other-events.jsonl"])
+    def test_resolution_events_link_refuses_draft_fallback(
+        self, valid_run: tuple[Path, dict], target_name: str
+    ) -> None:
+        """Refuse both live and dangling links instead of reading a foreign ledger or returning the draft."""
+        run, result = valid_run
+        (run / "other-events.jsonl").touch()
+        (run / HELPER.EVENTS_LEDGER).symlink_to(run / target_name)
+
+        with pytest.raises(HELPER.DeriveError, match="events-ledger-not-regular"):
+            HELPER.derive_metadata(run, result["metadata"])
 
     def test_append_help_exposes_executable_event_examples(
         self, valid_run: tuple[Path, dict], capsys: pytest.CaptureFixture[str]

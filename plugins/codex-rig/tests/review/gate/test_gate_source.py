@@ -817,7 +817,7 @@ class TestSourceGuard:
         check = _gate_check(output, "lint")
         assert result.returncode == 1
         assert not marker.exists()
-        assert check["status"] == "fail"
+        assert check["status"] == "refused"
         assert check["source"] == {
             "expected_head": expected_head,
             "before": {"head": head, "status": "", "ignored": "[]"},
@@ -869,7 +869,7 @@ class TestSourceGuard:
         check = _gate_check(output, "lint")
         assert result.returncode == 1
         assert not marker.exists()
-        assert check["status"] == "fail"
+        assert check["status"] == "refused"
         assert check["source"] == {
             "expected_head": head,
             "before": {"head": head, "status": expected_status, "ignored": "[]"},
@@ -1040,7 +1040,7 @@ class TestSourceGuard:
         check = _gate_check(output, "lint")
         assert result.returncode == 1
         assert not marker.exists()
-        assert check["status"] == "fail"
+        assert check["status"] == "refused"
         assert check["source"]["before"]["head"] == head
         assert "dependency" in check["source"]["before"]["status"]
         assert check["source"]["after"] is None
@@ -2893,7 +2893,7 @@ def test_confirmed_checkout_mismatch_records_every_applicable_gate_without_execu
     assert (archived / "gates.json").read_bytes() == prior
     assert validator._validate_gates(archived)["status"] == "pass"
     receipt = validator._validate_gates(output)
-    assert receipt["checks_failed"] == ["lint", "tests"]
+    assert (receipt["checks_failed"], receipt["checks_refused"]) == ([], ["lint", "tests"])
     assert receipt["checks_not_applicable"] == ["format", "types", "review"]
     lint = _gate_check(output, "lint")
     tests = _gate_check(output, "tests")
@@ -2958,7 +2958,7 @@ def test_conflicting_committed_inventory_prevents_dispatch_after_staged_membersh
     archive = output / "gate-attempts/002"
     assert (archive / "gates.json").read_bytes() == prior
     assert validator._validate_gates(archive)["status"] == "pass"
-    assert validator._validate_gates(output)["checks_failed"] == ["lint", "tests"]
+    assert validator._validate_gates(output)["checks_refused"] == ["lint", "tests"]
     lint = _gate_check(output, "lint")
     tests = _gate_check(output, "tests")
     assert lint["source"]["before"] == tests["source"]["before"]
@@ -3095,7 +3095,7 @@ def test_clean_status_with_different_index_membership_stops_before_lint(
     assert {path: path.read_bytes() for path in foreign.parent.glob("tracked-source-*.bin")} == public_inventories
     assert os.path.samestat(identity, foreign.stat())
     validator = _load_validator()
-    assert validator._validate_gates(output)["checks_failed"] == ["lint", "tests"]
+    assert validator._validate_gates(output)["checks_refused"] == ["lint", "tests"]
     before = _gate_check(output, "lint")["source"]["before"]
     assert before["expected_inventory_sha256"] == hashlib.sha256(tree).hexdigest()
     assert before["observed_inventory_sha256"] == hashlib.sha256(alternate).hexdigest()
@@ -3269,7 +3269,7 @@ def test_inventory_collision_publishes_confirmed_tracked_file_failure(
     archive = output / "gate-attempts/002"
     assert (archive / "gates.json").read_bytes() == prior
     assert validator._validate_gates(archive)["status"] == "pass"
-    assert validator._validate_gates(output)["checks_failed"] == ["lint", "tests"]
+    assert validator._validate_gates(output)["checks_refused"] == ["lint", "tests"]
     lint = _gate_check(output, "lint")
     tests = _gate_check(output, "tests")
     assert lint["source"]["before"] == tests["source"]["before"]

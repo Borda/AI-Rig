@@ -46,6 +46,31 @@ def _run(block: str, tmp_path: Path, prefix: str = "") -> subprocess.CompletedPr
 
 
 @_skip_no_bash
+def test_compaction_contract_preserves_coverage_inputs(tmp_path: Path) -> None:
+    """Boundary 1 inventories both parent records from a run directory containing spaces."""
+    run_dir = tmp_path / "review run"
+    run_dir.mkdir()
+    (run_dir / "lineup.md").write_text("No cap omissions\n", encoding="utf-8")
+    (run_dir / "codex-review-reply.md").write_text("peer-unavailable\n", encoding="utf-8")
+    (tmp_path / "dev-review-run-dir-target-contract").write_text(
+        f"{run_dir.as_posix()}\n", encoding="utf-8", newline="\n"
+    )
+    (tmp_path / "dev-shared-target-contract").write_text(
+        _PLUGIN.joinpath("skills/_shared").as_posix() + "\n", encoding="utf-8", newline="\n"
+    )
+    result = _run(
+        _block("# compaction boundary 1"),
+        tmp_path,
+        'python() { command "$TEST_PYTHON" "$@"; }\n',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    contract = (tmp_path / ".temp/state/skill-contract.md").read_text(encoding="utf-8").splitlines()
+    preserve = next(line for line in contract if line.startswith("- preserve:"))
+    assert f"{run_dir.as_posix()}/lineup.md" in preserve
+    assert f"{run_dir.as_posix()}/codex-review-reply.md" in preserve
+
+
+@_skip_no_bash
 @pytest.mark.parametrize("target", ["src/selected.py", "src/package"])
 @pytest.mark.parametrize("line_ending", ["\n", ""])
 def test_path_context_queries_selected_modules_and_keeps_full_tier(

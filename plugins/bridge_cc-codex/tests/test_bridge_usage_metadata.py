@@ -42,7 +42,7 @@ def test_retry_keeps_ordered_observations_without_changing_public_result(
         json.dumps(r)
         for r in [
             {"type": "thread.started", "model": "observed-peer"},
-            {"type": "item.completed", "item": {"text": json.dumps(core)}},
+            {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(core)}},
             {"type": "turn.completed", "usage": usage},
         ]
     )
@@ -110,7 +110,7 @@ def test_round_trip_fields_bracket_the_executed_attempt(tmp_path: Path, monkeypa
         json.dumps(r)
         for r in [
             {"type": "thread.started", "model": "observed-peer"},
-            {"type": "item.completed", "item": {"text": json.dumps(core)}},
+            {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(core)}},
             {"type": "turn.completed", "usage": dict(input_tokens=10, cached_input_tokens=4, output_tokens=3)},
         ]
     )

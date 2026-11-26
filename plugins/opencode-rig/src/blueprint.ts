@@ -8,7 +8,9 @@
  * only when every fragment is shipped; the whole-block digest is audit only.
  */
 
+import { isAbsolute, resolve } from "node:path"
 import { sha256 } from "./digest.ts"
+import { classifyCommand } from "./guardrails.ts"
 
 export interface BlueprintEntry {
   readonly kind: "command" | "block"
@@ -29,11 +31,17 @@ export interface NormalizedCommand {
   readonly reason?: string
 }
 
+/** Identify quote boundaries shared by normalization and fragment splitting. */
+function isShellQuote(char: string): char is "'" | '"' | "`" {
+  return char === "'" || char === '"' || char === "`"
+}
+
 /** Remove `#` comments outside quotes without touching quoted text. */
 function stripComments(text: string): string {
   let out = ""
   let quote: "'" | '"' | "`" | undefined
   let escaped = false
+  let wordStart = true
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index]!
     if (escaped) {
@@ -44,6 +52,7 @@ function stripComments(text: string): string {
     if (char === "\\" && quote !== "'") {
       out += char
       escaped = true
+      wordStart = false
       continue
     }
     if (quote) {
@@ -51,17 +60,20 @@ function stripComments(text: string): string {
       if (char === quote) quote = undefined
       continue
     }
-    if (char === "'" || char === '"' || char === "`") {
+    if (isShellQuote(char)) {
       quote = char
       out += char
+      wordStart = false
       continue
     }
-    if (char === "#" && (index === 0 || /[ \t\n]/.test(text[index - 1] ?? ""))) {
-      while (index < text.length && text[index] !== "\n") index += 1
-      if (index < text.length) out += "\n"
+    if (char === "#" && wordStart) {
+      index = text.indexOf("\n", index)
+      if (index === -1) break
+      out += "\n"
       continue
     }
     out += char
+    wordStart = /[ \t\n]/.test(char)
   }
   return out
 }
@@ -82,7 +94,7 @@ function quoteBalanced(text: string): boolean {
       if (char === quote) quote = undefined
       continue
     }
-    if (char === "'" || char === '"' || char === "`") quote = char
+    if (isShellQuote(char)) quote = char
   }
   return quote === undefined
 }
@@ -110,15 +122,24 @@ export function normalizeCommand(text: string): NormalizedCommand {
   return { text: normalized, safe: true }
 }
 
-/** Split on top-level `;`, `&&`, `||`, `|` and newline, respecting quotes. */
-export function splitFragments(text: string): string[] {
-  const fragments: string[] = []
+interface ShellFragment {
+  readonly text: string
+  readonly next?: string
+}
+
+const SHELL_SEPARATORS = new Set(["\n", ";", "|", "&"])
+const DOUBLE_SEPARATORS = new Set(["&&", "||"])
+const DESCRIPTOR_REDIRECTS = new Set(["<&", ">&"])
+
+/** Keep shell separators alongside their fragments so consumers can prove control flow. */
+function shellFragments(text: string): ShellFragment[] {
+  const fragments: ShellFragment[] = []
   let current = ""
   let quote: "'" | '"' | "`" | undefined
   let escaped = false
-  const push = () => {
+  const push = (next?: string) => {
     const fragment = current.trim()
-    if (fragment) fragments.push(fragment)
+    if (fragment || next !== "\n") fragments.push({ text: fragment, next })
     current = ""
   }
   for (let index = 0; index < text.length; index += 1) {
@@ -138,29 +159,78 @@ export function splitFragments(text: string): string[] {
       if (char === quote) quote = undefined
       continue
     }
-    if (char === "'" || char === '"' || char === "`") {
+    if (isShellQuote(char)) {
       quote = char
       current += char
       continue
     }
-    if (char === "\n" || char === ";") {
-      push()
-      continue
-    }
-    if (char === "&" && text[index + 1] === "&") {
-      push()
+    const pair = text.slice(index, index + 2)
+    if (DESCRIPTOR_REDIRECTS.has(pair)) {
+      current += pair
       index += 1
       continue
     }
-    if (char === "|") {
-      push()
-      if (text[index + 1] === "|") index += 1
+    if (SHELL_SEPARATORS.has(char)) {
+      const operator = DOUBLE_SEPARATORS.has(pair) ? pair : char
+      push(operator)
+      index += operator.length - 1
       continue
     }
     current += char
   }
   push()
   return fragments
+}
+
+/** Return the text fragments used by the manifest, omitting empty pieces. */
+export function splitFragments(text: string): string[] {
+  return shellFragments(text)
+    .map((fragment) => fragment.text)
+    .filter(Boolean)
+}
+
+/** Read the only directory-changing form eligible for automatic permission. */
+function literalCd(text: string): string | undefined {
+  const match = /^cd[ \t]+(?:"([^"\\]+)"|'([^']+)'|([^\s"'\\;&|<>]+))$/.exec(text)
+  const target = match?.[1] ?? match?.[2] ?? match?.[3]
+  if (!target || !isAbsolute(target) || /[$`\r\n*?[\]{}()<>]/.test(target)) return undefined
+  if (target.split(/[\\/]/).some((segment) => segment === "." || segment === "..")) return undefined
+  return resolve(target)
+}
+
+/** Prove that every command runs from one directory, with an optional leading literal cd. */
+function commandLayout(text: string): { fragments: ShellFragment[]; directory?: string } | undefined {
+  const fragments = shellFragments(text)
+  if (!fragments.at(-1)?.text && [";", "\n"].includes(fragments.at(-2)?.next ?? "")) fragments.pop()
+  if (fragments.some((fragment) => !fragment.text || fragment.next === "&")) return undefined
+  const first = fragments[0]!
+  const directory = first.next === "&&" ? literalCd(first.text) : undefined
+  const commands = directory === undefined ? fragments : fragments.slice(1)
+  if (commands.some((fragment) => classifyCommand(fragment.text).changesDirectory)) return undefined
+  // A fallback branch or independent list item could run even when cd fails.
+  if (directory !== undefined && commands.some((fragment) => ![undefined, "&&", "|"].includes(fragment.next)))
+    return undefined
+  return { fragments, directory }
+}
+
+export interface EffectiveCommand {
+  readonly directory: string
+  readonly command: string
+  readonly prefixed: boolean
+}
+
+/** Resolve a shell sequence whose directory is established before any command runs. */
+export function effectiveCommand(command: string, projectRoot: string): EffectiveCommand | undefined {
+  const normalized = normalizeCommand(command)
+  if (!normalized.safe) return undefined
+  const layout = commandLayout(normalized.text)
+  if (!layout) return undefined
+  if (layout.directory === undefined) return { directory: projectRoot, command: normalized.text, prefixed: false }
+  const rest = layout.fragments
+    .slice(1)
+    .map(({ text, next }) => (next ? `${text} ${next}` : text))
+    .join(" ")
+  return { directory: layout.directory, command: rest, prefixed: true }
 }
 
 export interface AnalyzedBlock {
@@ -183,13 +253,17 @@ export function analyzeBlock(text: string): AnalyzedBlock {
   return { safe: true, text: normalized.text, fragments }
 }
 
-/** True only when every top-level fragment is a shipped command entry. */
-export function blueprintSafe(command: string, manifest: BlueprintManifest): boolean {
+/** Require shipped fragments and a proven directory, checking prefix trust when supplied. */
+export function blueprintSafe(
+  command: string,
+  manifest: BlueprintManifest,
+  trustedDirectory?: (directory: string) => boolean,
+): boolean {
   const normalized = normalizeCommand(command)
   if (!normalized.safe) return false
-  const fragments = splitFragments(normalized.text)
-  if (fragments.length === 0) return false
-  return fragments.every((fragment) => manifest.entries[sha256(fragment)]?.kind === "command")
+  const layout = commandLayout(normalized.text)
+  if (!layout || !layout.fragments.every(({ text }) => manifest.entries[sha256(text)]?.kind === "command")) return false
+  return layout.directory === undefined || (trustedDirectory?.(layout.directory) ?? true)
 }
 
 /** Build a manifest from every analyzed block; pure so the harness can diff it. */

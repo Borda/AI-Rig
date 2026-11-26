@@ -27,20 +27,41 @@ export interface SandboxRequest {
   readonly logDirectory: string
 }
 
-export interface SandboxReceipt {
-  readonly runtime: SandboxRuntime
+export type SandboxDisposition =
+  | "ran-passed"
+  | "ran-failed"
+  | "not-run:image"
+  | "not-run:runtime"
+  | "not-run:setup"
+  | "not-run:launch"
+  | "not-run:timeout"
+
+export interface SandboxOutcome {
+  readonly disposition: SandboxDisposition
+  readonly runtime?: SandboxRuntime
   readonly image: string
   readonly image_digest?: string
   readonly worktree: string
   readonly argv: readonly string[]
-  readonly status: "passed" | "failed"
+  readonly network: "none" | "bridge"
+  readonly status: "passed" | "failed" | "unavailable"
   readonly exit_code: number | null
   readonly duration_ms: number
-  readonly stdout_sha256: string
-  readonly stderr_sha256: string
-  readonly tail: string
-  readonly log_path: string
+  readonly stdout_sha256?: string
+  readonly stderr_sha256?: string
+  readonly tail?: string
+  readonly log_path?: string
   readonly reason?: string
+  readonly log_error?: string
+  cleanup_error?: string
+}
+
+export type SandboxNextAction =
+  | { readonly kind: "record-result" | "mark-incomplete"; readonly instruction: string }
+  | { readonly kind: "run-on-host" | "request-trust"; readonly command: string; readonly instruction: string }
+
+export interface SandboxReceipt extends SandboxOutcome {
+  readonly next_action: SandboxNextAction
 }
 
 /** A sandbox image must be digest-pinned, not a mutable tag. */
@@ -58,10 +79,10 @@ export class SandboxError extends Error {
 const MIN_TIMEOUT = 1_000
 const MAX_TIMEOUT = 3_600_000
 
-/** The first container runtime that answers on this host, if any. */
+/** The first container engine that can answer, including its daemon if it needs one. */
 export function detectRuntime(env: NodeJS.ProcessEnv = process.env): SandboxRuntime | undefined {
   for (const runtime of ["docker", "podman"] as const) {
-    const result = spawnSync(runtime, ["--version"], {
+    const result = spawnSync(runtime, ["info"], {
       encoding: "utf8",
       timeout: 2_000,
       stdio: ["ignore", "ignore", "ignore"],
@@ -108,13 +129,18 @@ export function sandboxArgs(input: {
     `${input.workDirectory}:/work`,
     "-w",
     "/work",
+    "--entrypoint",
+    input.argv[0]!,
     input.image,
-    ...input.argv,
+    ...input.argv.slice(1),
   ]
 }
 
-/** Copy the worktree into a disposable directory; a `.git` file link is skipped. */
+/** Copy the authorized physical directory into a disposable directory without Git metadata. */
 export function copyWorktree(worktree: string, destination: string): string {
+  if (!lstatSync(worktree).isDirectory()) throw new SandboxError("copy source must be a real directory")
+  const existing = lstatSync(destination, { throwIfNoEntry: false })
+  if (existing && !existing.isDirectory()) throw new SandboxError("copy destination must be a real directory")
   cpSync(worktree, destination, {
     recursive: true,
     dereference: false,
@@ -132,6 +158,7 @@ export function copyWorktree(worktree: string, destination: string): string {
       return true
     },
   })
+  if (!lstatSync(destination).isDirectory()) throw new SandboxError("copy destination must be a real directory")
   return destination
 }
 
@@ -139,40 +166,97 @@ function removeRuntimeArtifact(runtime: SandboxRuntime, name: string): void {
   spawnSync(runtime, ["rm", "-f", name], { timeout: 10_000, stdio: "ignore" })
 }
 
+/** Preserve execution evidence when closing a log or removing a temporary copy fails. */
+function cleanupSandbox(outcome: SandboxOutcome, descriptor?: number, root?: string): void {
+  const errors: string[] = []
+  try {
+    if (descriptor !== undefined) closeSync(descriptor)
+  } catch (error) {
+    errors.push(redact(String(error)))
+  }
+  try {
+    if (root) rmSync(root, { recursive: true, force: true })
+  } catch (error) {
+    errors.push(redact(String(error)))
+  }
+  if (errors.length) outcome.cleanup_error = errors.join("\n")
+}
+
+/** Bind each outcome to the requested execution context, including unstarted checks. */
+function executionContext(request: SandboxRequest) {
+  return {
+    image: request.image,
+    worktree: request.worktree,
+    argv: [...request.argv],
+    network: request.network === true ? ("bridge" as const) : ("none" as const),
+  }
+}
+
+/** Record a refusal or setup failure without claiming that a command ran. */
+function unavailable(
+  request: SandboxRequest,
+  started: number,
+  disposition: "not-run:image" | "not-run:runtime" | "not-run:setup",
+  reason: string,
+  runtime?: SandboxRuntime,
+): SandboxOutcome {
+  return {
+    ...executionContext(request),
+    disposition,
+    ...(runtime ? { runtime } : {}),
+    status: "unavailable",
+    exit_code: null,
+    duration_ms: Date.now() - started,
+    reason,
+  }
+}
+
 /**
- * Run one command in the sandbox and return its receipt. The worktree is
+ * Run one command in the sandbox and return its outcome. The worktree is
  * copied first, so the container never writes to the host tree.
  */
-export function runInSandbox(request: SandboxRequest): Promise<SandboxReceipt> {
+export function runInSandbox(request: SandboxRequest): Promise<SandboxOutcome> {
   if (!isAbsolute(request.worktree)) throw new SandboxError("worktree must be an absolute path")
-  if (request.argv.length === 0) throw new SandboxError("argv must name a command")
-  if (!request.image.trim()) throw new SandboxError("no sandbox image is configured")
-  if (!isPinnedImage(request.image))
+  if (!request.argv[0]?.trim()) throw new SandboxError("argv must name a command")
+  if (request.image && !isPinnedImage(request.image))
     throw new SandboxError("sandbox image must be digest-pinned as <repository>@sha256:<64 hex>")
   const timeoutMs = Math.trunc(request.timeoutMs)
   if (!Number.isInteger(timeoutMs) || timeoutMs < MIN_TIMEOUT || timeoutMs > MAX_TIMEOUT) {
     throw new SandboxError("timeout must be an integer between 1000 and 3600000 milliseconds")
   }
+  const started = Date.now()
+  if (!request.image)
+    return Promise.resolve(unavailable(request, started, "not-run:image", "no sandbox image is configured"))
   const runtime = detectRuntime()
   if (!runtime)
-    throw new SandboxError("no container runtime (docker or podman) is available; the verification stays unverified")
+    return Promise.resolve(
+      unavailable(request, started, "not-run:runtime", "no container runtime (Docker or Podman) is reachable"),
+    )
 
-  mkdirSync(join(tmpdir(), "opencode"), { recursive: true })
+  return prepareContainer({ ...request, runtime, timeoutMs }, started)
+}
+
+/** Prepare the isolated mount and log before passing control to the container runner. */
+function prepareContainer(
+  request: SandboxRequest & { runtime: SandboxRuntime },
+  started: number,
+): Promise<SandboxOutcome> {
+  const tempRoot = join(tmpdir(), "opencode")
   const name = `opencode-rig-${randomUUID().slice(0, 12)}`
   let sandboxRoot: string | undefined
   let descriptor: number | undefined
-  let logPath = ""
   try {
-    sandboxRoot = mkdtempSync(join(tmpdir(), "opencode/sandbox-"))
+    mkdirSync(tempRoot, { recursive: true })
+    sandboxRoot = mkdtempSync(join(tempRoot, "sandbox-"))
     const workDirectory = copyWorktree(request.worktree, join(sandboxRoot, "work"))
     const logDirectory = ensureDir(resolve(request.logDirectory))
-    logPath = join(logDirectory, `sandbox-${randomUUID().slice(0, 8)}.log`)
+    const logPath = join(logDirectory, `sandbox-${randomUUID().slice(0, 8)}.log`)
     descriptor = openSync(logPath, "wx", 0o600)
-    return runContainer({ ...request, runtime, timeoutMs, descriptor, workDirectory, name, sandboxRoot, logPath })
+    return runContainer({ ...request, descriptor, workDirectory, name, sandboxRoot, logPath })
   } catch (error) {
-    if (descriptor !== undefined) closeSync(descriptor)
-    if (sandboxRoot) rmSync(sandboxRoot, { recursive: true, force: true })
-    throw error
+    const outcome = unavailable(request, started, "not-run:setup", redact(String(error)), request.runtime)
+    cleanupSandbox(outcome, descriptor, sandboxRoot)
+    return Promise.resolve(outcome)
   }
 }
 
@@ -186,30 +270,32 @@ function runContainer(
     sandboxRoot: string
     logPath: string
   },
-): Promise<SandboxReceipt> {
+): Promise<SandboxOutcome> {
   const { runtime, timeoutMs, descriptor, workDirectory, name, sandboxRoot, logPath } = request
   const started = Date.now()
   const digest = imageDigest(runtime, request.image)
-  return new Promise((done) => {
-    const child = spawn(
+  const child = spawn(
+    runtime,
+    sandboxArgs({
       runtime,
-      sandboxArgs({
-        runtime,
-        image: request.image,
-        name,
-        workDirectory,
-        argv: request.argv,
-        network: request.network === true,
-      }),
-      {
-        detached: process.platform !== "win32",
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      },
-    )
+      image: request.image,
+      name,
+      workDirectory,
+      argv: request.argv,
+      network: request.network === true,
+    }),
+    {
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    },
+  )
+  return new Promise((done) => {
     const hashes = { stdout: createHash("sha256"), stderr: createHash("sha256") }
     let tail = Buffer.alloc(0)
-    let failure: NodeJS.ErrnoException | undefined
+    let launchError: string | undefined
+    let logError: string | undefined
+    let timedOut = false
     let cutoff: ReturnType<typeof setTimeout> | undefined
     let finished = false
     const finish = (code: number | null, signal: NodeJS.Signals | null) => {
@@ -217,17 +303,13 @@ function runContainer(
       finished = true
       clearTimeout(timer)
       clearTimeout(cutoff)
-      closeSync(descriptor)
-      rmSync(sandboxRoot, { recursive: true, force: true })
-      const reason =
-        failure?.code === "ETIMEDOUT" ? "timeout" : (failure?.message ?? (signal ? `signal: ${signal}` : undefined))
-      done({
+      const { disposition, status, reason } = containerResult(code, signal, timedOut, launchError)
+      const outcome: SandboxOutcome = {
+        ...executionContext(request),
         runtime,
-        image: request.image,
         ...(digest ? { image_digest: digest } : {}),
-        worktree: request.worktree,
-        argv: [...request.argv],
-        status: !failure && code === 0 ? "passed" : "failed",
+        disposition,
+        status,
         exit_code: code,
         duration_ms: Date.now() - started,
         stdout_sha256: hashes.stdout.digest("hex"),
@@ -235,10 +317,14 @@ function runContainer(
         tail: redact(tail.toString("utf8").trim()),
         log_path: logPath,
         ...(reason ? { reason } : {}),
-      })
+        ...(logError ? { log_error: logError } : {}),
+      }
+      done(outcome)
+      // Promise continuations observe cleanup evidence after this callback returns.
+      cleanupSandbox(outcome, descriptor, sandboxRoot)
     }
     const timer = setTimeout(() => {
-      failure = Object.assign(new Error("sandbox timed out"), { code: "ETIMEDOUT" })
+      timedOut = true
       removeRuntimeArtifact(runtime, name)
       try {
         if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGTERM")
@@ -267,15 +353,34 @@ function runContainer(
         try {
           writeSync(descriptor, chunk)
         } catch (error) {
-          failure = error as NodeJS.ErrnoException
+          logError ??= redact(String(error))
         }
       })
     }
     child.once("error", (error) => {
-      failure = error as NodeJS.ErrnoException
+      launchError = redact(error.message)
       removeRuntimeArtifact(runtime, name)
       finish(null, null)
     })
     child.once("close", (code, signal) => finish(code, signal))
   })
+}
+
+/** Classify what the engine's result can establish about the requested command. */
+function containerResult(
+  code: number | null,
+  signal: NodeJS.Signals | null,
+  timedOut: boolean,
+  launchError?: string,
+): Pick<SandboxOutcome, "disposition" | "status" | "reason"> {
+  if (timedOut)
+    return { disposition: "not-run:timeout", status: "unavailable", reason: "timeout; command completion unconfirmed" }
+  // Docker and Podman reserve 125–127 for engine errors and unstartable commands.
+  // The same exits from a payload are ambiguous, so never attest execution from them.
+  if (launchError || code === null || (code >= 125 && code <= 127)) {
+    const reason = launchError ?? (signal ? `engine signal: ${signal}` : `engine exit: ${code}`)
+    return { disposition: "not-run:launch", status: "unavailable", reason }
+  }
+  if (code === 0) return { disposition: "ran-passed", status: "passed" }
+  return { disposition: "ran-failed", status: "failed" }
 }

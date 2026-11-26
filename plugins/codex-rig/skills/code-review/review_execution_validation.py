@@ -305,15 +305,16 @@ def _validate_direct_review(
     if _sha256(plan_path) != execution["plan_sha256"]:
         raise SystemExit("review-direct-plan-hash-mismatch")
     plan = _load_json(plan_path)
+    plan_version = plan.get("schema_version")
     if (
-        type(plan.get("schema_version")) is not int
-        or plan["schema_version"] not in {1, 2, 3}
+        type(plan_version) is not int
+        or plan_version not in {1, 2, 3, 4}
         or plan.get("consumer_policy") != {"consumer_id": "code-review"}
         or (plan["schema_version"] == 1 and "inert_fixture_admissions" in plan)
     ):
         raise SystemExit("review-direct-plan-policy-invalid")
     selection = plan.get("model_selection")
-    if plan["schema_version"] in {2, 3} and not (
+    if plan_version >= 2 and not (
         selection == {"mode": "inherit"}
         or (
             isinstance(selection, dict)
@@ -369,7 +370,7 @@ def _validate_direct_review(
         raise SystemExit(f"review-direct-source-invalid:{error}") from error
     if snapshot != plan["source_snapshot"]:
         raise SystemExit("review-direct-source-snapshot-changed")
-    if plan["schema_version"] == 3 and plan.get("source_comparison_base") != comparison_base:
+    if plan_version >= 3 and plan.get("source_comparison_base") != comparison_base:
         raise SystemExit("review-direct-source-comparison-changed")
     additions = review_prepare.collect_diff.read_git_path_lines(out_dir / "untracked.txt")
     if additions != actual_additions:
@@ -468,7 +469,11 @@ def _validate_direct_review(
         if attempt.get("attempt") != attempt_number or attempt.get("status") != "completed":
             raise SystemExit(f"review-direct-attempt-invalid:{role}")
         context_path = _resolve_path(out_dir, context["context_path"])
-        message = context_path.read_text(encoding="utf-8")
+        message = (
+            review_prepare._direct_task_pointer(out_dir, context)
+            if plan_version == 4
+            else context_path.read_text(encoding="utf-8")
+        )
         if (
             _sha256(context_path) != context["context_sha256"]
             or attempt.get("context_path") != context["context_path"]
@@ -507,6 +512,9 @@ def _validate_direct_review(
             or arguments.get("reasoning_effort") != role_card["model_reasoning_effort"]
         ):
             raise SystemExit(f"review-direct-spawn-mismatch:{role}")
+        # An opaque transport match cannot establish which pointer the parent supplied.
+        if plan_version == 4 and arguments.get("message") != message:
+            raise SystemExit(f"review-direct-spawn-pointer-mismatch:{role}")
         # Reuse the audited receipt/creation binding after normalizing only the tool namespace.
         receipt_rows = [
             {**row, "payload": {**row["payload"], "name": "spawn_agent"}} if row is calls[0] else row

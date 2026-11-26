@@ -6,6 +6,8 @@
 
 ## Step 0: Parse flags and content-type pre-classification
 
+An explicit resume with a verified active review contract for the requested PR uses Step 5's “Restore report-dir sentinel and parent evidence” in `modes/post-agent.md` before any Step 0 reset. Otherwise, use the existing-report guard below to locate the pending report for that PR.
+
 Parse `$ARGUMENTS` flags first (via `bin/parse-skill-flags.py`, C5) — this sets `CLEAN_ARGS`, the mode flags, and `DIRECT_PATH_MODE` **before** any step below references them (the pre-classification and Step 1 both read them):
 
 | Flag | Variable | Present | Absent |
@@ -97,8 +99,14 @@ if [[ "$CLEAN_ARGS" == *.md ]]; then
         exit 1
     fi
     if [ -f "$CLEAN_ARGS" ] && grep -qE '^(Outcome: *(APPROVE|MINOR_EDITS|MAJOR_REVISION|NEEDS_WORK|INSUFFICIENT_BUT_PROMISING|REJECT|REQUEST_CHANGES)|Gate: *(REVIEW_V1_)?(PASS|BLOCK|REJECT_[A-Z]+))([[:space:]]|$)' "$CLEAN_ARGS" 2>/dev/null; then  # timeout: 5000
+        # Intake returns nonzero for REJECT even when the report is valid. Drafting can use that publication.
+        _INTAKE_PATH="${TMPDIR:-/tmp}/oss-review-direct-intake-${CSID}"
+        : > "$_INTAKE_PATH" || exit 1
+        python "$PLUGIN_ROOT/bin/find_review_report.py" --report "$CLEAN_ARGS" --path-out "$_INTAKE_PATH"  # timeout: 5000
+        IFS= read -r _VALIDATED_REPORT < "$_INTAKE_PATH" || exit 1
+        [ -n "$_VALIDATED_REPORT" ] || exit 1
         DIRECT_PATH_MODE=true
-        REVIEW_FILE="$CLEAN_ARGS"
+        REVIEW_FILE="$_VALIDATED_REPORT"
     else
         echo "⚠ $CLEAN_ARGS is a .md file but lacks an Outcome: or Gate: review header — refusing direct-path fast-path; continuing with normal review path which expects a PR number."
     fi
@@ -111,6 +119,8 @@ fi
 
 **Content-type pre-classification (PR mode only)** — skip when `DIRECT_PATH_MODE=true`.
 
+For an explicit request to show a saved PR review or resume a pending one, go directly to the existing-report guard below after flag parsing. The saved report or the original run's frozen snapshot supplies the evidence for those routes.
+
 Classify PR from changed file patterns. Default `PR_TYPE=CODE`; override only when unambiguous.
 
 **PR snapshot.** All later steps reuse the frozen metadata, diff and files. Check runs can change on the same commit, so Step 5 refreshes CI before consolidation.
@@ -120,9 +130,9 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 [ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in REPLY_MODE) REPLY_MODE=$_SV ;; WT_ENABLED) WT_ENABLED=$_SV ;; FILL_GAPS_MODE) FILL_GAPS_MODE=$_SV ;; DIRECT_PATH_MODE) DIRECT_PATH_MODE=$_SV ;; REVIEW_FILE) REVIEW_FILE=$_SV ;; esac; done < "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
 if [ "$DIRECT_PATH_MODE" = "false" ] && [[ "$CLEAN_ARGS" =~ ^[0-9]+$ ]]; then
-    SNAP_DIR="${TMPDIR:-/tmp}/oss-review-snap-${CLEAN_ARGS}-${CSID}"
-    mkdir -p "$SNAP_DIR"
+    SNAP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/oss-review-snap-${CLEAN_ARGS}-${CSID}-XXXXXX") || exit 1
     gh pr view "$CLEAN_ARGS" --json number,title,body,url,labels,milestone,reviews,headRefOid,baseRefName,baseRefOid,isCrossRepository > "$SNAP_DIR/pr-meta.json" || { echo "! BLOCKED — gh pr view failed for PR #$CLEAN_ARGS; check network/auth, PR number, cwd repository and gh repo set-default"; exit 1; }  # timeout: 6000
+    gh pr view "$CLEAN_ARGS" --json comments > "$SNAP_DIR/pr-comments.json" 2>/dev/null || { echo '{"comments": []}' > "$SNAP_DIR/pr-comments.json"; echo "⚠ PR comments not saved — claims are read from the body only"; }  # timeout: 6000 — a failed read leaves a valid empty list, never a partial file the extractor refuses
     PR_HEAD_SHA=$(jq -er '.headRefOid | select(test("^([0-9a-f]{40}|[0-9a-f]{64})$"))' "$SNAP_DIR/pr-meta.json") || { echo "! BLOCKED — snapshot has no full PR head SHA"; exit 1; }
     _PR_URL=$(jq -er '.url' "$SNAP_DIR/pr-meta.json") || { echo "! BLOCKED — PR repository URL unavailable"; exit 1; }
     _PR_REPO_URL="${_PR_URL%/pull/*}.git"
@@ -177,7 +187,7 @@ python "$PLUGIN_ROOT/bin/render_plugin_root.py" "$REVIEW_SKILL_DIR/modes/fill-ga
 
 ### Existing-report guard — before Step 1, before any worktree
 
-A full review is a multi-agent fan-out; re-running one over an unchanged PR head spends that cost for a report already on disk. Nothing else in this skill checks — a real session re-reviewed a PR minutes after reviewing it, because the prior run had been compacted out of context. Check disk, not memory, and do it here: nothing below Step 0 (codemap gates, worktree entry, CI status, the codemap battery) has run yet, so a reuse costs only the snapshot above.
+A full review is a multi-agent fan-out; re-running one over an unchanged PR head spends that cost for a report already on disk. Nothing else in this skill checks — a real session re-reviewed a PR minutes after reviewing it, because the prior run had been compacted out of context. Check disk, not memory, and do it here: codemap gates, worktree entry and review agents have yet to run, so reuse needs only the snapshot and initial CI observation above.
 
 ```bash
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
@@ -187,19 +197,23 @@ IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/nul
 [ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in REPLY_MODE) REPLY_MODE=$_SV ;; WT_ENABLED) WT_ENABLED=$_SV ;; FILL_GAPS_MODE) FILL_GAPS_MODE=$_SV ;; DIRECT_PATH_MODE) DIRECT_PATH_MODE=$_SV ;; REVIEW_FILE) REVIEW_FILE=$_SV ;; esac; done < "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
 IFS= read -r SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" 2>/dev/null || SNAP_DIR=""
 # fill-gaps names its prior run explicitly; its gate already wrote the prior-resolution sentinel — never overwrite it
-[ "${FILL_GAPS_MODE:-false}" = "false" ] || { echo "PRIOR_REPORT="; exit 0; }
+[ "${FILL_GAPS_MODE:-false}" = "false" ] || { printf 'PRIOR_REPORT=\nPENDING_RUN=\n'; exit 0; }
 _PRIOR=""
 if [ "$DIRECT_PATH_MODE" = "false" ] && [[ "$CLEAN_ARGS" =~ ^[0-9]+$ ]]; then
-    python "$PLUGIN_ROOT/bin/find_review_report.py" --pr "$CLEAN_ARGS" \
-        --path-out "${TMPDIR:-/tmp}/oss-review-prior-report-${CSID}" >/dev/null  # stderr kept: a failed sentinel write must be visible
+    python "$PLUGIN_ROOT/bin/find_review_report.py" --pr "$CLEAN_ARGS" --reuse \
+        --path-out "${TMPDIR:-/tmp}/oss-review-prior-report-${CSID}" || exit $?
     IFS= read -r _PRIOR < "${TMPDIR:-/tmp}/oss-review-prior-report-${CSID}" 2>/dev/null || _PRIOR=""
+else
+    printf 'PRIOR_REPORT=\nPENDING_RUN=\n'
 fi
 if [ -n "$_PRIOR" ]; then
     # head-sha.txt sidecar is written by the run-dir allocation fence (Step 2, also run on the Stage 1 reject path);
-    # a report from before that fix has none, so fall back to the @<sha> its Gate: line carries
+    # an archived run may have only a Commit SHA header or an abbreviated Gate: revision
     IFS= read -r _PRIOR_SHA < "$(dirname "$_PRIOR")/head-sha.txt" 2>/dev/null || _PRIOR_SHA=""
+    [ -n "$_PRIOR_SHA" ] || _PRIOR_SHA=$(sed -nE '1d; /^---$/q; s/^Commit SHA:[[:space:]]*([0-9a-f]{40}|[0-9a-f]{64})[[:space:]]*$/\1/p' "$_PRIOR")
     [ -n "$_PRIOR_SHA" ] || _PRIOR_SHA=$(grep -m1 '^Gate:' "$_PRIOR" 2>/dev/null | grep -oE '@[0-9a-f]{7,40}' | tr -d @)
-    _HEAD_SHA=$(jq -r '.headRefOid // empty' "$SNAP_DIR/pr-meta.json" 2>/dev/null)
+    _HEAD_SHA=""
+    [ -z "$SNAP_DIR" ] || _HEAD_SHA=$(jq -r '.headRefOid // empty' "$SNAP_DIR/pr-meta.json" 2>/dev/null)
     echo "PRIOR_DATE=$(grep -m1 '^Date:' "$_PRIOR" 2>/dev/null | cut -d: -f2- | tr -d ' ')"
     echo "PRIOR_SHA=${_PRIOR_SHA:-unknown} HEAD_SHA=${_HEAD_SHA:-unknown}"
     # a Gate: line may carry a short SHA, and a 64-hex id reads as its 40-hex prefix — prefix match, never string equality
@@ -209,28 +223,89 @@ fi
 _PRIOR_RES=""
 [ -n "$_PRIOR" ] && [ -s "$(dirname "$_PRIOR")/resolution.jsonl" ] && _PRIOR_RES="$(dirname "$_PRIOR")/resolution.jsonl"
 printf '%s\n' "$_PRIOR_RES" > "${TMPDIR:-/tmp}/oss-review-prior-resolution-${CSID}"
-echo "PRIOR_REPORT=$_PRIOR"
 [ -z "$_PRIOR_RES" ] || echo "PRIOR_RESOLUTION=$_PRIOR_RES ($(grep -c . "$_PRIOR_RES") records)"
 ```
 
-Empty `PRIOR_REPORT` → proceed, no gate. Non-empty → invoke `AskUserQuestion` (actual tool call) before anything else runs:
+- An explicit request for a fresh full review or for an updated review covering new comments selects (a) directly, including on an unchanged head.
+- An explicit request to show the last completed report selects (b) using `PRIOR_REPORT`, even when `PENDING_RUN` names a newer unpublished run. If `PRIOR_REPORT` is empty, report that no usable publication exists and stop. When `PENDING_RUN` is non-empty, identify it separately as unpublished.
+- An explicit request to resume uses `PENDING_RUN` when non-empty. Load `modes/post-agent.md` and follow its pending-run recovery under the compaction contract. If `PENDING_RUN` is empty, use (b) only to finish delivery of the matching published run. If neither matches the requested resume, report that no resumable run was located and stop.
+
+Otherwise, empty `PRIOR_REPORT` → use the fresh full review route below without a question. Non-empty → invoke `AskUserQuestion` (actual tool call) before anything else runs:
 
 <!-- branch: prior-report — fires only when a report for this PR already exists on disk -->
 
 ```text
 "Review report for PR #<N> already exists (<PRIOR_DATE>). Re-run the full fan-out?"
   (a) Re-run full review — PR head moved, or the prior report is stale
-  (b) Reuse it — print its path and stop; nothing to re-review  (Recommended when PRIOR_SHA = HEAD_SHA)
+  (b) Reuse it — show the saved review and findings without another fan-out
   (c) Reply-draft from the existing report — jumps to Step 8 with --reply
 ```
 
-`SHA_MATCH=true` (prior SHA equals, or is a prefix of, the current head) means the prior report covers exactly this code; say so in the question text. Unknown on either side (no `head-sha.txt` sidecar and no `Gate: … @<sha>` line, or `gh` returned no `headRefOid`) → state that instead of guessing, and let the user decide.
+`SHA_MATCH=true` (prior SHA equals, or is a prefix of, the current head) identifies matching source only. State this in the question text; comments, CI and other review inputs can change on the same commit. Unknown on either side (no reviewed SHA in the sidecar or report header, or `gh` returned no `headRefOid`) → state that instead of guessing, and let the user decide.
 
-Selected (a) → proceed with the full review. Selected (b) → `TaskUpdate(status="deleted")` for every Step 2–5b task already created, print `→ existing report: <PRIOR_REPORT>` and stop. Selected (c) → delete those same tasks, persist the redirect so Step 8 and a post-compaction resume both see it, then skip to Step 8:
+A fresh full PR review with no usable prior report or after selecting (a) runs the same conversation collection block below before Step 1. Skip this block on reuse, reply-only or fill-gaps routes.
 
 ```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r REVIEW_FILE < "${TMPDIR:-/tmp}/oss-review-prior-report-${CSID}" 2>/dev/null || REVIEW_FILE=""
+# timeout: 30000
+IFS= read -r SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" || exit 1
+[ -d "$SNAP_DIR" ] || { echo "! BLOCKED — no PR snapshot for conversation collection"; exit 1; }
+_PR_URL=$(jq -er '.url' "$SNAP_DIR/pr-meta.json") || exit 1
+_PR_LAYOUT='^https?://([^/]+)/([^/]+/[^/]+)/pull/([0-9]+)$'
+[[ "$_PR_URL" =~ $_PR_LAYOUT ]] || { echo "! BLOCKED — snapshot PR URL cannot identify the conversation endpoints"; exit 1; }
+_HOST="${BASH_REMATCH[1]}" _REPO="${BASH_REMATCH[2]}" _PR="${BASH_REMATCH[3]}"
+_COVERAGE="$SNAP_DIR/conversation-coverage.txt"
+: > "$_COVERAGE" || exit 1
+for _SOURCE in review-bodies inline-comments general-comments; do
+    case "$_SOURCE" in
+        review-bodies) _ENDPOINT="pulls/$_PR/reviews" ;;
+        inline-comments) _ENDPOINT="pulls/$_PR/comments" ;;
+        general-comments) _ENDPOINT="issues/$_PR/comments" ;;
+    esac
+    _DEST="$SNAP_DIR/conversation-$_SOURCE.json"
+    if gh api --hostname "$_HOST" "repos/$_REPO/$_ENDPOINT" --paginate > "$_DEST.pages" &&
+        jq -es 'select(length > 0 and all(.[]; type == "array")) | add' "$_DEST.pages" > "$_DEST"; then
+        continue
+    fi
+    printf '%s unavailable: paginated fetch failed or returned invalid data\n' "$_SOURCE" >> "$_COVERAGE" || exit 1
+    : > "$_DEST" || exit 1
+done
+if [ -s "$SNAP_DIR/conversation-general-comments.json" ]; then
+    jq '{comments: map(. + {author: {login: .user.login}})}' "$SNAP_DIR/conversation-general-comments.json" > "$SNAP_DIR/pr-comments.json" || exit 1
+fi
+cat "$PLUGIN_ROOT/skills/_shared/github-review-parsing.md" 2>/dev/null ||
+    printf '%s\n' "github-review-parsing.md unavailable: review parsing rules could not be loaded" >> "$_COVERAGE"
+cat "$_COVERAGE"
+```
+
+An empty conversation file is unavailable, while a JSON array `[]` is a completed empty fetch. If paginated general comments are unavailable, `pr-comments.json` remains the initial, potentially incomplete claim-extraction input. Step 2 binds the conversation record for reviewers and Step 5 binds it for the consolidator from the frozen snapshot.
+
+Selected (b) → bind the selected report below. Skip new review work and close only its tasks, retaining or creating the Step 5b delivery task. Load `modes/post-agent.md` and follow Step 5b's no-question final delivery and the Step 7b confidence block directly. Read the selected report and use its recorded findings, verdict, CI, reviewer ratings, confidence and limits. Leave the saved run intact.
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r REVIEW_FILE < "${TMPDIR:-/tmp}/oss-review-prior-report-${CSID}" || exit 1
+[ -s "$REVIEW_FILE" ] || { echo "! BLOCKED — selected review report unavailable: $REVIEW_FILE"; exit 1; }
+python "$PLUGIN_ROOT/bin/find_review_report.py" --report "$REVIEW_FILE" --publication-state || exit $?  # timeout: 5000
+# A separate request to show the same report in this session needs a fresh delivery check.
+rm -f "${TMPDIR:-/tmp}/report-delivered-oss-review-report-dir-${CSID}" || exit 1
+REPORT_DIR="${REVIEW_FILE%/*}"
+printf '%s\n' "$REPORT_DIR" > "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" || exit 1
+echo "REPORT_DIR=$REPORT_DIR"  # timeout: 3000
+```
+
+After the table, identify the reviewed `PRIOR_SHA` when known. If the head moved, also give `HEAD_SHA` as the unreviewed current head. After compaction, recover the reviewed identity from the selected run and the observed head from the Step 0 snapshot’s `pr-meta.json`. If either identity is unavailable, say which one is unknown. Keep the original review judgments bound to the saved revision. Reuse opens no new review run or compaction contract, so omit Step 7b's contract cleanup.
+
+Selected (c) → `TaskUpdate(status="deleted")` for any Step 2–5b tasks already created, persist the redirect so Step 8 and a post-compaction resume both see it, then skip to Step 8:
+
+```bash
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r REVIEW_FILE < "${TMPDIR:-/tmp}/oss-review-prior-report-${CSID}" 2>/dev/null || exit 1
+[ -s "$REVIEW_FILE" ] || { echo "! BLOCKED — selected review report unavailable: $REVIEW_FILE"; exit 1; }
+python "$PLUGIN_ROOT/bin/find_review_report.py" --report "$REVIEW_FILE" --publication-state || exit $?  # timeout: 5000
 # later lines win when the sentinel is read back — the Step 0 REPLY_MODE=false line stays, this overrides it
 {
     echo "REPLY_MODE=true"
@@ -255,14 +330,17 @@ if [ "$DIRECT_PATH_MODE" = "false" ] && [[ "$CLEAN_ARGS" =~ ^[0-9]+$ ]]; then
     _PY_LOGIC_COUNT=$(echo "$_CHANGED" | grep -E '\.py$' | grep -cvE '((^|/)test_[^/]*|_test|(^|/)conftest)\.py$|(^|/)tests?/' 2>/dev/null)
     _ALL_COUNT=$(echo "$_CHANGED" | grep -c . 2>/dev/null)
     # docs = md|rst only: .txt (requirements manifests) and .ipynb (executable) stay CODE → qa/OWASP path
-    _DOC_COUNT=$(echo "$_CHANGED" | grep -cE '\.(md|rst|pyi)$' 2>/dev/null)
+    _DOC_PATTERN='\.(md|rst|pyi)$'
+    _DOC_COUNT=$(echo "$_CHANGED" | grep -cE "$_DOC_PATTERN" 2>/dev/null)
     # no .github/ or YAML: Actions changes route via scope detection to oss:cicd-steward, with CI status, acceptance gate and challenger
-    _TEST_CI_COUNT=$(echo "$_CHANGED" | grep -cE '((^|/)test_[^/]*|_test|(^|/)conftest)\.py$|(^|/)tests?/|tox\.ini|Makefile' 2>/dev/null)
+    _TEST_CI_PATTERN='((^|/)test_[^/]*|_test|(^|/)conftest)\.py$|(^|/)tests?/|(^|/)(tox\.ini|Makefile)$'
+    _DOC_OR_TEST_COUNT=$(echo "$_CHANGED" | grep -vE '(^|/)\.github/' | grep -cE "$_DOC_PATTERN|$_TEST_CI_PATTERN" 2>/dev/null)
+    _GITHUB_COUNT=$(echo "$_CHANGED" | grep -cE '(^|/)\.github/' 2>/dev/null)
 
-    if [ "${_PY_LOGIC_COUNT:-0}" -eq 0 ] && [ "${_ALL_COUNT:-0}" -gt 0 ]; then
-        if [ "$_DOC_COUNT" -ge "$_ALL_COUNT" ]; then
+    if [ "${_PY_LOGIC_COUNT:-0}" -eq 0 ] && [ "${_ALL_COUNT:-0}" -gt 0 ] && [ "$_GITHUB_COUNT" -eq 0 ]; then
+        if [ "$_DOC_COUNT" -eq "$_ALL_COUNT" ]; then
             PR_TYPE="DOCS_TYPING"; DOCS_TYPING_MODE=true
-        elif [ "$(( _TEST_CI_COUNT + _DOC_COUNT ))" -ge "$_ALL_COUNT" ]; then
+        elif [ "$_DOC_OR_TEST_COUNT" -eq "$_ALL_COUNT" ]; then
             PR_TYPE="TESTS_CI"; TESTS_CI_MODE=true
         fi
     fi

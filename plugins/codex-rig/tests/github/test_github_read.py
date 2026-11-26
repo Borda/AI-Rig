@@ -137,6 +137,9 @@ class TestRunGhRead:
             pytest.param(["gh", "issue", "view", "17", "-w=true"], id="short-web-assignment"),
             pytest.param(["gh", "api", "/repos/Borda/AI-Rig/issues", "--method", "POST"], id="rest-post"),
             pytest.param(
+                ["gh", "api", "/repos/Borda/AI-Rig/issues", "--hostname", "other.invalid"], id="rest-other-host"
+            ),
+            pytest.param(
                 ["gh", "api", "graphql", "-f", "query=mutation { closeIssue(input: {}) { issue { id } } }"],
                 id="graphql-mutation",
             ),
@@ -194,6 +197,22 @@ class TestRunGhRead:
 
         with pytest.raises(reader.GitHubReadError, match="command-output-oversized"):
             reader._run_default_gh_command([sys.executable, "-c", "import sys; sys.stdout.write('x' * 9)"], timeout=5)
+
+
+@pytest.mark.parametrize("field", [b'"secret-tls-field"', b"secret-tls-field"])
+@pytest.mark.parametrize("list_fields", [False, True])
+def test_unknown_json_field_retains_its_class_without_the_field(
+    reader: ModuleType, field: bytes, list_fields: bool
+) -> None:
+    """A JSON field error stays distinct from transport failures even when its field resembles one."""
+    stderr = b"Unknown JSON field: " + field + b"\n"
+    if list_fields:
+        stderr += b"Available fields:\n  state\n  title\n"
+
+    failure_class = reader.github_failure_class(stderr)
+
+    assert failure_class == "github-command-failed"
+    assert reader.github_failure_reason(stderr, failure_class) == "unknown-json-field"
 
 
 class TestJobLogs:
@@ -285,6 +304,33 @@ class TestJobLogs:
 
 class TestPublicFallback:
     """The unauthenticated public HTTPS fallback after the CLI cannot reach GitHub."""
+
+    @pytest.mark.parametrize(
+        ("options", "stderr", "failure"),
+        [
+            pytest.param(["--paginate"], CONNECTION_RESET, "github-network", id="network"),
+            pytest.param(["--paginate"], b"HTTP 401: authentication required", "github-auth", id="authentication"),
+            pytest.param(["--paginate", "--slurp"], b"HTTP 429: API rate limit", "github-rate-limit", id="rate-limit"),
+        ],
+    )
+    def test_paginated_read_preserves_primary_failure(
+        self, reader: ModuleType, options: list[str], stderr: bytes, failure: str
+    ) -> None:
+        """A successful first page cannot replace a failed all-pages request."""
+        endpoint = "/repos/example/project/issues"
+        argv = ["gh", "api", endpoint, *options]
+        runner = _fixed_runner(returncode=1, stdout=b'[{"number": 17}]', stderr=stderr)
+        open_url, requested = _public_opener(b'[{"number": 17}]')
+        fallback_url = mock.Mock(return_value=f"https://api.github.com{endpoint}")
+
+        with pytest.raises(reader.GitHubReadError, match=f"^{failure}:all-issues$"):
+            reader.read_with_fallback(
+                runner, argv, timeout=5, label="all-issues", fallback_url=fallback_url, open_url=open_url
+            )
+
+        assert runner.call_count == 1
+        fallback_url.assert_not_called()
+        assert requested == []
 
     @pytest.mark.parametrize(
         "stderr",
@@ -764,6 +810,20 @@ class TestCommandLine:
     """The `main` entry point: files written, streams used and exit codes."""
 
     PR_VIEW_URL = "https://github.com/example/project/pull/17"
+
+    def test_paginated_timeout_keeps_cli_output_absent(
+        self, reader: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A timed-out all-pages read reports the primary failure and never writes a partial file."""
+        output = tmp_path / "response.json"
+        argv = ["gh", "api", "/repos/example/project/issues", "--paginate"]
+        runner = mock.Mock(side_effect=subprocess.TimeoutExpired(argv, timeout=5))
+        monkeypatch.setattr(reader.subprocess, "run", runner)
+
+        assert reader.main(["--out", str(output), "--fallback-url", "https://example.invalid", "--", *argv]) == 2
+
+        assert capsys.readouterr().err.splitlines()[0] == "command-timeout:github-read"
+        assert not output.exists()
 
     def test_job_log_writes_safe_text_without_printing_response(
         self, reader: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

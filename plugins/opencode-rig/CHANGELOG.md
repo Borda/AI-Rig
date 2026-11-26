@@ -2,6 +2,20 @@
 
 All notable changes to this package are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.15.0
+
+- `code-review` makes verification and remaining coverage visible.
+  - Confidence names each gap and what would close it. Only unexecuted required checks count toward this verification limit.
+  - Benchmark and memory claims compare base and head by relative effect. Each claim gets one disposition with its provenance, tested scope and reproduction evidence. Missing execution authority or failed provisioning is incomplete, a missing required hardware or OS class is unverified, and completed but unresolved measurements are inconclusive. Eligible dependencies are provisioned and used on the selected verification route in a throwaway environment.
+  - Changelog, migration guide and CI workflow changes, and stated performance or memory claims, prioritize their review axes within the cap. Each selected axis that could not run is reported separately.
+- Forked pull request trust and sandbox verification follow the active execution policy.
+  - `all-sandbox` routes every workflow check through `rig_sandbox`. Host gate and script execution refuse, and the shell and Code Mode hooks enforce the policy even when inspection or guardrails are off. Proven host inspection and enabled, narrowly scoped Git writes remain available where the hook admits them.
+  - `rig_sandbox` copies the resolved worktree and returns `disposition` and `next_action` even if the receipt file cannot be saved. A finished check supplies a pass or fail result. A missing image or runtime can point to an eligible host check or trust request, while an unconfirmed timeout leaves the check incomplete. The receipt records the network setting used for verification.
+  - Host trust applies to a review worktree with a verifiable commit only while inspection and guardrails are enabled and host verification is allowed. It lasts up to 24 hours for the same resolved path and HEAD, including a worktree recreated there at that commit. A declined or unanswered trust request leaves the check incomplete.
+- Hook-bound inspection and shipped command blocks use one effective-directory rule. A directory change qualifies only as a leading literal `cd <absolute path> && ...`, and every following fragment is checked in that directory. A shipped block also needs trusted directory evidence for its `cd` prefix. Configured denies stay binding for inspection, shipped blocks and designed writes.
+- Git guardrails keep credential-disclosing `gh` forms out of automatic inspection. Only masked `gh auth status` forms qualify, and journal redaction catches capitalization variants of Basic and Bearer authorization values, including those truncated at the capture boundary.
+- Designed Git writes check the actual paths selected by `git add`, including descendants of directory operands and tracked files matched by ignore rules. Staging that selects a protected path or whose selection cannot be verified loses the automatic allow. An implicit `git checkout <path>` that would discard unstaged tracked changes gets the destructive-operation prompt.
+
 ## 0.14.0
 
 - The code-review skill weighs its verdict against the change's own purpose and size: a required resolution that reverses the central change or rewrites most of the diff now yields Major revision (or Insufficient, but a good initiative) instead of Minor changes.

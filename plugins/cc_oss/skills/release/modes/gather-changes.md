@@ -110,7 +110,7 @@ printf '%s\n' "$PRS"
 
 Record any printed `⚠ PR discovery coverage gap` in the gather evidence and list it as a Confidence Gap in the final reply for both `notes` and `prepare`; for every associated PR missing from `$PRS`, fetch its body with `gh pr view <N> --json body` before classifying it.
 
-Cross-reference commit bodies against PR descriptions — canonical source of truth for *why* change made. `BREAKING CHANGE:` footer = breaking change regardless of PR label.
+Cross-reference commit bodies against PR descriptions to understand why the change was made. A `BREAKING CHANGE:` footer flags a candidate pending baseline evidence, regardless of PR label. Apply the published-baseline rules in `modes/classify-truth-check.md` before assigning the category.
 
 **Subtract work already shipped off-branch.** `SHIPPED_ELSEWHERE_TAGS` (Shared setup) lists stable tags newer than `$LAST_TAG` that descend from it but are not reachable from HEAD — a maintenance branch's 1.11.1 and 1.11.2 next to HEAD's 1.11.0. `$LAST_TAG..HEAD` still contains what those tags backported, so it would be announced as new. Empty list → nothing to do, `$SHIPPED_FILE` stays empty.
 
@@ -146,7 +146,7 @@ Retain verified commit-to-PR associations and each in-range PR author's known lo
 
 **Detect revert pairs**: scan `git log --no-merges --format="%H %s" --end-of-options "$RANGE"` for revert subjects — those beginning with `Revert "` (git default) or a conventional `revert:` / `revert(<scope>):` type, case-insensitive. For each: match the original by the body's `This reverts commit <sha>` trailer first; no trailer → extract the original subject (the quoted text, or the text after the type prefix) and search the range for it. Both found → `REVERT_SET` pair (net effect zero).
 
-Record all `REVERT_SET` pairs before Classify. Commits in `REVERT_SET` excluded from standard sections; collected for 🔄 Reverted. If only revert is in range (original predates range) → classify as ❌ Removed (or ⚠️ Breaking Changes if API surface changed without prior deprecation) — NOT 🔄 Reverted; net user effect is non-zero.
+Record all `REVERT_SET` pairs before Classify. Collect commits in `REVERT_SET` under 🔄 Reverted and exclude them from standard sections. If only the revert is in range, check the original behavior at `$BASELINE_REF`. If the public behavior shipped and the revert removes it, apply the baseline deprecation rule to choose between ❌ Removed and ⚠️ Breaking Changes. If the original behavior never shipped, omit the zero net change from release notes. Qualify inconclusive cases for Truth check.
 
 **Cross-cycle revert/pivot detection** (`--append` only, when a prior `DRAFT.md`/`$CHANGELOG_FILE` exists — extends the "non-destructive except revert/pivot" rule across append cycles, not just within one range). Runs in the orchestrator after Detect revert pairs. Load the procedure and the Append notes only for an `--append` run:
 

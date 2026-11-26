@@ -29,7 +29,8 @@ SETUP_SCHEMA_PATH = SCHEMAS_ROOT / "setup-result.schema.json"
 MCP_CONFIG_PATH = PLUGIN_ROOT / ".codex-mcp.json"
 
 CORE_FIELDS = {"status", "verdict", "findings", "files_touched", "remaining", "blockers"}
-PEER_FIELDS = CORE_FIELDS | {"details"}
+PEER_FIELDS = CORE_FIELDS | {"confidence_gaps", "details"}
+CONFIDENCE_FIELDS = {"confidence", "confidence_gaps", "confidence_null_reason"}
 HARNESS_ONLY_FIELDS = {
     "model",
     "effort",
@@ -311,6 +312,7 @@ def _core_result(**overrides: object) -> dict[str, object]:
         "files_touched": [],
         "remaining": [],
         "blockers": [],
+        "confidence_gaps": [],
         "details": [],
     }
     return {**result, **overrides}
@@ -325,6 +327,9 @@ def _harness_result(**overrides: object) -> dict[str, object]:
         "files_touched": [],
         "remaining": [],
         "blockers": [],
+        "confidence": 1.0,
+        "confidence_gaps": ["(-0.00) nothing limits the result"],
+        "confidence_null_reason": None,
         "model": "test-model",
         "effort": "low",
         "effort_substituted": None,
@@ -476,8 +481,8 @@ class TestHarnessSchema:
         assert harness_schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
         assert harness_schema["type"] == "object"
         assert harness_schema["additionalProperties"] is False
-        assert set(harness_schema["required"]) == CORE_FIELDS | HARNESS_ONLY_FIELDS
-        assert set(properties) == CORE_FIELDS | HARNESS_ONLY_FIELDS | {"partial_output"}
+        assert set(harness_schema["required"]) == CORE_FIELDS | CONFIDENCE_FIELDS | HARNESS_ONLY_FIELDS
+        assert set(properties) == CORE_FIELDS | CONFIDENCE_FIELDS | HARNESS_ONLY_FIELDS | {"partial_output"}
         assert "partial_output" not in harness_schema["required"]
         assert properties["partial_output"]["type"] == "string"
         assert properties["partial_output"]["maxLength"] == 4096
@@ -505,6 +510,8 @@ class TestHarnessSchema:
             status="refused",
             verdict="Recursion was refused.",
             blockers=["recursion-depth"],
+            confidence=None,
+            confidence_null_reason="refused",
             cost=None,
             depth=1,
             direction="codex_to_claude",

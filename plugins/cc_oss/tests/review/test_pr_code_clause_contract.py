@@ -122,7 +122,7 @@ class TestReviewClause:
         lines = _lines(path)
         ask = _line_starting(path, "**Ask")
         auto_path = lines[lines.index(auto) : lines.index(ask)]
-        bind = next(line for line in auto_path if 'untrusted_code_guard.py" bind' in line)
+        bind = next(line for line in auto_path if 'untrusted_code_guard.py" record' in line)
         assert '--tier env-only --decision unsandboxed --decision exact-head --out "$RUN_DIR/code-approval.txt"' in bind
         assert ' -- "${PR_CODE_COMMAND[@]}"' in bind
         assert bind.endswith('&& { echo auto > "$RUN_DIR/pr-code-decision.txt"; exit 0; }')
@@ -148,7 +148,7 @@ class TestReviewClause:
         assert '--scan "$RUN_DIR/code-scan.json" --head "$PR_HEAD_SHA"' in block[check]
         gate = next(i for i, line in enumerate(block) if line.startswith('[ "$_CHECK" = auto ] ||'))
         assert "exit 1" in block[gate]
-        bind = next(i for i, line in enumerate(block) if 'untrusted_code_guard.py" bind' in line)
+        bind = next(i for i, line in enumerate(block) if 'untrusted_code_guard.py" record' in line)
         assert check < gate < bind
 
     def test_ask_path_keeps_all_three_choices(self) -> None:
@@ -318,7 +318,7 @@ git() { return "${GIT_BASE_STATUS:-0}"; }
         assert body.split("\0")[:-1] == [
             "-I",
             "/plugin/bin/untrusted_code_guard.py",
-            "bind",
+            "record",
             "--repo",
             ".",
             "--head",
@@ -865,7 +865,7 @@ class TestCheckoutCodeLoadsAreGated:
         block = _block_after(path, sandbox)
         check = next(i for i, line in enumerate(block) if 'code_safety_status.py" check-sandbox' in line)
         gate = next(i for i, line in enumerate(block) if line.startswith('[ "$_CHECK" = sandbox ] ||'))
-        bind = next(i for i, line in enumerate(block) if 'untrusted_code_guard.py" bind' in line)
+        bind = next(i for i, line in enumerate(block) if 'untrusted_code_guard.py" record' in line)
         assert check < gate < bind
         assert "exit 1" in block[gate]
         assert "--tier sandbox" in block[bind]

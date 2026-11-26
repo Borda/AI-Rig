@@ -423,6 +423,7 @@ def test_sequential_report_followup_reaches_truthful_failed_result(
     draft = run / "draft.json"
     draft.write_text(json.dumps(metadata), encoding="utf-8", newline="\n")
     assert HELPER.main(["preflight", "--run", str(run), "--stage", "plan", "--metadata", str(draft)]) == 0
+    assert json.loads((run / "run-state.json").read_text(encoding="utf-8"))["checkpoint"] == "plan"
     metadata["unresolved_summary"].update(
         selected_items_total=2,
         selected_items_resolved=1,

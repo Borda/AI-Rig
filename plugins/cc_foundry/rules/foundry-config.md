@@ -69,17 +69,17 @@ Use `foundry:curator`, not `foundry:sw-engineer`, for `.claude/` edits (agents, 
 ```bash
 # completed runs (have result.jsonl), older than 30 days
 find .reports/calibrate .reports/resolve .reports/audit .reports/analyse .experiments .developments \
-    -maxdepth 2 -name "result.jsonl" -mtime +30 2>/dev/null |
-xargs dirname | xargs rm -rf
+    -mindepth 2 -maxdepth 2 -type f -name "result.jsonl" -mtime +30 \
+    -exec sh -c 'for result do rm -rf -- "${result%/*}"; done' sh {} + 2>/dev/null
 
 # review dirs, two shapes: legacy flat <timestamp>/ (still produced by /develop:review) ages by its own mtime;
 # pr-<N>/run-<NNN>/ (oss) ages per run not per PR — active PR's older runs still expire;
 # empty pr-<N> parent swept once its last run ages out
-find .reports/review -mindepth 1 -maxdepth 1 -type d ! -name 'pr-*' -mtime +30 2>/dev/null | xargs rm -rf 2>/dev/null
-find .reports/review -mindepth 2 -maxdepth 2 -type d -name 'run-*' -mtime +30 2>/dev/null | xargs rm -rf 2>/dev/null
+find .reports/review -mindepth 1 -maxdepth 1 -type d ! -name 'pr-*' -mtime +30 -exec rm -rf -- {} + 2>/dev/null
+find .reports/review -mindepth 2 -maxdepth 2 -type d -path '.reports/review/pr-*/run-*' -mtime +30 -exec rm -rf -- {} + 2>/dev/null
 find .reports/review -mindepth 1 -maxdepth 1 -type d -name 'pr-*' -empty -delete 2>/dev/null
 
-find .plans/blueprint .cache .temp -type f -mtime +30 2>/dev/null | xargs rm -f
+find .plans/blueprint .cache .temp -type f -mtime +30 -exec rm -f -- {} + 2>/dev/null
 
 # empty dirs left after file cleanup
 find .temp -mindepth 2 -maxdepth 2 -type d -empty -delete 2>/dev/null

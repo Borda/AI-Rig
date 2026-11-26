@@ -12,6 +12,7 @@ import { isAbsolute, relative, resolve } from "node:path"
 import { normalizeCommand, splitFragments } from "./blueprint.ts"
 import { classifyCommand, programIdentity } from "./guardrails.ts"
 import type { GuardrailMode } from "./options.ts"
+import { effectiveCommand } from "./trust.ts"
 
 export interface InspectionVerdict {
   readonly ok: boolean
@@ -207,8 +208,7 @@ export interface InspectionSequence {
 
 /**
  * Prove a whole shell event: each top-level fragment must be inspection or
- * verification, and a literal `cd <absolute>` moves the effective directory.
- * Every fragment is checked on its own, so a compound cannot hide a program.
+ * verification, all in one positively established directory.
  */
 export function inspectionSequence(
   command: string,
@@ -216,23 +216,14 @@ export function inspectionSequence(
   mode: GuardrailMode = "standard",
   allowedDirectory: (directory: string) => boolean,
 ): InspectionSequence {
-  const normalized = normalizeCommand(command)
-  if (!normalized.safe) return { ok: false, reason: normalized.reason ?? "not a literal command", verifications: [] }
-  const fragments = splitFragments(normalized.text)
-  if (fragments.length === 0) return { ok: false, reason: "empty command", verifications: [] }
-  let directory = projectRoot
+  const effective = effectiveCommand(command, projectRoot)
+  if (!effective) return { ok: false, reason: "unproven shell syntax or directory", verifications: [] }
+  const { directory, prefixed } = effective
+  if (prefixed && !allowedDirectory(directory))
+    return { ok: false, reason: "cd outside the reviewed tree", verifications: [] }
   let kind: "inspection" | "verification" | undefined
   const verifications: string[] = []
-  for (const fragment of fragments) {
-    const change = /^cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|<>]+))$/.exec(fragment)
-    if (change) {
-      const target = change[1] ?? change[2] ?? change[3]!
-      if (!isAbsolute(target)) return { ok: false, reason: "relative cd directory", verifications: [] }
-      const next = resolve(target)
-      if (!allowedDirectory(next)) return { ok: false, reason: "cd outside the reviewed tree", verifications: [] }
-      directory = next
-      continue
-    }
+  for (const fragment of splitFragments(effective.command)) {
     const verdict = inspectionSafe(fragment, mode)
     if (!verdict.ok) return { ok: false, reason: verdict.reason, verifications: [] }
     if (escapesDirectory(fragment, directory))

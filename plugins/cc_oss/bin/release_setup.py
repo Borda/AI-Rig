@@ -5,7 +5,8 @@ Resolves skill directory (installed cache → source tree fallback), repo
 root, portable scratch slug, branch state key, raw branch ref, current UTC date, and branch-aware last-stable-tag
 baseline. Writes each resolved value to its own file under
 ``${TMPDIR:-/tmp}/release-setup-${CSID}/`` for safe cross-block
-consumption. Informational notes go to stderr only.
+consumption. Outputs a ``BASELINE_FILE`` path for this invocation's published commit on stdout. Informational notes
+go to stderr.
 
 Output files (written to ``${TMPDIR:-/tmp}/release-setup-${CSID}/``):
     SKILL_DIR, REPO_ROOT, BRANCH, BRANCH_REF, BRANCH_KEY, DATE, LAST_TAG,
@@ -336,6 +337,16 @@ def _write_setup_outputs(out_dir: Path, values: dict[str, str]) -> None:
         _write_private(out_dir / key, f"{val}\n")
 
 
+def _write_published_baseline(git: str, out_dir: Path, tag: str) -> str:
+    """Pin the published commit in a private, invocation-specific file for later shells."""
+    oid = _git(git, "rev-parse", "--verify", "--quiet", "--end-of-options", f"refs/tags/{tag}^{{commit}}")
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", newline="\n", dir=out_dir, prefix="baseline-", delete=False
+    ) as handle:
+        handle.write(f"{oid}\n")
+    return _shell_path(handle.name)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Resolve release setup values and publish them for later steps.
 
@@ -397,6 +408,8 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.parent.mkdir(parents=True, exist_ok=True)
     try:
         _prepare_out_dir(out_dir)
+        (out_dir / "BASELINE_REF").unlink(missing_ok=True)
+        baseline_file = _write_published_baseline(git, out_dir, shipped_elsewhere[0] if shipped_elsewhere else last_tag)
     except OSError as exc:
         print(f"Error: unsafe release sentinel directory — {exc}", file=sys.stderr)
         return 1
@@ -414,6 +427,7 @@ def main(argv: list[str] | None = None) -> int:
         "SHIPPED_ELSEWHERE_TAGS": " ".join(shipped_elsewhere),
     }
     _write_setup_outputs(out_dir, values)
+    print(f"BASELINE_FILE={baseline_file}")
 
     return 0
 

@@ -104,7 +104,8 @@ Step 8 has no per-pass item cap: every selected item runs in one pass, never a r
 **Straggler gate — before leaving Step 8**: the dispatch files' per-item close-out (REJECT, skipped, cherry-pick landed — including the C1 Codex-direct shortcut, which never enters Phase 1/2/3 at all) should have already terminated every id in `item-tasks.tsv`; this catches whichever one didn't. UNVERIFIED tasks are durable pending obligations with owner/next_check/closure, excluded from implementation recovery and carried into Step 9/final Open Concerns. Never move on to Step 9 over any other open child — that hid the original leak. Fails closed on a lost `IMPL_DIR` sentinel: distinct from "no items were selected," which the file's own absence still reports safely. One Bash call, run once, unedited: the gate loop lists each open id in `straggler-check-ids.txt`, then the confirmation loop checks every listed id in the same run.
 
 ```bash
-# timeout: 8000
+# timeout: 30000
+PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_plugin_root.py" --plugin-name oss) || exit $?; export PLUGIN_ROOT
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; cannot verify child tasks before leaving Step 8"; exit 1; }
@@ -136,6 +137,10 @@ IFS= read -r _BASE_SHA < "${TMPDIR:-/tmp}/resolve-base-sha-${CSID}" 2>/dev/null 
 [ -n "$_BASE_SHA" ] || echo "⚠ resolve-base-sha sentinel missing — confirmation below is unscoped, verify the matched commit's date/author before trusting it"
 # every check: id from the gate loop's file, never an item_id placeholder: one invariant run confirms them all
 case "$COMMIT_MODE" in each|grouped|all|stage) ;; *) echo "! BLOCKED — COMMIT_MODE is '$COMMIT_MODE', not each/grouped/all/stage"; exit 1 ;; esac
+if [ "$COMMIT_MODE" = grouped ]; then
+    _GROUPED_IDS=$(python "$PLUGIN_ROOT/bin/append_resolution.py" --impl-dir "$IMPL_DIR" --grouped-ids) \
+        || { echo "! BLOCKED — could not verify grouped commit receipts"; exit 1; }
+fi
 while IFS= read -r _ITEM_ID || [ -n "$_ITEM_ID" ]; do
     case "$_ITEM_ID" in ''|*[!0-9]*) continue ;; esac
     case "$COMMIT_MODE" in
@@ -147,14 +152,9 @@ while IFS= read -r _ITEM_ID || [ -n "$_ITEM_ID" ]; do
             [ -n "$_HITS" ] && printf 'MATCH — item %s: %s\n' "$_ITEM_ID" "$_HITS" || echo "NO MATCH — item ${_ITEM_ID} has no [resolve No.${_ITEM_ID}] commit"
             ;;
         grouped)
-            # tokenize + exact-match, no boundary regex: `\b` is GNU-only (never compiles under `git log -E` POSIX ERE);
-            # --oneline is fail-open (subject only, never the body holding the item list → stray sha/subject digits false-confirm).
-            # --format=%B reads the body's "[resolve group] … items <ids>" line; grep -qx exact token: "PR #1" never matches 1, "30" never 3
-            # (verified on a live repo: group commits "30 4" and "7 8" — every real id matched, "1" did not)
-            git log --format=%B --grep="items" ${_BASE_SHA:+"$_BASE_SHA..HEAD"} \
-                | grep -E '^\[resolve group\]' | tr ' ' '\n' | grep -qx "${_ITEM_ID}" \
-                && echo "MATCH — item ${_ITEM_ID} found in a group commit" \
-                || echo "NO MATCH — item ${_ITEM_ID} not found in any group commit"  # timeout: 5000
+            printf '%s\n' "$_GROUPED_IDS" | grep -qx "$_ITEM_ID" \
+                && echo "MATCH — item ${_ITEM_ID} confirmed by group replay" \
+                || echo "NO MATCH — item ${_ITEM_ID} has no landed group receipt"
             ;;
         all|stage)
             echo "item ${_ITEM_ID}: no per-item token exists in the commit message for COMMIT_MODE=$COMMIT_MODE — grep cannot confirm this item; use this turn's own memory of Phase 3's PLAN_FILE/cherry-pick output, or: git diff --cached --stat / git show --stat against the item's .file"
@@ -167,7 +167,7 @@ done < "$IMPL_DIR/straggler-check-ids.txt"
 - `closed:` lines need nothing further; ALREADY_FIXED already completed its task from validated historical evidence.
 - `pending:` lines remain pending and visible in resolution.jsonl/final Open Concerns; never require an implementation commit, delete the task, or enter straggler implementation recovery for these UNVERIFIED obligations.
 - A `! skipping` line names a malformed row (empty task id) — investigate `item-tasks.tsv` directly via `TaskList`/`grep` for that item id before proceeding; never guess its status.
-- For every `check:` line: call `TaskList`; if that task is already `completed`/`deleted`, done. If it's still open, do NOT default it to `completed` — confirm independently that item's commit is actually on the branch before calling `TaskUpdate(status="completed")`. The block's confirmation half already printed one `MATCH`/`NO MATCH` line per `check:` id, read from `straggler-check-ids.txt` — use the lines for ids whose task is still open. The confirmation command depends on `COMMIT_MODE` — only `each` carries a per-item attribution token; `grouped` folds several ids into one message; `all`/`stage` carry none at all (`stage` never commits — the diff stays staged, per its own contract). A lost `resolve-base-sha` sentinel degrades the confirmation to an unscoped search across the whole branch, which can false-confirm a never-implemented item against a prior run's commit on the same branch — the block warns and treats any match with extra suspicion in that case; both reads and the mode dispatch happen inside it, not by hand.
+- For every `check:` line, call `TaskList`. If the task is still open, use the printed confirmation before calling `TaskUpdate(status="completed")`. Grouped mode requires replay evidence on the current branch. Each mode looks for its per-item commit marker and warns if the run's base SHA is missing. All and stage modes need manual confirmation from landed commits or staged changes, respectively.
 
 No confirming commit found → this item was never closed by any exit path; that's the exact defect this gate exists to catch — surface it via `AskUserQuestion` (dispose as `deleted` with a stated reason, or leave open and investigate) rather than guessing either status. Only once every printed id is accounted for, continue to Step 9. Batch every `TaskList`/`TaskUpdate` this gate needs into one response.
 

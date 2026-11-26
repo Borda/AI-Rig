@@ -43,7 +43,9 @@ underclassification, incomplete signals, or inconsistent specialist routing.
 from __future__ import annotations
 
 import argparse
+import codecs
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -78,6 +80,13 @@ ROUTING_SIGNALS = {
     "axis_scientist",
     "axis_web_explorer",
 }
+
+# Git emits decimal counters and either a plain path or a C-quoted byte string. Twenty decimal digits cover 64-bit
+# counters and bound integer conversion when a collected artifact is damaged.
+_NUMSTAT_ROW = re.compile(
+    rb"([0-9]{1,20})\t([0-9]{1,20})\t"
+    rb'([^\x00-\x1f\x7f"\\]+|"(?:[^\x00-\x1f\x7f"\\]|\\(?:[abfnrtv"\\]|[0-3][0-7]{2}))+")'
+)
 
 
 def _path_tokens(path: str) -> set[str]:
@@ -117,22 +126,42 @@ def read_review_paths(out_dir: Path, filename: str) -> set[str]:
     return read_git_path_lines(out_dir / filename)
 
 
-def derive_mechanical_risk(out_dir: Path) -> tuple[str, list[str], set[str]]:
-    """Derive the minimum tier, canonical evidence, and mandatory signals from collected diff facts."""
-    paths: set[str] = set()
-    for filename in ("files.txt", "untracked.txt"):
-        paths.update(read_review_paths(out_dir, filename))
-
+def _numstat_size(numstat: Path, tracked_paths: set[str]) -> tuple[int, int]:
+    """Count numeric Git numstat rows and identify tracked paths without numeric size evidence."""
+    rows = numstat.read_bytes().splitlines() if numstat.exists() else []
     changed_lines = 0
     unknown_size_rows = 0
-    numstat = out_dir / "numstat.txt"
-    if numstat.exists():
-        for line in numstat.read_text(encoding="utf-8").splitlines():
-            parts = line.split("\t", 2)
-            if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
-                changed_lines += int(parts[0]) + int(parts[1])
-            elif len(parts) >= 2:
-                unknown_size_rows += 1
+    sized_paths: set[str] = set()
+    for row in rows:
+        if row.count(b"\t") < 2:
+            continue  # not a numstat row: a blank or diagnostic line; a path it would have sized is still counted below
+        match = _NUMSTAT_ROW.fullmatch(row)
+        if match is None:
+            unknown_size_rows += 1
+            continue
+        added, deleted, raw_path = match.groups()
+        if raw_path.startswith(b'"'):
+            raw_path = codecs.escape_decode(raw_path[1:-1])[0]
+        try:
+            path = os.fsdecode(raw_path)
+        except UnicodeDecodeError:
+            unknown_size_rows += 1
+            continue
+        if path not in tracked_paths or path in sized_paths:
+            unknown_size_rows += 1
+            continue
+        sized_paths.add(path)
+        changed_lines += int(added) + int(deleted)
+
+    # An invalid row can also account for a missing path, such as a binary row or a collection diagnostic.
+    return changed_lines, max(unknown_size_rows, len(tracked_paths - sized_paths))
+
+
+def derive_mechanical_risk(out_dir: Path) -> tuple[str, list[str], set[str]]:
+    """Derive the minimum tier, canonical evidence, and mandatory signals from collected diff facts."""
+    tracked_paths = read_review_paths(out_dir, "files.txt")
+    paths = tracked_paths | read_review_paths(out_dir, "untracked.txt")
+    changed_lines, unknown_size_rows = _numstat_size(out_dir / "numstat.txt", tracked_paths)
 
     lower_paths = {path.lower() for path in paths}
     evidence = [f"files={len(paths)}", f"changed_lines={changed_lines}", f"unknown_size_rows={unknown_size_rows}"]
@@ -221,8 +250,17 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
-    """Synchronize one review-routing artifact and print its path."""
-    routing_path = synchronize_routing(parse_args().out)
+    """Synchronize one review-routing artifact, record the routed checkpoint and print the artifact path."""
+    out_dir = parse_args().out
+    routing_path = synchronize_routing(out_dir)
+    # Imported here: the validator imports this module for derivation and needs no run-state writer.
+    from review_run_state import mark
+
+    try:
+        mark(out_dir, "routed")
+    except (OSError, ValueError) as error:
+        # The stub is a diagnostic, not routing evidence; a write error or refused stub must not fail routing.
+        print(f"run-state-unrecorded:routed:{error}", file=sys.stderr)
     print(routing_path)
     return 0
 

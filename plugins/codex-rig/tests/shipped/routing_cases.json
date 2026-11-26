@@ -1,0 +1,483 @@
+{
+  "cases": [
+    {
+      "expect": "ordinary",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.coverage.run]\nsource = [\"demo\"]\n[tool.coverage.paths]\nsource = [\"src\", \"*/site-packages\"]\n"
+      },
+      "name": "coverage-source",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "ordinary",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.hatch.version]\nsource = \"vcs\"\n[tool.hatch.build.hooks.vcs]\nversion-file = \"demo/_v.py\"\n"
+      },
+      "name": "hatch-vcs-version-source",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "ordinary",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n[tool.ruff]\nsrc = [\"src\"]\n"
+      },
+      "name": "pytest-and-ruff-config",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "ordinary",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.pdm.version]\nsource = \"scm\"\n"
+      },
+      "name": "pdm-scm-version",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "ordinary",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.hatch.publish.index]\ndisable = true\n"
+      },
+      "name": "hatch-publish-index",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "ordinary",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.sphinx-pyproject.source]\nsuffix = \".rst\"\n"
+      },
+      "name": "sphinx-source-table",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "ordinary",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.uv.sources]\ntorch = { index = \"pytorch\" }\n[[tool.uv.index]]\nname = \"pytorch\"\nurl = \"https://download.pytorch.org/whl/cpu\"\nexplicit = true\n"
+      },
+      "name": "uv-explicit-index-for-other-name",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "name-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.uv.sources]\ninternal-pkg = { index = \"private\" }\n[[tool.uv.index]]\nname = \"private\"\nurl = \"https://private.invalid/simple\"\nexplicit = true\n"
+      },
+      "name": "uv-sources-explicit-index",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n",
+        "uv.toml": "[[index]]\nurl = \"https://private.invalid/simple\"\ndefault = true\n"
+      },
+      "name": "uv-toml-default-index",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n",
+        "uv.toml": "index-url = \"https://private.invalid/simple\"\n"
+      },
+      "name": "uv-toml-index-url",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n",
+        "uv.toml": "index = [{ name = \"private\", url = \"https://private.invalid/simple\", default = true }]\n"
+      },
+      "name": "uv-toml-inline-index-array",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pip.conf": "[global]\nindex-url = https://private.invalid/simple\n",
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n"
+      },
+      "name": "pip-conf-index-url",
+      "readers": [
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pip.conf": "[install]\nindex_url = https://private.invalid/simple\n",
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n"
+      },
+      "name": "pip-conf-underscore-index-url",
+      "readers": [
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.uv]\noverride-dependencies = [\"internal-pkg @ https://private.invalid/internal_pkg-1.0-py3-none-any.whl\"]\n"
+      },
+      "name": "uv-override-dependencies-url",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[[tool.uv.index]]\nurl = \"https://private.invalid/simple\"\ndefault = true\n"
+      },
+      "name": "uv-pyproject-default-index",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.pixi.workspace]\nchannels = [\"conda-forge\"]\nplatforms = [\"osx-arm64\"]\n[tool.pixi.pypi-options]\nindex-url = \"https://private.invalid/simple\"\n"
+      },
+      "name": "pixi-pypi-options-index",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[[tool.rye.sources]]\nname = \"default\"\nurl = \"https://private.invalid/simple\"\n"
+      },
+      "name": "rye-sources",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[[tool.poetry.source]]\nname = \"p\"\nurl = \"https://private.invalid/simple\"\npriority = \"primary\"\n"
+      },
+      "name": "poetry-source",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.pdm.resolution.overrides]\ninternal-pkg = \"https://private.invalid/internal_pkg-1.0-py3-none-any.whl\"\n"
+      },
+      "name": "pdm-resolution-overrides-url",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "Pipfile": "[[source]]\nname = \"private\"\nurl = \"https://private.invalid/simple\"\nverify_ssl = true\n\n[packages]\ninternal-pkg = {version = \"==1.0\", index = \"private\"}\n",
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n"
+      },
+      "name": "pipfile-source-with-index",
+      "readers": [
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "Pipfile": "[[ source ]]\nname = \"private\"\nurl = \"https://private.invalid/simple\"\nverify_ssl = true\n",
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n"
+      },
+      "name": "pipfile-spaced-source-header",
+      "readers": [
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.poetry.dependencies]\ninternal-pkg = { git = \"https://private.invalid/internal-pkg.git\" }\n"
+      },
+      "name": "poetry-dependency-git",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.poetry.dependencies]\ninternal-pkg = { path = \"../internal-pkg\", develop = true }\n"
+      },
+      "name": "poetry-dependency-path",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.pixi.pypi-dependencies]\ninternal-pkg = { git = \"https://private.invalid/internal-pkg.git\" }\n"
+      },
+      "name": "pixi-pypi-dependency-git",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.hatch.envs.default.env-vars]\nPIP_INDEX_URL = \"https://private.invalid/simple\"\n"
+      },
+      "name": "hatch-env-vars-index",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pdm.toml": "[pypi]\nurl = \"https://private.invalid/simple\"\n",
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n"
+      },
+      "name": "pdm-toml-pypi-url",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "Pipfile": "[packages]\ninternal-pkg = {file = \"https://private.invalid/internal_pkg-1.0-py3-none-any.whl\"}\n",
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n"
+      },
+      "name": "pipfile-package-file",
+      "readers": [
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "Pipfile": "[packages]\ninternal-pkg = {git = \"https://private.invalid/internal-pkg.git\"}\n",
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n"
+      },
+      "name": "pipfile-package-git",
+      "readers": [
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.mystery-installer.settings]\nmode = \"fast\"\n"
+      },
+      "name": "unknown-tool-table",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "expect": "ordinary",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n[tool.black]\nline-length = 100\n[tool.mypy]\nstrict = true\n[tool.isort]\nprofile = \"black\"\n[tool.codespell]\nskip = \"*.lock\"\n[tool.setuptools_scm]\nlocal_scheme = \"no-local-version\"\n[tool.towncrier]\ndirectory = \"news\"\n"
+      },
+      "name": "known-non-installer-tools",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    }
+  ],
+  "host_cases": [
+    {
+      "env": {},
+      "expect": "ordinary",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n"
+      },
+      "home_files": {},
+      "name": "host-ordinary",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "env": {
+        "UV_INDEX_URL": "https://private.invalid/simple"
+      },
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n"
+      },
+      "home_files": {},
+      "name": "host-uv-index-url-env",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "env": {
+        "UV_DEFAULT_INDEX": "https://private.invalid/simple"
+      },
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n"
+      },
+      "home_files": {},
+      "name": "host-uv-default-index-env",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "env": {
+        "PIP_INDEX_URL": "https://private.invalid/simple"
+      },
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n"
+      },
+      "home_files": {},
+      "name": "host-pip-index-url-env",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "env": {
+        "PIP_EXTRA_INDEX_URL": "https://private.invalid/simple"
+      },
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n"
+      },
+      "home_files": {},
+      "name": "host-pip-extra-index-env",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "env": {},
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n"
+      },
+      "home_files": {
+        ".config/uv/uv.toml": "index-url = \"https://private.invalid/simple\"\n"
+      },
+      "name": "host-user-uv-toml",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    },
+    {
+      "env": {},
+      "expect": "all-routed",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"internal-pkg==1.0\", \"requests==2.32.3\"]\n"
+      },
+      "home_files": {
+        ".config/pip/pip.conf": "[global]\nindex-url = https://private.invalid/simple\n"
+      },
+      "name": "host-user-pip-conf",
+      "readers": [
+        "develop",
+        "oss",
+        "codex"
+      ]
+    }
+  ],
+  "private_name": "internal-pkg",
+  "public_name": "requests",
+  "schema": 1
+}

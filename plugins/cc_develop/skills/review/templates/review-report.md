@@ -22,6 +22,8 @@ Path:         → .reports/develop-review/[YYYY-MM-DDTHH-MM-SSZ]/review-report.m
 
 Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block.
 
+Axes: Gate = CI merge gate at the reviewed source, or a premise rejection · Outcome = source judgment · Readiness = verification state; each axis is read on its own.
+
 ## Code Review: [review target]
 
 [Preserve the aggregate review summary here as prose, including overall verdict and material limits.]
@@ -96,8 +98,15 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficie
 
 | Agent | Score | Label | Gaps |
 | -- | -- | -- | -- |
+| Codex co-reviewer | — | \[confidence label or observed cause under the [Codex lane scoring](consolidator-prompt.md#review-confidence) rule\] | [gap lines or observed reason the lane is unscored] |
 
-**Aggregate**: min 0.N / median 0.N
+- Unreviewed dimension: [unit] — [promotion trigger, or the cap reason for a dropped unit]
+
+> One `Unreviewed dimension:` line per unit the cap dropped or left unslotted after promotion, starting with that exact unit name; omit when every preselected unit ran.
+
+**Aggregate**: min 0.N / median 0.N / ceiling 0.N (<binding coverage gap>) → 0.N
+
+> Numeric scores only. Apply [Codex lane scoring](consolidator-prompt.md#review-confidence) to decide whether an eligible envelope score or a verified derived multi-wave score enters min and median. The final value is the median capped by the lowest applicable ceiling in the Confidence ceilings table of `consolidator-prompt.md` and equals the header `Confidence:` score. With no numeric reviewer confidence both read `unavailable`.
 
 > Template notes, not part of the report:
 >
