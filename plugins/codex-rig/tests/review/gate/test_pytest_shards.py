@@ -10,6 +10,8 @@ from _modules import load_module_scoped
 from _platform import FILE_SYMLINKS_AVAILABLE
 
 HEAD = "a" * 40
+# Deadline wide enough for the collection probe to start on a loaded Windows runner, far below the slow test.
+SHARD_TIMEOUT = 6
 SELECTION = ["-q", "-msmoke", "--ignore=second/test_ignored.py", "--", "first", "second", "third"]
 
 
@@ -22,7 +24,7 @@ def project(tmp_path, monkeypatch):
         "example.py": "value = 1\n",
         "first/test_slow.py": (
             "import time\nimport pytest\nimport example\n"
-            "@pytest.mark.smoke\ndef test_selectable_slow():\n    time.sleep(20)\n"
+            "@pytest.mark.smoke\ndef test_selectable_slow():\n    time.sleep(60)\n"
         ),
         "second/test_bad.py": (
             "import pytest\nimport example\n"
@@ -87,7 +89,7 @@ def _run(project, monkeypatch, arguments: list[str], *extra: str) -> int:
 def test_timeout_does_not_hide_code_failure_in_canonical_logs(project, monkeypatch, gap_records):
     """A timeout retains its own diagnosis while the canonical logs expose the code failure."""
     _, checkout, output = project
-    assert _run(project, monkeypatch, SELECTION, "--shards", "3", "--timeout-seconds", "2") == 124
+    assert _run(project, monkeypatch, SELECTION, "--shards", "3", "--timeout-seconds", str(SHARD_TIMEOUT)) == 124
 
     payload = _load_validator()._validate_gates(output)
     check = _gate_check(output, "tests")
@@ -105,7 +107,7 @@ def test_timeout_does_not_hide_code_failure_in_canonical_logs(project, monkeypat
         ("tests-shard-002", ["second"], "fail", 1, "command-failed"),
         ("tests-shard-003", ["third"], "pass", 0, None),
     ]
-    assert first["duration_seconds"] >= 2
+    assert first["duration_seconds"] >= SHARD_TIMEOUT
     failure_output = _receipt_text(output, second, "stdout")
     assert check["cause"] == "timeout"
     canonical_output = _receipt_text(output, check, "stdout")
@@ -116,7 +118,7 @@ def test_timeout_does_not_hide_code_failure_in_canonical_logs(project, monkeypat
     assert "1 passed, 1 deselected" in _receipt_text(output, third, "stdout")
     assert third["python_imports"]["invoked_interpreter"] == Path(sys.executable).as_posix()
     assert set(third["python_imports"]["tests"]) == {(checkout / "third/test_good.py").as_posix()}
-    assert [row["timeout_seconds"] for row in check["shards"]] == [2, 2, 2]
+    assert [row["timeout_seconds"] for row in check["shards"]] == [SHARD_TIMEOUT] * 3
     drafts, omitted = gap_records.gate_drafts(payload)
     assert [draft.id for draft in drafts] == ["gate-tests-timeout"]
     assert omitted == []

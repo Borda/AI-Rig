@@ -429,7 +429,7 @@ function requiredOptionMissing(key, own) {
 // code-running option stay out: rsync (`-e` remote shell), make (`-E` eval), psql (`-c` runs SQL with `\!`), tar
 // (`--to-command`, `-I`). A `PATH` or `hash` rebinding of a listed name is a pre-existing-script residual, see LIMITS.
 const LETTER_OPTION_DATA_PROGRAMS = new Set(
-  "ls cp mv rm ln touch mkdir stat date cat head tail wc uniq cut du diff cmp test [ [[ jq column od xxd file readlink realpath basename dirname tr tac rev sha256sum shasum md5sum find".split(
+  "ls cp mv rm ln touch mkdir chmod chown chgrp stat date cat head tail wc uniq cut du diff cmp test [ [[ jq column od xxd file readlink realpath basename dirname tr tac rev sha256sum shasum md5sum find".split(
     " ",
   ),
 );

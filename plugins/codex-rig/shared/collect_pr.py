@@ -417,37 +417,71 @@ def _parse_pr_target(value: str) -> PRTarget | None:
     return PRTarget(parts[1], parts[2], int(parts[4]))
 
 
-def _github_remote_identity(url: str) -> tuple[str, str] | None:
-    """Return one configured GitHub remote's normalized owner and repository."""
-    value = url.strip()
-    scp_match = re.fullmatch(r"(?:[^@/\s]+@)?github\.com:([^/\s:]+)/([^/\s]+)", value, flags=re.IGNORECASE)
-    if scp_match:
-        owner, repository = scp_match.groups()
-    else:
-        try:
-            parsed = urlparse(value)
-            port = parsed.port
-        except ValueError:
-            return None
-        if (
-            parsed.scheme not in {"git", "https", "ssh"}
-            or parsed.hostname != GITHUB_HOST
-            or port is not None
-            or parsed.query
-            or parsed.fragment
-            or parsed.password
-            or (parsed.username and parsed.scheme != "ssh")
-        ):
-            return None
-        parts = parsed.path.split("/")
-        if len(parts) != 3 or parts[0]:
-            return None
-        owner, repository = parts[1:]
-    if repository.endswith(".git"):
-        repository = repository[:-4]
-    if not GITHUB_PATH_COMPONENT_PATTERN.fullmatch(owner) or not GITHUB_PATH_COMPONENT_PATTERN.fullmatch(repository):
+def _github_remote_identity(
+    url: str, *, component_pattern: re.Pattern[str] = GITHUB_PATH_COMPONENT_PATTERN
+) -> tuple[str, str] | None:
+    """Return GitHub fetch URL components that match the caller's repository-name grammar."""
+    if not url.isprintable():
+        return None
+    # Match Git's supported spellings before extracting identity. URL parsing alone can discard controls,
+    # empty authority fields or path parameters that are part of the actual transport.
+    ssh_user = r"(?:[^@/:?#\s]+@)?"
+    match = re.fullmatch(
+        rf"(?:(?:https|git)://github\.com/|ssh://{ssh_user}github\.com/|{ssh_user}github\.com:)([^/]+)/([^/]+)/?",
+        url,
+        flags=re.IGNORECASE | re.ASCII,
+    )
+    if match is None:
+        return None
+    owner, repository = match.groups()
+    repository = repository.removesuffix(".git")
+    if any(part in {".", ".."} or not component_pattern.fullmatch(part) for part in (owner, repository)):
         return None
     return owner, repository
+
+
+def _tracking_git_output(arguments: tuple[str, ...], output: bytes) -> str:
+    """Decode Git output without stripping data from NUL-delimited settings or newline-delimited fetch URLs."""
+    text = output.decode("utf-8")
+    if "--null" in arguments[:3] or arguments[:2] in {("remote", "get-url"), ("ls-remote", "--get-url")}:
+        return text
+    return text.strip()
+
+
+def _read_tracking_git(run: RunCommand, timeout: int, label: str, *arguments: str, optional: bool = False) -> str:
+    """Read local Git source evidence, preserving a missing optional key and exact URL or config records."""
+    try:
+        output = _run(run, ["git", *arguments], timeout, label)
+    except CollectionError as error:
+        if optional and (error.diagnostics or {}).get("exit_code") == 1:
+            return ""
+        raise
+    return _tracking_git_output(arguments, output)
+
+
+def _tracking_remote_urls(git: Callable[..., str], remote: str) -> list[str]:
+    """Read effective fetch URLs and verify their boundaries when Git reports multiple lines."""
+    urls = git("remote", "get-url", "--all", "--", remote).removesuffix("\n").split("\n")
+    if len(urls) > 1:
+        # get-url applies insteadOf but cannot NUL-terminate. Cross-check counts to catch a newline inside one URL.
+        configured = git("config", "--get-all", "--null", f"remote.{remote}.url", optional=True)
+        if configured.count("\0") != len(urls):
+            return []
+    return urls
+
+
+def _branch_tracking_value(git: Callable[..., str], branch: str, setting: str) -> str | None:
+    """Read an exact tracking value and distinguish an absent key from empty or multiple records."""
+    # Git treats remote as a scalar and merge as a list. NUL framing preserves empty entries and embedded newlines.
+    action = "--get-all" if setting == "merge" else "--get"
+    output = git("config", action, "--null", f"branch.{branch}.{setting}", optional=True)
+    if not output:
+        return None
+    value, terminator, remainder = output.partition("\0")
+    if not value or not terminator or remainder:
+        field = "upstream" if setting == "merge" else "remote"
+        raise ValueError(f"pr-{field}-mismatch:stop-without-changing-tracking")
+    return value
 
 
 def verify_pr_tracking(
@@ -474,8 +508,8 @@ def verify_pr_tracking(
     # gh may prefix a fork's local branch to avoid collisions. Tracking identifies
     # the remote ref; the collector receipt separately binds the actual local name.
     git("check-ref-format", f"refs/heads/{head_ref}")
-    merge = git("config", "--get", f"branch.{branch}.merge", optional=True)
-    remote = git("config", "--get", f"branch.{branch}.remote", optional=True)
+    merge = _branch_tracking_value(git, branch, "merge")
+    remote = _branch_tracking_value(git, branch, "remote")
     base = _github_remote_identity(pr_url.rsplit("/pull/", 1)[0])
     # Native gh may track the base repository's pull ref when no contributor
     # remote is configured. Bind that ref to this fork PR, never to a push target.
@@ -492,7 +526,12 @@ def verify_pr_tracking(
         raise ValueError("pr-upstream-mismatch:stop-without-changing-tracking")
     remotes = git("remote").splitlines()
     # gh can configure a fork URL directly instead of adding a named local remote.
-    urls = git("remote", "get-url", "--all", "--", remote).splitlines() if remote in remotes else [remote]
+    if remote in remotes:
+        urls = _tracking_remote_urls(git, remote)
+    else:
+        # --get-url is local and expands insteadOf without contacting a server.
+        effective = git("ls-remote", "--get-url", "--", remote).removesuffix("\n")
+        urls = [remote, effective]
     if not urls or any(
         tuple(part.casefold() for part in (_github_remote_identity(url) or ()))
         != tuple(part.casefold() for part in expected)
@@ -504,23 +543,14 @@ def verify_pr_tracking(
 def _configured_github_repositories(run: RunCommand, timeout: int) -> dict[str, tuple[str, str]]:
     """Return distinct GitHub repository identities configured as local remotes."""
     repositories: dict[str, tuple[str, str]] = {}
+    git = partial(_read_tracking_git, run, timeout, "github-remote-url")
     remote_names = (
         _run(run, ["git", "remote"], timeout, "github-remote-list").decode("utf-8", errors="strict").splitlines()
     )
     for remote_name in remote_names:
         if not remote_name:
             continue
-        urls = (
-            _run(
-                run,
-                ["git", "remote", "get-url", "--all", "--", remote_name],
-                timeout,
-                "github-remote-url",
-            )
-            .decode("utf-8", errors="strict")
-            .splitlines()
-        )
-        for url in urls:
+        for url in _tracking_remote_urls(git, remote_name):
             identity = _github_remote_identity(url)
             if identity is not None:
                 repositories.setdefault("/".join(part.casefold() for part in identity), identity)
@@ -1579,8 +1609,8 @@ def _verified_base_transport(run: RunCommand, timeout: int, remote_url: str, pr_
     # Address the base repository itself, even when the PR branch tracks a fork or a remote name was repointed.
     try:
         transport = _fetch_transport(remote_url, pr_url)
-        actual = _run(run, ["git", "ls-remote", "--get-url", transport], timeout, "target-branch-route").decode()
-        _fetch_transport(actual.strip(), pr_url)
+        actual = _read_tracking_git(run, timeout, "target-branch-route", "ls-remote", "--get-url", transport)
+        _fetch_transport(actual.removesuffix("\n"), pr_url)
     except (ValueError, TypeError) as error:
         raise CollectionError("target-branch-transport-invalid") from error
     return transport
@@ -1800,14 +1830,7 @@ def _fork_branch_comparison(
     verified = []
     observed = 0
 
-    def read_git(*arguments: str, optional: bool = False) -> str:
-        try:
-            return _run(run, ["git", *arguments], timeout, "fork-branch-tracking").decode().strip()
-        except CollectionError as error:
-            if optional and (error.diagnostics or {}).get("exit_code") == 1:
-                return ""
-            raise
-
+    read_git = partial(_read_tracking_git, run, timeout, "fork-branch-tracking")
     for name in names:
         if target is not None and name != target:
             continue

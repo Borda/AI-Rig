@@ -14,8 +14,8 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 ## Usage
 
 Conclusive PR reviews use presentation 17 to show Reject with the close reason and reviewed commit; a duplicate adds
-the maintainer's linked action. Assessed PR reviews use presentation 16 to open with the source-bound PR subject.
-Other new handoffs use presentation 15.
+the maintainer's linked action. Assessed reviews use presentation 18 for workflow action bullets; PR reviews open
+with the source-bound PR subject. Other new handoffs use presentation 15.
 These layouts include substantive outcome judgments, closing recommendations, readable prose, confidence
 tables, linked artifacts, and verification evidence in rows with other paths outside tables.
 New writers set ``action_policy=owned`` for concrete follow-ups or ``best-way-forward`` for one unblocking option.
@@ -75,8 +75,10 @@ CLOSE_CODES = frozenset(
         "ARCHITECTURE_VIOLATION",
     }
 )
-#: Presentation of every new terminal PR close handoff, one step after the assessed PR review presentation (16).
+#: Presentation of every new terminal PR close handoff.
 CLOSED_REVIEW_PRESENTATION = 17
+#: Presentation of assessed reviews with a distinct list of workflow actions.
+ASSESSED_REVIEW_PRESENTATION = 18
 #: Line openings that start a Markdown block instead of continuing a paragraph. Characters with no inline meaning are
 #: matched outright: an ATX heading, quote, plus or dash bullet, dash thematic break or setext underline, table row and
 #: ordered item delimiter. Characters that also open inline markup match only in their block form: a star bullet (a
@@ -1131,6 +1133,19 @@ def _review_pr_subject(handoff: dict[str, Any]) -> tuple[str, str]:
     return f"Review PR {label['repo']}#{label['number']} — {title}", label["url"]
 
 
+def _validate_review_next_steps(handoff: dict[str, Any]) -> None:
+    """Keep a finding's resolution in its table and preserve distinct workflow actions."""
+    resolutions = {
+        row["cells"][1].strip()
+        for table in handoff["tables"]
+        if table["heading"] == "Review Findings and Merge Blocks"
+        for row in table["rows"]
+    }
+    for item in handoff["remaining"]:
+        if item["next_action"].strip() in resolutions:
+            raise HandoffError(f"review-next-step-repeats-resolution:{item['row_id']}")
+
+
 def _validate_handoff(
     payload: object,
     *,
@@ -1141,14 +1156,20 @@ def _validate_handoff(
     """Validate a handoff while preserving the original presentation's empty-result rule."""
     handoff = _require_object(payload, "handoff")
     presentation_version = handoff.get("presentation_version")
-    if type(presentation_version) is int and presentation_version in {8, 9, 10, 11, 12, 13, 14, 15, 16}:
+    if type(presentation_version) is int and presentation_version in {
+        *range(8, 17),
+        ASSESSED_REVIEW_PRESENTATION,
+    }:
         # Only terminal layout changes; use the existing branch's complete factual contract.
         previous = 7 if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed" else 3
         if handoff.get("skill") == "code-remediate":
             previous = 6
         base = {**handoff, "presentation_version": previous}
         if "action_policy" in base:
-            if presentation_version not in {15, 16} or base.pop("action_policy") not in ("owned", "best-way-forward"):
+            if presentation_version not in {15, 16, ASSESSED_REVIEW_PRESENTATION} or base.pop("action_policy") not in (
+                "owned",
+                "best-way-forward",
+            ):
                 raise HandoffError("handoff-action-policy-invalid")
             owned_actions = True
         _validate_handoff(
@@ -1158,10 +1179,13 @@ def _validate_handoff(
             allow_empty_remediation=handoff.get("skill") == "code-remediate"
             and presentation_version in {11, 12, 13, 14, 15},
         )
-        if presentation_version == 16:
+        if presentation_version in {16, ASSESSED_REVIEW_PRESENTATION}:
             if handoff["skill"] != "code-review" or handoff["branch"] != "assessed":
                 raise HandoffError("handoff-presentation-version-invalid")
-            _review_pr_subject(handoff)
+            if presentation_version == 16 or any(table["heading"] == "PR Snapshot" for table in handoff["tables"]):
+                _review_pr_subject(handoff)
+        if presentation_version == ASSESSED_REVIEW_PRESENTATION:
+            _validate_review_next_steps(handoff)
         if handoff.get("action_policy") == "best-way-forward" and (
             handoff["branch"] in {"closed", "caller-contract"} or len(handoff["next_steps"]) != 1
         ):
@@ -1631,12 +1655,12 @@ def _selection_pr_subject(run: Path) -> str | None:
     from create_run import PR_URL_PATTERN, same_pr_url
 
     try:
-        pr = _load_json(path)
+        pr, _ = _load_json(path)
         routing = path.with_name("pr-routing.json")
-        if (routing.exists() or routing.is_symlink()) and not same_pr_url(
-            _load_json(routing).get("pr_url"), pr.get("url")
-        ):
-            return None
+        if routing.exists() or routing.is_symlink():
+            route, _ = _load_json(routing)
+            if not same_pr_url(route.get("pr_url"), pr.get("url")):
+                return None
     except HandoffError:
         return None
     url = pr.get("url")
@@ -1949,13 +1973,16 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
         return handoff["caller_contract"]["output"]
 
     review_subject = None
-    closed_review = handoff.get("presentation_version") == CLOSED_REVIEW_PRESENTATION
-    if handoff.get("presentation_version") in {16, CLOSED_REVIEW_PRESENTATION}:
-        if not closed_review:
+    presentation_version = handoff.get("presentation_version")
+    closed_review = presentation_version == CLOSED_REVIEW_PRESENTATION
+    workflow_actions = presentation_version == ASSESSED_REVIEW_PRESENTATION
+    if presentation_version in {16, CLOSED_REVIEW_PRESENTATION, ASSESSED_REVIEW_PRESENTATION}:
+        if presentation_version == 16 or (
+            workflow_actions and any(table["heading"] == "PR Snapshot" for table in handoff["tables"])
+        ):
             review_subject = _review_pr_subject(handoff)
-        layout_version = (
-            15  # versions 16 and 17 render through the version 15 layout, adding a PR subject or close reason
-        )
+        # The assessed and closed review variants share the version 15 layout.
+        layout_version = 15
         handoff = {**handoff, "presentation_version": layout_version}
     if handoff.get("presentation_version") in {8, 9, 10, 11, 12, 13, 14, 15}:
         previous = 7 if handoff["skill"] == "code-review" and handoff["branch"] == "assessed" else 3
@@ -1976,6 +2003,7 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
                 actionable_summary=handoff["presentation_version"] == 15,
                 owned_actions="action_policy" in handoff,
                 review_subject=review_subject,
+                workflow_actions=workflow_actions,
             ),
             readable_breaks=handoff["presentation_version"] in {13, 14, 15},
             keep_verification_table=handoff["presentation_version"] in {13, 14, 15},
@@ -2076,6 +2104,7 @@ def _render_v2_handoff(
     actionable_summary: bool = False,
     owned_actions: bool = False,
     review_subject: tuple[str, str] | None = None,
+    workflow_actions: bool = False,
 ) -> str:
     """Render a plain-English-first report while retaining the validated machine fields."""
     outcome = handoff["outcome"]
@@ -2239,7 +2268,12 @@ def _render_v2_handoff(
     action_lines = [] if actions_last else lines
     if remaining_by_id and (not actions_last or handoff["branch"] != "closed"):
         action_lines.extend(("", "**Recommendations / next steps**" if actionable_summary else "**Next steps**", ""))
-        if field_tables:
+        if workflow_actions:
+            for item in remaining_by_id.values():
+                action = "\n  ".join(item["next_action"].splitlines())
+                context = "\n  ".join(item["item"].splitlines())
+                action_lines.extend((f"- **{item['owner']}** — {action}", f"  {context}"))
+        elif field_tables:
             action_lines.extend(("| Owner | Issue | Action |", "| -- | -- | -- |"))
             action_lines.extend(
                 "| " + " | ".join(_table_cell(item[field]) for field in ("owner", "item", "next_action")) + " |"
@@ -2308,15 +2342,16 @@ def _sha256(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _load_json(path: Path) -> dict[str, Any]:
-    """Load one non-symlink UTF-8 JSON object."""
+def _load_json(path: Path) -> tuple[dict[str, Any], bytes]:
+    """Load one non-symlink UTF-8 JSON object and retain its exact bytes for digest binding."""
     if path.is_symlink() or not path.is_file():
         raise HandoffError(f"input-not-regular-file:{path}")
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        source = path.read_bytes()
+        payload = json.loads(source.decode("utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise HandoffError(f"invalid-json:{path}:{error}") from error
-    return _require_object(payload, f"json:{path.name}")
+    return _require_object(payload, f"json:{path.name}"), source
 
 
 def _require_siblings(*paths: Path) -> None:
@@ -2336,15 +2371,20 @@ def _require_siblings(*paths: Path) -> None:
 def render_files(handoff_path: Path, final_path: Path, validation_path: Path) -> dict[str, Any]:
     """Render and bind a new handoff, preserving the bytes of a previously validated historical presentation."""
     _require_siblings(handoff_path, final_path, validation_path)
-    handoff = _load_json(handoff_path)
-    default_policy = handoff.get("presentation_version") in {15, 16, 17} and "action_policy" not in handoff
+    handoff, source = _load_json(handoff_path)
+    default_policy = (
+        handoff.get("presentation_version") in {15, 16, CLOSED_REVIEW_PRESENTATION, ASSESSED_REVIEW_PRESENTATION}
+        and "action_policy" not in handoff
+    )
     if default_policy:
         if validation_path.exists():
             return check_files(handoff_path, final_path, validation_path)
         # Alternate output filenames can still refer to a canonical, already bound input.
         canonical_proof = handoff_path.with_name("final-handoff.validation.json")
         if handoff_path.name == "final-handoff.json" and canonical_proof.exists():
-            check_files(handoff_path, handoff_path.with_name("final.md"), canonical_proof)
+            proof = check_files(handoff_path, handoff_path.with_name("final.md"), canonical_proof)
+            if proof["handoff_sha256"] != _sha256(source):
+                raise HandoffError("handoff-validation-record-mismatch")
             default_policy = False
         else:
             handoff["action_policy"] = "owned"
@@ -2356,7 +2396,8 @@ def render_files(handoff_path: Path, final_path: Path, validation_path: Path) ->
         # Replace the validated draft atomically so an interrupted write cannot truncate it or change a hard link.
         with tempfile.TemporaryDirectory(dir=handoff_path.parent) as staging:
             temporary = Path(staging) / handoff_path.name
-            temporary.write_bytes((json.dumps(handoff, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+            source = (json.dumps(handoff, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+            temporary.write_bytes(source)
             shutil.copymode(handoff_path, temporary)
             temporary.replace(handoff_path)
     final_path.write_bytes(rendered)
@@ -2365,7 +2406,7 @@ def render_files(handoff_path: Path, final_path: Path, validation_path: Path) ->
         "status": "pass",
         "skill": handoff["skill"],
         "branch": handoff["branch"],
-        "handoff_sha256": _sha256(handoff_path.read_bytes()),
+        "handoff_sha256": _sha256(source),
         "rendered_sha256": _sha256(rendered),
     }
     validation_path.write_text(json.dumps(validation, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -2375,8 +2416,9 @@ def render_files(handoff_path: Path, final_path: Path, validation_path: Path) ->
 def check_files(handoff_path: Path, final_path: Path, validation_path: Path) -> dict[str, Any]:
     """Verify current sibling files against schema and recorded digests."""
     _require_siblings(handoff_path, final_path, validation_path)
-    handoff = validate_handoff(_load_json(handoff_path))
-    validation = _load_json(validation_path)
+    handoff, source = _load_json(handoff_path)
+    validate_handoff(handoff)
+    validation, _ = _load_json(validation_path)
     expected_render = render_handoff(handoff, report_root=handoff_path.parent).encode("utf-8")
     if not final_path.is_file() or final_path.is_symlink() or final_path.read_bytes() != expected_render:
         raise HandoffError("rendered-final-mismatch")
@@ -2385,7 +2427,7 @@ def check_files(handoff_path: Path, final_path: Path, validation_path: Path) -> 
         "status": "pass",
         "skill": handoff["skill"],
         "branch": handoff["branch"],
-        "handoff_sha256": _sha256(handoff_path.read_bytes()),
+        "handoff_sha256": _sha256(source),
         "rendered_sha256": _sha256(expected_render),
     }
     if validation != expected:
@@ -2428,7 +2470,7 @@ def main() -> int:
                 and arguments.input.samefile(arguments.out_scope)
             ):
                 raise HandoffError("selection-output-aliases-input-or-symlink")
-            inventory = _load_json(arguments.input)
+            inventory, source = _load_json(arguments.input)
             rendered = render_selection(inventory).encode("utf-8")
             if arguments.check:
                 if not arguments.out_scope.is_file() or arguments.out_scope.read_bytes() != rendered:
@@ -2437,9 +2479,21 @@ def main() -> int:
                 arguments.out_scope.write_bytes(rendered)
             result = {
                 "status": "pass",
-                "input_sha256": _sha256(arguments.input.read_bytes()),
+                "input_sha256": _sha256(source),
                 "rendered_sha256": _sha256(rendered),
             }
+            selected = inventory.get("selected_indexes")
+            if not arguments.check and (
+                (selected is None and any(item["selectable"] for item in inventory["items"]))
+                or (selected is not None and len(selected) > 1)
+            ):
+                result["question_routing"] = (
+                    "If a decision is still needed, use permitted synchronous input when it fits. "
+                    "Otherwise look up mcp__codex_rig_input__ask_user in ALL_TOOLS or tool search and "
+                    "invoke the discovered native form with the bound decision and scope digest. "
+                    "Use the shared question fallback only if the form is unavailable or unsuitable. "
+                    "Show the choices only in the selected control."
+                )
             if not arguments.check and "pr_relevance" in inventory:
                 subject = _selection_pr_subject(arguments.input.parent)
                 if subject:

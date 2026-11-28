@@ -533,9 +533,9 @@ def _finalize_parent_fallback(run: Path, *, independent_required: bool = False) 
     handoff["remaining"] = [
         {
             "row_id": blocker["id"],
-            "item": blocker["title"],
+            "item": "The configured checker is missing from the test environment.",
             "owner": "reviewer",
-            "next_action": blocker["required_change"],
+            "next_action": "Prepare the declared project environment before resuming type verification.",
         }
     ]
     handoff["next_steps"] = [blocker["id"]]

@@ -287,7 +287,7 @@ Push question — multiSelect: FALSE
   (d) Don't push — I'll push manually
 ```
 
-Run approval form — it is the `git-push-run` question that foundry's approval hook records: header `git-push-run`, multiSelect FALSE, options exactly `Approve` / `Hold`, question text with exactly one push span and one head span (values read from the sentinels and `PR_HEAD_OID`, never typed from memory; the hook refuses anything else, a fence or an invisible character):
+Run approval form — it is the `git-push-run` question that foundry's approval hook records: header `git-push-run`, multiSelect FALSE, options exactly `Approve` / `Decline`, question text with exactly one push span and one head span (values read from the sentinels and `PR_HEAD_OID`, never typed from memory; the hook refuses anything else, a fence or an invisible character):
 
 ```text
 Push question (run approval) — header: git-push-run
@@ -297,7 +297,7 @@ Push question (run approval) — header: git-push-run
  Remote <FORK_REMOTE> is the PR's head repository <FORK_REPO> (added at push time when missing)
  Covers this run's <selected item count> item(s), <commit mode> commits on top of that head; valid 12 h."
   Approve — push once at the end of the run, no second question
-  Hold — skip this push; I'll push manually
+  Decline — skip this push; I'll push manually
 ```
 
 **Run from the session worktree (`--worktree`).** A run approval is bound to the checkout the hook saw when it was asked, so a plain `git push` from the worktree is refused and the push then needs a second question. Run this block before the run approval question (`pr` and `pr+report` only; Step 10 runs the same block again, after the worktree exists in every mode); it prints `WT_PUSH=none` (no worktree), the worktree's path, or `WT_PUSH=unusable` (the path has a space, backslash, quote or other character the hook's `git -C` form cannot carry):
@@ -332,7 +332,7 @@ Unanswered or dismissed → run **no** push block and **no** post-PR block: the 
 | (d) | skip | skip |
 | unanswered / dismissed | none — stays `unset`, Step 10 asks push + post-PR | none |
 | run approval: Approve | push-run | skip |
-| run approval: Hold | skip | skip |
+| run approval: Decline | skip | skip |
 
 Push = push-run:
 

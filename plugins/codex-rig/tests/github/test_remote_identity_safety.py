@@ -17,8 +17,8 @@ def test_remote_name_is_separated_from_get_url_options(monkeypatch: pytest.Monke
     runner = Mock(
         spec=subprocess.run,
         side_effect=[
-            subprocess.CompletedProcess([], 0, "--push\n"),
-            subprocess.CompletedProcess([], 0, "https://host/a/b\n"),
+            subprocess.CompletedProcess([], 0, b"--push\n"),
+            subprocess.CompletedProcess([], 0, b"https://host/a/b\n"),
         ],
     )
     monkeypatch.setattr(SELECTOR.subprocess, "run", runner)

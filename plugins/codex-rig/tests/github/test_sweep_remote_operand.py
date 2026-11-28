@@ -18,18 +18,18 @@ def test_remediation_remote_name_is_an_operand(monkeypatch: pytest.MonkeyPatch) 
     module = load_module_registered("sweep_remediation_remote", SHARED / "remediation_branch.py")
     calls = []
 
-    def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         """Model Git's operand boundary while returning one configured tracking destination."""
         calls.append(argv)
         answers = {
             ("check-ref-format", "refs/heads/main"): "",
-            ("config", "--get", "branch.child.merge"): "refs/heads/main",
-            ("config", "--get", "branch.child.remote"): "--fork",
+            ("config", "--get-all", "--null", "branch.child.merge"): "refs/heads/main\0",
+            ("config", "--get", "--null", "branch.child.remote"): "--fork\0",
             ("remote",): "--fork",
             ("remote", "get-url", "--all", "--", "--fork"): "https://github.com/example/project.git",
         }
         answer = answers.get(tuple(argv[1:]))
-        return subprocess.CompletedProcess(argv, 2 if answer is None else 0, answer or "", "")
+        return subprocess.CompletedProcess(argv, 2 if answer is None else 0, (answer or "").encode(), b"")
 
     monkeypatch.setattr(subprocess, "run", run)
     module._destination("child", "main", "example/project", "https://github.com/example/project/pull/7", 7)

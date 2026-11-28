@@ -51,6 +51,94 @@ def _resolve(repo: Path, target: str) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.mark.installed_plugin
+@pytest.mark.parametrize("separator", ["\n", "\r", "\u0085", "\u2028"])
+def test_remote_selection_preserves_configured_url_boundaries(tmp_path: Path, separator: str) -> None:
+    """A single malformed origin URL cannot supply a repository, while a valid sibling remains selectable."""
+    repo = _repo_with_origin(tmp_path, ORIGIN_URL + separator + "unfinished")
+    _git(repo, "remote", "add", "fork", FORK_URL)
+
+    numeric = _resolve(repo, "17")
+    explicit = _run_selector(repo, "--expected-url", "https://github.com/example/widget/pull/17")
+    sibling = _run_selector(repo, "--expected-url", "https://github.com/contributor/widget/pull/17")
+
+    assert numeric.returncode != 0
+    assert "no-github-origin" in numeric.stderr
+    assert explicit.returncode != 0
+    assert "no-matching-remote" in explicit.stderr
+    assert sibling.returncode == 0, sibling.stderr
+    assert json.loads(sibling.stdout)["remote"] == "fork"
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.parametrize("suffix", [";archive", "?", "#", "/nested"])
+def test_malformed_origin_path_cannot_select_the_pr_repository(tmp_path: Path, suffix: str) -> None:
+    """Validate the whole configured URL before preferring origin over a valid named remote."""
+    repo = _repo_with_origin(tmp_path, ORIGIN_URL + suffix)
+    _git(repo, "remote", "add", "upstream", ORIGIN_URL)
+
+    numeric = _resolve(repo, "17")
+    explicit = _run_selector(repo, "--expected-url", "https://github.com/example/widget/pull/17")
+
+    assert numeric.returncode != 0
+    assert "no-github-origin" in numeric.stderr
+    assert explicit.returncode == 0, explicit.stderr
+    assert json.loads(explicit.stdout)["remote"] == "upstream"
+    assert json.loads(explicit.stdout)["matching_remotes"] == [{"name": "upstream", "url": ORIGIN_URL}]
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.parametrize("name", [".github", "_widget", "-widget"])
+def test_literal_repository_names_resolve_in_both_selector_modes(tmp_path: Path, name: str) -> None:
+    """Numeric and explicit PR selection both retain literal repository names with leading punctuation."""
+    url = f"https://github.com/example/{name}.git"
+    target = f"https://github.com/example/{name}/pull/17"
+    repo = _repo_with_origin(tmp_path, url)
+
+    numeric = _resolve(repo, "17")
+    explicit = _run_selector(repo, "--expected-url", target)
+
+    assert (numeric.returncode, explicit.returncode) == (0, 0)
+    assert numeric.stdout == target + "\n"
+    assert json.loads(explicit.stdout)["matching_remotes"] == [{"name": "origin", "url": url}]
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.parametrize("name", [".", ".."])
+def test_dot_path_components_cannot_identify_a_repository(tmp_path: Path, name: str) -> None:
+    """A dot segment stays invalid even when a fetch URL adds the conventional Git suffix."""
+    repo = _repo_with_origin(tmp_path, f"https://github.com/example/{name}.git")
+    numeric = _resolve(repo, "17")
+    explicit = _run_selector(repo, "--expected-url", f"https://github.com/example/{name}/pull/17")
+    assert numeric.returncode != 0
+    assert explicit.returncode != 0
+
+
+@pytest.mark.installed_plugin
+def test_explicit_generic_pr_target_still_selects_its_remote(tmp_path: Path) -> None:
+    """Full PR URL matching remains available for a configured non-GitHub host."""
+    repo = _repo_with_origin(tmp_path, "git@git.example.org:team/widget.git")
+    result = _run_selector(repo, "--expected-url", "https://git.example.org/team/widget/pull/17")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["remote"] == "origin"
+
+
+@pytest.mark.installed_plugin
+def test_repeated_effective_fetch_urls_remain_distinct(tmp_path: Path) -> None:
+    """Git can return the same effective fetch URL for two genuine configuration records."""
+    repo = _repo_with_origin(tmp_path)
+    _git(repo, "config", "--add", "remote.origin.url", "local-widget")
+    _git(repo, "config", f"url.{ORIGIN_URL}.insteadOf", "local-widget")
+
+    numeric = _resolve(repo, "17")
+    explicit = _run_selector(repo, "--expected-url", "https://github.com/example/widget/pull/17")
+
+    assert numeric.returncode == 0, numeric.stderr
+    assert numeric.stdout == "https://github.com/example/widget/pull/17\n"
+    assert explicit.returncode == 0, explicit.stderr
+    assert json.loads(explicit.stdout)["matching_remotes"] == [{"name": "origin", "url": ORIGIN_URL}] * 2
+
+
+@pytest.mark.installed_plugin
 class TestCanonicalPrUrl:
     """Turning a bare PR number into a canonical URL from local Git configuration."""
 

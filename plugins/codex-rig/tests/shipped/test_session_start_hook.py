@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 from _fixture_files import tree_snapshot
-from _platform import POSIX_FILE_MODES_AVAILABLE
+from _platform import FILE_SYMLINKS_AVAILABLE, POSIX_FILE_MODES_AVAILABLE
 
 _posix_doctor_only = pytest.mark.skipif(
     not POSIX_FILE_MODES_AVAILABLE, reason="filesystem does not preserve POSIX permission modes"
@@ -60,7 +60,7 @@ def _write_fake_codex(directory: Path) -> Path:
     return codex
 
 
-def _hook_input() -> bytes:
+def _hook_input(source: str) -> bytes:
     """Return one minimal valid SessionStart event."""
     return json.dumps(
         {
@@ -70,17 +70,19 @@ def _hook_input() -> bytes:
             "hook_event_name": "SessionStart",
             "model": "fixture",
             "permission_mode": "default",
-            "source": "startup",
+            "source": source,
         }
     ).encode()
 
 
-def _run_hook(plugin_root: Path, home: Path, **environment: str) -> subprocess.CompletedProcess[bytes]:
+def _run_hook(
+    plugin_root: Path, home: Path, *, source: str = "startup", **environment: str
+) -> subprocess.CompletedProcess[bytes]:
     """Run the hook script of ``plugin_root`` against ``home`` with a valid event; ``environment`` overrides the env."""
     env = {**os.environ, "PLUGIN_ROOT": str(plugin_root), "CODEX_HOME": str(home), **environment}
     return subprocess.run(
         [sys.executable, str(plugin_root / "hooks" / "session_start.py")],
-        input=_hook_input(),
+        input=_hook_input(source),
         capture_output=True,
         env=env,
         check=False,
@@ -116,24 +118,24 @@ def _read_only_hook_message(home: Path, plugin_root: Path) -> str:
     return json.loads(completed.stdout).get("systemMessage", "")
 
 
-def test_default_hook_config_is_exact_and_diagnostic_only() -> None:
-    """Declare trusted-by-choice startup and one-shot review/remediation diagnostics only.
+def test_default_hook_config_declares_session_guidance_and_stop_diagnostic() -> None:
+    """Declare session guidance for all host sources and a one-shot review/remediation diagnostic.
 
-    The shipped ``hooks.json`` is compared byte-for-field: one SessionStart health check on startup/resume and one Stop
+    The shipped ``hooks.json`` is compared byte-for-field: one SessionStart hook for ordinary sessions and one Stop
     check for unfinished review work, with the plugin manifest declaring no hooks of its own.
     """
     value = json.loads(HOOK_CONFIG.read_text())
     assert set(value) == {"description", "hooks"}
     assert set(value["hooks"]) == {"SessionStart", "Stop"}
     group = value["hooks"]["SessionStart"][0]
-    assert group["matcher"] == "startup|resume"
+    assert group["matcher"] == "startup|resume|clear|compact|fork"
     assert group["hooks"] == [
         {
             "type": "command",
             "command": '"$PLUGIN_ROOT/bin/python" "$PLUGIN_ROOT/hooks/session_start.py"',
             "commandWindows": '& "$env:PLUGIN_ROOT\\bin\\python.cmd" "$env:PLUGIN_ROOT\\hooks\\session_start.py"; exit $LASTEXITCODE',
             "timeout": 30,
-            "statusMessage": "Checking Codex Rig shim health",
+            "statusMessage": "Loading Codex Rig session guidance",
         }
     ]
     assert value["hooks"]["Stop"] == [
@@ -151,6 +153,48 @@ def test_default_hook_config_is_exact_and_diagnostic_only() -> None:
     ]
     plugin = json.loads((PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text())
     assert "hooks" not in plugin
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.parametrize(
+    ("source", "health_warning"),
+    [
+        pytest.param("startup", True, id="new-session"),
+        pytest.param("resume", True, id="resumed-session"),
+        pytest.param("clear", False, id="cleared-session"),
+        pytest.param("compact", False, id="compacted-session"),
+        pytest.param("fork", False, id="forked-session"),
+    ],
+)
+def test_direct_install_delivers_reply_guidance_without_global_instructions(
+    tmp_path: Path, isolated_plugin_root: Path, source: str, health_warning: bool
+) -> None:
+    """A session without a managed AGENTS file receives model context while only startup/resume run diagnostics."""
+    home = tmp_path / "home"
+    home.mkdir()
+    before = tree_snapshot(home)
+    # An empty PATH leaves the doctor a reportable missing executable whenever it actually runs.
+    completed = _run_hook(isolated_plugin_root, home, source=source, PATH=str(tmp_path))
+
+    assert completed.returncode == 0, completed.stderr
+    response = json.loads(completed.stdout)
+    context = response["hookSpecificOutput"]
+    assert context["hookEventName"] == "SessionStart"
+    guidance = context["additionalContext"].lower()
+    assert all(word in guidance for word in ("outcome", "bullets", "numbered", "tables", "prose", "exact", "native"))
+    assert "including explanations and refusals" in guidance
+    assert "long paragraphs of prose only when requested" in guidance
+    assert "recommend the next action" in guidance
+    assert "who can unblock it" in guidance
+    assert "resume condition" in guidance
+    assert "copy-ready command" in guidance
+    assert "offer to run it" in guidance
+    assert "offer to verify" in guidance
+    assert "if no safe path to the goal exists" in guidance
+    assert "goal remains unmet" in guidance
+    assert "no further action is needed" in guidance
+    assert ("systemMessage" in response) is health_warning
+    assert tree_snapshot(home) == before
 
 
 def test_hook_reuses_manager_doctor_and_preserves_real_home(tmp_path: Path, isolated_plugin_root: Path) -> None:
@@ -202,16 +246,40 @@ def test_hook_surfaces_one_bounded_block_reason(tmp_path: Path, isolated_plugin_
     assert tree_snapshot(tmp_path) == before
 
 
+def _repair_and_check(repair: str, plugin_root: Path, home: Path) -> subprocess.CompletedProcess[bytes]:
+    """Execute the displayed repair, then independently run the full installer check in its native shell."""
+    if sys.platform == "win32":
+        shell = ["powershell.exe", "-NoProfile", "-Command"]
+        command = f"{repair}; if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}; {repair} --check; exit $LASTEXITCODE"
+    else:
+        shell = ["sh", "-c"]
+        command = f"{repair} && {repair} --check"
+    return subprocess.run(
+        [*shell, command],
+        cwd=plugin_root,
+        env={**os.environ, "CODEX_HOME": str(home)},
+        capture_output=True,
+        timeout=30,
+    )
+
+
 def test_hook_warns_when_global_block_names_previous_plugin_root(tmp_path: Path, isolated_plugin_root: Path) -> None:
     """Flag a global block a direct plugin update left on the previous version's root, naming no private path.
 
     ``codex plugin add`` installs a new versioned cache directory but never re-renders the block, so every packaged
     ``shared/<file>`` pointer keeps reading the old package (or a removed one) until the installer runs again.
     """
-    home = tmp_path / "home"
+    home = tmp_path / "Codex home"
     previous_root = tmp_path / "plugins" / "cache" / "borda-ai-rig" / "codex-rig" / "0.33.1"
     template = isolated_plugin_root / "assets" / "AGENTS.md"
     _install_global_block(isolated_plugin_root, home, template, "--plugin-root", str(previous_root))
+    legacy_skill = home / "skills" / "develop" / "SKILL.md"
+    legacy_skill.parent.mkdir(parents=True)
+    legacy_skill.write_text(
+        "---\nname: develop\ndescription: Minimal codex-native develop loop. Use for implementation tasks "
+        "with linear plan-build-verify flow and measurable quality gates.\n---\n",
+        encoding="utf-8",
+    )
 
     message = _read_only_hook_message(home, isolated_plugin_root)
 
@@ -220,9 +288,19 @@ def test_hook_warns_when_global_block_names_previous_plugin_root(tmp_path: Path,
         f"not this session's …/{isolated_plugin_root.name}, so its shared/ pointers do not read this package"
     ) in message
     assert "No files changed" in message
-    assert "install_global_agents.py --source <installed-package>/assets/AGENTS.md" in message
+    assert "codex plugin list --marketplace borda-ai-rig --json" in message
+    assert "scripts/install_global_agents.py --source assets/AGENTS.md --codex-home" in message
+    assert "<installed-package>" not in message
     assert str(tmp_path) not in message
     assert str(isolated_plugin_root) not in message
+    repair = next(part for part in message.split("`")[1::2] if "scripts/install_global_agents.py" in part)
+    installer_check = _repair_and_check(repair, isolated_plugin_root, home)
+    assert installer_check.returncode == 4
+    assert installer_check.stderr.splitlines() == [b"global-agents-check: legacy-skill-route:develop"]
+    assert str(isolated_plugin_root).encode() in (home / "AGENTS.md").read_bytes()
+    assert "stale PLUGIN_ROOT" not in _read_only_hook_message(home, isolated_plugin_root)
+    assert "next startup or resume" in message
+    assert "--check" not in message
 
 
 def test_hook_warns_when_global_block_predates_the_plugin_root_line(tmp_path: Path, isolated_plugin_root: Path) -> None:
@@ -243,6 +321,37 @@ def test_hook_warns_when_global_block_predates_the_plugin_root_line(tmp_path: Pa
     assert "block names no PLUGIN_ROOT (rendered from an older template)" in message
     assert "No files changed" in message
     assert str(tmp_path) not in message
+
+
+@pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="filesystem cannot create file symlinks")
+def test_linked_stale_block_defers_to_the_link_owner(tmp_path: Path, isolated_plugin_root: Path) -> None:
+    """A stale instruction symlink keeps its target private and receives no unusable installer command."""
+    owner = tmp_path / "private-owner"
+    home = tmp_path / "home"
+    home.mkdir()
+    _install_global_block(
+        isolated_plugin_root,
+        owner,
+        isolated_plugin_root / "assets" / "AGENTS.md",
+        "--plugin-root",
+        str(tmp_path / "previous"),
+    )
+    target = owner / "AGENTS.md"
+    original = target.read_bytes()
+    linked = home / "AGENTS.md"
+    linked.symlink_to(target)
+
+    message = _read_only_hook_message(home, isolated_plugin_root)
+
+    assert "stale PLUGIN_ROOT" in message
+    assert "symbolic link" in message
+    assert "owner" in message
+    assert "install_global_agents.py" not in message
+    assert str(tmp_path) not in message
+    # Windows readlink() returns a \\?\ prefixed target and resolve() keeps that prefix, so compare file identity.
+    assert linked.is_symlink()
+    assert linked.samefile(target)
+    assert target.read_bytes() == original
 
 
 @pytest.mark.parametrize(
@@ -274,15 +383,22 @@ def test_hook_is_silent_when_global_block_names_its_own_root(
     assert absent not in message
 
 
-def test_invalid_hook_input_fails_open_without_traceback() -> None:
-    """Keep session startup available when the diagnostic envelope is invalid.
-
-    An empty JSON object is not a SessionStart event; the hook must still exit 0 with no traceback and tell the user the
-    health check was unavailable, so a malformed host payload never blocks the session.
-    """
+@pytest.mark.parametrize(
+    ("payload", "problem"),
+    [
+        pytest.param(b"{}", "SessionStart event", id="wrong-event"),
+        pytest.param(b"private-source malformed JSON", "decode the event as JSON", id="malformed-json"),
+        pytest.param(b" " * 65_537, "65,536-byte input limit", id="oversized"),
+        pytest.param(
+            b'{"hook_event_name":"SessionStart","source":"private-source"}', "start source", id="wrong-source"
+        ),
+    ],
+)
+def test_invalid_hook_input_fails_open_without_traceback(payload: bytes, problem: str) -> None:
+    """An invalid envelope reports the observed failure, omitted guidance, and a verifiable recovery."""
     completed = subprocess.run(
         [sys.executable, str(HOOK_SCRIPT)],
-        input=b"{}",
+        input=payload,
         capture_output=True,
         env={**os.environ, "PLUGIN_ROOT": str(PLUGIN_ROOT)},
         check=False,
@@ -292,6 +408,12 @@ def test_invalid_hook_input_fails_open_without_traceback() -> None:
     assert completed.returncode == 0
     assert completed.stderr == b""
     result = json.loads(completed.stdout)
-    assert result["continue"] is True
-    assert "health check unavailable" in result["systemMessage"]
-    assert "Run $codex-rig:agent-shims doctor" in result["systemMessage"]
+    message = result.pop("systemMessage")
+    assert result == {"continue": True, "suppressOutput": False}
+    assert problem in message
+    assert "no reply guidance" in message
+    assert "supported SessionStart event" in message
+    assert "additionalContext" in message
+    assert "/hooks" not in message
+    assert "doctor" not in message
+    assert "private-source" not in message

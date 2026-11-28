@@ -283,6 +283,33 @@ def test_pending_duplicate_and_scope_reuse_fail_closed(connection: Client) -> No
     assert connection.receive()["error"]["code"] == -32602
 
 
+def test_scope_form_replay_preserves_displayed_group_membership(connection: Client) -> None:
+    """An answered Required preset cannot be replayed for different indexes with identical group counts."""
+    selection = SERVER.parents[1] / "skills/code-remediate/references/selection.md"
+    question_lines = selection.read_text(encoding="utf-8").splitlines()
+    question_start = question_lines.index("Which findings should I remediate?")
+    template = "\n".join(question_lines[question_start : question_lines.index("- All", question_start)])
+    groups = {"required_count": 1, "suggestion_count": 1, "required_indexes": "1", "suggestion_indexes": "2"}
+    arguments = {
+        **ARGUMENTS,
+        "question": template.format(**groups),
+        "options": ["All", "Required", "Suggestions", "Custom selection"],
+    }
+    connection.initialize()
+    connection.call(arguments=arguments)
+    form = connection.receive()
+    assert "Required (1): 1\nSuggestions (1): 2" in form["params"]["message"]
+    connection.answer(form["id"], {"action": "accept", "content": {"answer": "Required"}})
+    receipt = connection.receive()["result"]
+    assert receipt["structuredContent"]["answer"] == "Required"
+    connection.call(4, arguments)
+    assert connection.receive()["result"] == receipt
+
+    changed = template.format(**{**groups, "required_indexes": "2", "suggestion_indexes": "1"})
+    connection.call(5, {**arguments, "question": changed})
+    assert connection.receive()["error"]["code"] == -32602
+
+
 @pytest.mark.parametrize(
     "result",
     [

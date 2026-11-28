@@ -30,7 +30,7 @@ This checkout selects native automatic approval review for required plugin workf
 
 ### Local Git approval
 
-Local Git approval is interactive. A plain commit that needs authorization asks one question: **Approve** runs that operation only, **Hold** skips this commit and leaves the changes unstaged, and **Approve always** also records the grant file `codex-git-approval.json` in the repository's common Git directory (`git rev-parse --git-common-dir`, the main checkout's `.git/`).
+Local Git approval is interactive. A plain commit that needs authorization asks one question: **Approve** runs that operation only, **Decline** skips this commit and leaves the changes unstaged, and **Approve always** also records the grant file `codex-git-approval.json` in the repository's common Git directory (`git rev-parse --git-common-dir`, the main checkout's `.git/`).
 
 You give it once per project; it applies to every worktree and lasts until you delete it with `rm "$(git rev-parse --git-common-dir)/codex-git-approval.json"`. The grant's scope:
 
@@ -85,7 +85,7 @@ codex plugin list
 ```
 
 - `codemap-py` and `bridge` are optional for direct installation. The repository synchronization path manages all three Codex plugins.
-- Start a fresh Codex session after installation.
+- To receive reply guidance from a direct install, start a fresh Codex session with hooks enabled and trust the displayed Codex Rig hook definition. With hooks disabled or untrusted, you can still invoke the skills.
 - To pin an immutable marketplace revision, add it with `--ref <release-tag>` rather than relying on a copied "latest" tag.
 
 ### Permission profiles
@@ -151,9 +151,9 @@ codex '$codemap-py:query-code rdeps mypackage.auth'
 <details>
 <summary><strong>Show package identity, architecture, and health behavior</strong></summary>
 
-- **Codex Rig** (`codex-rig`): fifteen capabilities (fourteen workflow skills plus `agent-shims`), fifteen role cards, parallel blank-agent injection, inline fallback, quality gates, optional Codemap-py context, authenticated cleanup for prior shims, and an optional SessionStart diagnostic. It registers the local native-question MCP provider and no native persistent agents.
+- **Codex Rig** (`codex-rig`): fifteen capabilities (fourteen workflow skills plus `agent-shims`), fifteen role cards, parallel blank-agent injection, inline fallback, quality gates, optional Codemap-py context, authenticated cleanup for prior shims, and an optional SessionStart hook for reply guidance and diagnostics. It registers the local native-question MCP provider and no native persistent agents.
   - The installed cache is immutable input: workflows resolve their own installed root and do not patch the cache or copy repository source into it.
-- **Health hook:** `hooks/hooks.json` declares a read-only `SessionStart` command for `startup|resume`. It runs the shim-health diagnostic and warns when the managed global-instructions block names another Codex Rig root than the running package (or none). It does not install, update, or remove files. Declining hook trust leaves the diagnostic inactive without disabling skills.
+- **SessionStart hook:** When plugin hooks are enabled and its definition is trusted, the read-only hook supplies Codex with reply guidance on `startup`, `resume`, `clear`, `compact` and `fork`. Only startup and resume run the shim-health diagnostic and warn about a stale managed global-instructions path. Declining hook trust leaves both hook features inactive. Skills remain available.
 - **Codemap-py** (`codemap-py`): six structural-analysis skills plus hooks for ambient preamble, session correlation, redundant-scan guarding and tool records. Codemap remains optional and Codex Rig starts without it.
 - **bridge_CC-Codex** (`bridge`): shared by Claude Code and Codex. Its Codex half contributes four skills and a stdio MCP declaration. The MCP server is mandatory for Codex → Claude Code because it runs in the host context that owns normal Claude authentication; it does not accept model-controlled workspace, background, or session authority.
 
@@ -313,7 +313,7 @@ Codex Rig can read GitHub evidence and prepare local changes when the runtime au
 
 **Push approval differs by host:**
 
-- Claude Code's foundry plugin asks a `git-push` question with only **Approve** and **Hold**; **Approve** records a single-use `push-once` token that allows one non-force push of the same branch at the same `HEAD` to a configured remote, remote and branch written out, within 15 minutes, and the allowed push spends it.
+- Claude Code's foundry plugin asks a `git-push` question with only **Approve** and **Decline**; **Approve** records a single-use `push-once` token that allows one non-force push of the same branch at the same `HEAD` to a configured remote, remote and branch written out, within 15 minutes, and the allowed push spends it.
 - Codex uses no push token. After a PR remediation creates and verifies a commit in a new or existing linked worktree, the parent offers one push of the exact commit to the original PR branch. If the user asks to publish before, during or after remediation, the same **Approve** / **Deny** question opens when delivery from the existing PR checkout is verified. Each push requires a native user answer and separate one-time runtime approval. A hosted CI check that needs this published commit can stay open when the local checks passed. After **Approve**, Codex runs the push under the one-time runtime approval and verifies the remote branch. If an agent capability is missing, Codex shares the exact command and offers to run it once the gate permits.
 - Force operations are forbidden on both hosts.
 - Both hosts agree on an explicit request such as "commit this": it authorizes that commit with no further question.

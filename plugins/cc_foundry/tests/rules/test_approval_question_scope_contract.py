@@ -40,7 +40,7 @@ _QUESTION_CASES = [
             "`Approve` = this commit only",
             "`Approve always` = the grant description required above, which must name "
             "`claude-git-approval.json` and its revocation command",
-            "`Hold` = skip this commit.",
+            "`Decline` = skip this commit.",
         ],
         id="local-commit",
     ),
@@ -56,7 +56,7 @@ _QUESTION_CASES = [
         ],
         [
             "`Approve` = one push of this branch at this HEAD to this remote; token valid 15 minutes",
-            "`Hold` = skip this push",
+            "`Decline` = skip this push",
         ],
         id="push",
     ),
@@ -72,7 +72,7 @@ _QUESTION_CASES = [
         [
             "`Approve` = run exactly this command once; token valid 15 minutes; read files re-hashed",
             "up to eight pending approvals per scope",
-            "`Hold` = skip this write and cancel only a pending approval for this same question in this session.",
+            "`Decline` = skip this write and cancel only a pending approval for this same question in this session.",
         ],
         id="github-write",
     ),
@@ -217,7 +217,7 @@ def test_codex_local_commit_question_keeps_host_specific_grant() -> None:
                 "Approve = this commit only.",
                 "every worktree of this project and in later sessions",
                 'revoke with rm "$(git rev-parse --git-common-dir)/codex-git-approval.json".',
-                "Hold = skip this commit and leave its changes unstaged. Future commits follow the usual approval rules.",
+                "Decline = skip this commit and leave its changes unstaged. Future commits follow the usual approval rules.",
                 "at most 1,500 characters",
             ],
         )

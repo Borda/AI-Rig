@@ -2282,7 +2282,7 @@ class TestPush:
         assert drift < confirmation
         assert "Q1 — push: header `git-push`, `multiSelect` false." in options
         assert "- **Approve** — this push, once" in options
-        assert "- **Hold** — skip this push" in options
+        assert "- **Decline** — skip this push" in options
         assert "Re-sync target first" not in options
         # A push approval covers only this branch written out, so the run-time-valued fallback is handed to the user.
         assert "no second push question, no agent push" in push_step
@@ -2314,19 +2314,19 @@ class TestPush:
     def test_step_3d_run_approval_is_the_git_push_run_question(self) -> None:
         """In ``pr`` modes the Step 3d push question is the ``git-push-run`` question, which is the push authorization.
 
-        The hook records a token only from the exact header, the exact ``Approve`` / ``Hold`` options, one push span and
-        one full PR head id, so the question text must show all of them, and the answer must record ``push-run``. The
-        post-PR browser action has no slot there and stays ``skip``.
+        The hook records a token only from the exact header, the exact ``Approve`` / ``Decline`` options, one push span
+        and one full PR head id, so the question text must show all of them, and the answer must record ``push-run``.
+        The post-PR browser action has no slot there and stays ``skip``.
         """
         selection = _between(_resolve_text("SKILL.md"), "## Step 3d", "## Step 7b join")
         form = _between(selection, "Run approval form —", "Unanswered or dismissed →")
 
         assert "header `git-push-run`" in form
-        assert "options exactly `Approve` / `Hold`" in form
+        assert "options exactly `Approve` / `Decline`" in form
         assert "Push: `git push <FORK_REMOTE> <HEAD_REF>`" in form
         assert "PR head: `<PR_HEAD_OID>`" in form
         assert "| run approval: Approve | push-run | skip |" in selection
-        assert "| run approval: Hold | skip | skip |" in selection
+        assert "| run approval: Decline | skip | skip |" in selection
         assert 'echo push-run > "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}"' in selection
         assert "`PR_HEAD_OID`" in _resolve_text("modes/pr-intelligence.md")
         assert "headRefOid" in _resolve_text("modes/pr-intelligence.md")

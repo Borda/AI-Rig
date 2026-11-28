@@ -1198,7 +1198,7 @@ class TestReviewFinalize:
         assert finished.stdout.splitlines()[0] == "Review PR acme/widgets#123 — Correct widget spelling".encode()
         assert finished.stdout.count(b"Correct widget spelling") == 1
         assert b"https://github.com/acme/widgets/pull/123" in finished.stdout
-        assert json.loads((run / "final-handoff.json").read_text())["presentation_version"] == 16
+        assert json.loads((run / "final-handoff.json").read_text())["presentation_version"] == 18
         assert (run / "review-notes.md").read_bytes().startswith(full_report)
         reviewed_head = json.loads((run / "pr-routing.json").read_text())["head_oid"]
         assert f"Reviewed commit: {reviewed_head}" in (run / "review-notes.md").read_text()

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.70.1
+
+- `/oss:resolve` run-push approval now offers `Approve` / `Decline` instead of `Approve` / `Hold`, matching foundry's renamed skip option. Declining still skips the push and records `skipped-by-user`.
+
 ## 0.70.0
 
 - `/oss:resolve` and `/oss:review --reply` hand off GitHub thread replies and resolutions as a single aliased GraphQL mutation with one approval. Text requiring `--body-file` keeps its own command.

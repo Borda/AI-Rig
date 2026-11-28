@@ -1724,8 +1724,7 @@ def derive_handoff(
             except (OSError, UnicodeError) as error:
                 raise DeriveError("closed-review-notes-unavailable") from error
         if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed":
-            if metadata.get("scope") == "pr":
-                handoff["presentation_version"] = 16
+            handoff["presentation_version"] = final_handoff.ASSESSED_REVIEW_PRESENTATION
             commit = final_handoff.review_commit_sha(run, metadata.get("scope"))
             metadata["reviewed_commit_sha"] = commit
             value = f"{commit} (working-tree base)" if metadata["scope"] in {"working-tree", "path"} else commit
@@ -1928,7 +1927,8 @@ def _derive_review_actions(notes: str, metadata: dict[str, Any], handoff: dict[s
         raise DeriveError("review-action-notes-identity-mismatch")
     if any(len(cells) not in {4, 5} or authored_status.get(cells[0]) != cells[-1] for cells in parsed[2:]):
         raise DeriveError("review-action-notes-status-mismatch")
-    if handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12, 13, 14, 15, 16}:
+    with_details = handoff.get("presentation_version") in {*range(7, 17), final_handoff.ASSESSED_REVIEW_PRESENTATION}
+    if with_details:
         detail_sections = list(re.finditer(r"(?ms)^## Finding Details[^\S\r\n]*\r?\n.*?(?=^## |\Z)", notes))
         if len(detail_sections) > 1:
             raise DeriveError("review-report-details-ambiguous")
@@ -1941,9 +1941,9 @@ def _derive_review_actions(notes: str, metadata: dict[str, Any], handoff: dict[s
         rows,
         by_id,
         metadata.get("reviewer_assessments") is not None,
-        role_only=handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+        role_only=with_details,
     )
-    if handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12, 13, 14, 15, 16}:
+    if with_details:
         # Keep authored prose byte-exact while owning one deterministic, complete detail section.
         details = final_handoff.render_review_report_details(handoff) + "\n"
         sections = list(re.finditer(r"(?ms)^## Finding Details[^\S\r\n]*\r?\n.*?(?=^## |\Z)", notes))

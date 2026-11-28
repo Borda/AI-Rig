@@ -25,6 +25,14 @@ HELPER = Path(__file__).resolve().parents[3] / "shared" / "remediation_branch.py
 PR_URL = "https://github.com/example/project/pull/17"
 SAME_REPO_REMOTE = "https://github.com/example/project.git"
 FORK_REMOTE = "https://github.com/contributor/project.git"
+INVALID_SOURCE_URLS = {
+    "extra-fetch-path": SAME_REPO_REMOTE + "/nested/",
+    "fetch-path-parameter": SAME_REPO_REMOTE + "/;archive",
+    "padded-fetch-url": SAME_REPO_REMOTE + " ",
+    "multiline-fetch-url": SAME_REPO_REMOTE + "\n" + SAME_REPO_REMOTE,
+    "control-prefixed-fetch-url": "\x07" + SAME_REPO_REMOTE,
+    "empty-query-fetch-url": SAME_REPO_REMOTE + "?",
+}
 CO_AUTHOR = "\n\nCo-authored-by: Codex <codex@openai.com>"
 
 
@@ -47,9 +55,13 @@ class _Collected:
     calls: list[list[str]]
 
 
-def _collected(tmp_path: Path, template: RepositoryTemplate, **options: Any) -> _Collected:
+def _collected(
+    tmp_path: Path, template: RepositoryTemplate, *, remote_url: str | None = None, **options: Any
+) -> _Collected:
     """Set up private repositories and run PR collection in remediate mode, asserting it succeeds."""
     source, worktree, base, old, head = _setup_repositories(tmp_path, template)
+    if remote_url:
+        _git(worktree, "remote", "set-url", "origin", remote_url)
     pr_dir = tmp_path / "pr"
     options = {"checkout_mode": "remediate", "gh_checkout_fails": False, **options}
     code, calls = _collect(_load_collector(), source, worktree, pr_dir, base, head, **options)
@@ -93,20 +105,166 @@ def _snapshot(worktree: Path) -> tuple[str, str, str]:
 class TestNativeCheckout:
     """Receipts for a PR checked out natively with ``gh pr checkout``."""
 
-    def test_same_repository_branch_tracking_base_retains_verified_source(
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [
+            pytest.param("merge", "", id="empty-merge"),
+            pytest.param("merge", " refs/heads/topic ", id="padded-merge"),
+            pytest.param("remote", "", id="empty-remote"),
+            pytest.param("remote", " origin ", id="padded-remote"),
+        ],
+    )
+    def test_malformed_tracking_values_refuse_source_proof(
+        self, tmp_path: Path, repository_template: RepositoryTemplate, key: str, value: str
+    ) -> None:
+        """Empty, ambiguous and whitespace-padded values cannot identify or stand in for a missing upstream."""
+        c = _collected(tmp_path, repository_template, cross_repository=False)
+        receipt = tmp_path / "branch.json"
+        _prepared(c, receipt)
+        _git(c.worktree, "update-ref", "refs/remotes/origin/topic", c.head)
+        _git(c.worktree, "config", f"branch.topic.{key}", value)
+        fresh = tmp_path / "fresh.json"
+        before = _snapshot(c.worktree)
+
+        assert _prepare(c, fresh).returncode == 2
+        assert not fresh.exists()
+        assert _check(c.worktree, receipt, c.head).returncode == 2
+        assert _snapshot(c.worktree) == before
+
+    def test_equivalent_fetch_urls_retain_verified_source(
         self, tmp_path: Path, repository_template: RepositoryTemplate
     ) -> None:
-        """Keep an original native branch through a local commit while its pull upstream remains the target."""
+        """Each configured fetch URL can independently identify the same PR repository."""
+        c = _collected(tmp_path, repository_template, cross_repository=False)
+        _git(c.worktree, "remote", "set-url", "--add", "origin", "git@github.com:example/project.git/")
+        receipt = tmp_path / "branch.json"
+        _prepared(c, receipt)
+        assert _check(c.worktree, receipt, c.head).returncode == 0
+
+    def test_literal_fork_remote_rejects_repository_rewrite(
+        self, tmp_path: Path, repository_template: RepositoryTemplate
+    ) -> None:
+        """The contributor URL configured directly by GitHub CLI must still fetch the same contributor repository."""
+        c = _collected(tmp_path, repository_template, cross_repository=True)
+        receipt = tmp_path / "branch.json"
+        _prepared(c, receipt)
+        _git(c.worktree, "config", f"url.{SAME_REPO_REMOTE}.insteadOf", FORK_REMOTE)
+        assert _git(c.worktree, "ls-remote", "--get-url", "--", FORK_REMOTE) == SAME_REPO_REMOTE
+        before = _snapshot(c.worktree)
+        fresh = tmp_path / "fresh.json"
+        assert _prepare(c, fresh).returncode == 2
+        assert not fresh.exists()
+        assert _check(c.worktree, receipt, c.head).returncode == 2
+        assert _snapshot(c.worktree) == before
+
+    @pytest.mark.parametrize(
+        ("remote", "setting", "value"),
+        [
+            pytest.param(FORK_REMOTE, "branch.topic.merge", "", id="empty-merge-entry"),
+            pytest.param("fork", "remote.fork.url", FORK_REMOTE + " ", id="padded-fetch-url"),
+        ],
+    )
+    def test_fork_checkout_failure_preserves_ambiguous_source(
+        self, tmp_path: Path, repository_template: RepositoryTemplate, remote: str, setting: str, value: str
+    ) -> None:
+        """Ambiguous or malformed source configuration cannot authorize fork collision recovery."""
+        source, worktree, base, _, head = _setup_repositories(tmp_path, repository_template)
+        _git(worktree, "config", setting, value)
+        _git(worktree, "config", "branch.topic.remote", remote)
+        _git(worktree, "config", "--add", "branch.topic.merge", "refs/heads/topic")
+        _git(worktree, "commit", "--allow-empty", "-m", "local commit")
+        before = _snapshot(worktree)
+        pr_dir = tmp_path / "pr"
+        result, _ = _collect(
+            _load_collector(),
+            source,
+            worktree,
+            pr_dir,
+            base,
+            head,
+            checkout_mode="remediate",
+            gh_failure_stderr=b"fatal: a branch named 'topic' already exists",
+        )
+
+        state = json.loads((pr_dir / "checkout-state.json").read_bytes())
+        assert result == 2
+        assert state["status"] == "remediation-fork-checkout-stopped"
+        assert state["local_branch_comparison"]["reason"] == "ambiguous-or-unverified-branch"
+        assert _snapshot(worktree) == before
+
+    @pytest.mark.parametrize(
+        ("cross_repository", "first", "second"),
+        [
+            pytest.param(False, "refs/heads/old-topic", "refs/heads/topic", id="same-repository-head"),
+            pytest.param(True, "refs/heads/old-topic", "refs/pull/17/head", id="fork-pull-ref"),
+            pytest.param(False, "", "refs/heads/topic", id="empty-before-head"),
+            pytest.param(False, "refs/heads/topic", "", id="empty-after-head"),
+        ],
+    )
+    def test_conflicting_merge_ref_blocks_preparation_and_continuation(
+        self, tmp_path: Path, repository_template: RepositoryTemplate, cross_repository: bool, first: str, second: str
+    ) -> None:
+        """Multiple merge entries cannot identify a single source, including entries with an empty value."""
+        c = _collected(
+            tmp_path, repository_template, cross_repository=cross_repository, gh_pull_ref_tracking=cross_repository
+        )
+        receipt = tmp_path / "branch.json"
+        _prepared(c, receipt)
+        original = receipt.read_bytes()
+        _git(c.worktree, "update-ref", "refs/remotes/origin/topic", c.head)
+        _git(c.worktree, "config", "branch.topic.merge", first)
+        _git(c.worktree, "config", "--add", "branch.topic.merge", second)
+        before = _snapshot(c.worktree)
+        fresh = tmp_path / "second-branch.json"
+
+        prepared = _prepare(c, fresh)
+        checked = _check(c.worktree, receipt, c.head)
+
+        assert (prepared.returncode, checked.returncode) == (2, 2)
+        assert "pr-upstream-mismatch" in prepared.stderr
+        assert "pr-upstream-mismatch" in checked.stderr
+        assert not fresh.exists()
+        assert receipt.read_bytes() == original
+        assert _snapshot(c.worktree) == before
+
+    @pytest.mark.parametrize(
+        ("remote", "merge", "remote_url"),
+        [
+            pytest.param("origin", "refs/heads/main", SAME_REPO_REMOTE, id="base-upstream"),
+            pytest.param(None, None, SAME_REPO_REMOTE, id="no-upstream"),
+            pytest.param("origin", None, SAME_REPO_REMOTE, id="selected-remote-only"),
+            pytest.param(None, "refs/heads/main", SAME_REPO_REMOTE, id="base-merge-only"),
+            pytest.param(None, "refs/heads/topic", SAME_REPO_REMOTE, id="head-merge-only"),
+            pytest.param(None, None, SAME_REPO_REMOTE + "/", id="trailing-slash-fetch-url"),
+        ],
+    )
+    def test_same_repository_branch_uses_verified_head_ref_without_head_tracking(
+        self,
+        tmp_path: Path,
+        repository_template: RepositoryTemplate,
+        remote: str | None,
+        merge: str | None,
+        remote_url: str,
+    ) -> None:
+        """Keep the original native branch through a local commit with base tracking or no upstream."""
         worktree = tmp_path / "worktree"
         remote_ref = "refs/remotes/origin/topic"
 
-        def retain_base_tracking() -> None:
-            """Model a successful native checkout that leaves the existing base upstream in place."""
-            _git(worktree, "config", "branch.topic.merge", "refs/heads/main")
+        def retain_tracking_configuration() -> None:
+            """Model a native checkout that leaves the branch's existing configuration in place."""
+            for key, value in (("remote", remote), ("merge", merge)):
+                if value is None:
+                    _git(worktree, "config", "--unset", f"branch.topic.{key}")
+                else:
+                    _git(worktree, "config", f"branch.topic.{key}", value)
             _git(worktree, "update-ref", remote_ref, repository_template.head)
 
         c = _collected(
-            tmp_path, repository_template, cross_repository=False, after_native_checkout=retain_base_tracking
+            tmp_path,
+            repository_template,
+            remote_url=remote_url,
+            cross_repository=False,
+            after_native_checkout=retain_tracking_configuration,
         )
         receipt = tmp_path / "branch.json"
         before = _snapshot(worktree)
@@ -141,8 +299,13 @@ class TestNativeCheckout:
             "missing-source-ref",
             "symbolic-source-ref",
             "unrelated-merge",
+            "unrelated-merge-only",
+            "conflicting-merge-entries",
             "unselected-remote",
+            "unselected-remote-only",
             "wrong-fetch-url",
+            "untracked-wrong-fetch-url",
+            *INVALID_SOURCE_URLS,
             "wrong-selected-url",
             "other-advertised-branch",
             "other-pr",
@@ -151,7 +314,7 @@ class TestNativeCheckout:
             "unknown-repository",
         ],
     )
-    def test_base_upstream_requires_independent_source_proof(
+    def test_branch_without_head_tracking_requires_independent_source_proof(
         self, tmp_path: Path, repository_template: RepositoryTemplate, drift: str
     ) -> None:
         """A matching local name and commit cannot replace independent repository, ref and native checkout proof."""
@@ -166,13 +329,28 @@ class TestNativeCheckout:
             _git(c.worktree, "update-ref", remote_ref, c.head)
         if drift == "symbolic-source-ref":
             _git(c.worktree, "symbolic-ref", remote_ref, "refs/heads/topic")
-        elif drift == "unrelated-merge":
+        elif drift in {"unrelated-merge", "unrelated-merge-only"}:
             _git(c.worktree, "config", "branch.topic.merge", "refs/heads/old-topic")
-        elif drift == "unselected-remote":
+            if drift == "unrelated-merge-only":
+                _git(c.worktree, "config", "--unset", "branch.topic.remote")
+        elif drift == "conflicting-merge-entries":
+            _git(c.worktree, "config", "--unset", "branch.topic.remote")
+            _git(c.worktree, "config", "branch.topic.merge", "refs/heads/old-topic")
+            _git(c.worktree, "config", "--add", "branch.topic.merge", "refs/heads/main")
+        elif drift in {"unselected-remote", "unselected-remote-only"}:
             _git(c.worktree, "remote", "add", "mirror", SAME_REPO_REMOTE)
             _git(c.worktree, "config", "branch.topic.remote", "mirror")
-        elif drift == "wrong-fetch-url":
+            if drift == "unselected-remote-only":
+                _git(c.worktree, "config", "--unset", "branch.topic.merge")
+        elif drift in {"wrong-fetch-url", "untracked-wrong-fetch-url"}:
             _git(c.worktree, "remote", "set-url", "--add", "origin", FORK_REMOTE)
+            if drift == "untracked-wrong-fetch-url":
+                _git(c.worktree, "config", "--unset", "branch.topic.merge")
+                _git(c.worktree, "config", "--unset", "branch.topic.remote")
+        elif drift in INVALID_SOURCE_URLS:
+            _git(c.worktree, "remote", "set-url", "origin", INVALID_SOURCE_URLS[drift])
+            _git(c.worktree, "config", "--unset", "branch.topic.merge")
+            _git(c.worktree, "config", "--unset", "branch.topic.remote")
         elif drift == "wrong-selected-url":
             selected_path = c.pr_dir / "remote-selection.json"
             selected = json.loads(selected_path.read_bytes())

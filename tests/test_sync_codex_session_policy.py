@@ -760,7 +760,7 @@ class TestExtraPolicy:
             pytest.param(
                 "the next paragraph approves no local Git operation, and a plain commit that no documented workflow "
                 "step defines and no explicit same-turn user request covers takes the per-operation question "
-                "(Approve, Approve always or Hold)",
+                "(Approve, Approve always or Decline)",
                 id="grant-absent-question",
             ),
             pytest.param(
@@ -928,7 +928,7 @@ class TestCodexReadme:
         [
             pytest.param("Local Git approval is interactive.", id="interactive"),
             pytest.param(
-                "**Approve** runs that operation only, **Hold** skips this commit and leaves the changes unstaged, and "
+                "**Approve** runs that operation only, **Decline** skips this commit and leaves the changes unstaged, and "
                 "**Approve always** also records the grant file `codex-git-approval.json` in the repository's common "
                 "Git directory",
                 id="three-answers",

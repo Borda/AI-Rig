@@ -142,7 +142,7 @@ def test_commit_preference_reuses_a_grant_and_preserves_explicit_hold() -> None:
                 "an unanswered or dismissed grouping preference uses `all at once`",
                 "An explicit `decide after verification` answer still defers",
                 "Without a grant, an unanswered",
-                "a commit mode answers **Approve** for that plan and `leave unstaged` answers **Hold**",
+                "a commit mode answers **Approve** for that plan and `leave unstaged` answers **Decline**",
             ),
         ),
         _missing(

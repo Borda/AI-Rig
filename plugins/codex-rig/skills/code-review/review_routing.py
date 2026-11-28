@@ -166,7 +166,7 @@ def derive_mechanical_risk(out_dir: Path) -> tuple[str, list[str], set[str]]:
     lower_paths = {path.lower() for path in paths}
     evidence = [f"files={len(paths)}", f"changed_lines={changed_lines}", f"unknown_size_rows={unknown_size_rows}"]
     broad_names = {"pyproject.toml", "package.json", "cargo.toml", "uv.lock", "poetry.lock", "package-lock.json"}
-    security_parts = {
+    high_risk_parts = {
         "auth",
         "authentication",
         "oauth",
@@ -180,8 +180,10 @@ def derive_mechanical_risk(out_dir: Path) -> tuple[str, list[str], set[str]]:
         "jwt",
         "crypto",
         "cryptography",
+        "migration",
+        "migrations",
+        "dockerfile",
     }
-    high_risk_parts = security_parts | {"migration", "migrations", "dockerfile"}
     high_paths = sorted(
         path
         for path in lower_paths
@@ -215,10 +217,6 @@ def derive_mechanical_risk(out_dir: Path) -> tuple[str, list[str], set[str]]:
         mandatory_signals.add("axis_cicd_steward")
     if any(path.endswith((".md", ".rst")) or path.startswith("docs/") for path in lower_paths):
         mandatory_signals.add("axis_doc_scribe")
-    if high_paths and any(
-        security_parts.intersection(_path_tokens(path)) or "deserial" in Path(path).name for path in high_paths
-    ):
-        mandatory_signals.add("axis_security_auditor")
     return tier, evidence, mandatory_signals
 
 

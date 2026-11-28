@@ -76,6 +76,26 @@
 //      literal false, `gh api --input` to a `git/refs` endpoint or to `graphql` (the body is not
 //      shown), and a GraphQL `force:` argument or a query the command text does not show. A force
 //      update anywhere in the command outranks its other writes.
+//   8. PR body footer (rules/public-github.md §PR body footer): `gh pr create|new|edit` read from an
+//      exact argv whose body does not end with the AI Rig footer line, in its Markdown or its plain
+//      form (a U+FE0F variation selector ignored), exits 2 before any token is read, so no token is
+//      spent and the approval is not consumed. The rule alone did not hold: after a `/compact` the
+//      model forgot it and the host's default attribution line went out in its place. The body is
+//      read as pflag hands flag values over: a table of the value flags of `pr create|edit` skips
+//      each value even when it looks like a flag (`--title -Fok.md`), a flag outside the tables is
+//      read both ways, and every body found is checked: `--body-file`/`-F` files, `--body`/`-b`
+//      text, both kinds when both appear (the last flag of a kind wins). A file is read through a
+//      non-blocking open; a blank body file, a larger file than the read window whose end is blank,
+//      and a body path that is no regular file (named pipe, device, directory) all block.
+//      `AI_RIG_FOOTER=off` (exactly, any case) in this hook's environment, the Claude Code
+//      settings `env` block, switches the check off, as it does the rule; that settings values
+//      reach hook processes is expected from the settings reference, not observed. Not checked,
+//      accepted limits: no body flag (`--fill*`, `-T/--template`, `--web`, a title-only edit), a
+//      blank inline `--body` (a deliberate clear), stdin (`-F -`, which the approval refuses), a body
+//      file the hook cannot open by the literal path (absent, or named through a shell expansion
+//      such as `~`, `$VAR` or a Windows Git Bash `/c/...` path: gh fails or reads what the hook
+//      cannot see), and `gh api` pull request writes.
+//      An unexpected failure of the check skips it and leaves the approval requirement in force.
 //
 // LIMITS (accepted)
 //   * Text built at run time: a variable as the program (`$GH pr create`), a script on disk, and
@@ -109,10 +129,12 @@
 //      spent (item 6): stdout carries the PreToolUse `allow`.
 //   2  a gh write without a matching token, or a command item 5 cannot show is not one: blocked;
 //      stderr names the reason and the `gh-write` question to ask. A force update (item 7): blocked
-//      with no question to ask.
+//      with no question to ask. A PR body without the footer (item 8): blocked with the footer
+//      to append; no approval is asked for or spent until the body carries it.
 
 "use strict";
 
+const fs = require("fs");
 const path = require("path");
 
 // Loaded defensively: a crash would exit 1, which Claude Code treats as non-blocking, letting the
@@ -559,6 +581,181 @@ function forceReason(tokens, literals, coarse = false) {
   return null;
 }
 
+// --- PR body footer ---
+
+// The two forms of the footer note rules/public-github.md §PR body footer ends a PR body with; a test pins both to
+// that rule's text. A Markdown body takes the italic form, any other body the plain one.
+const FOOTER_PLAIN =
+  "🐰 Built with AI help from [AI Rig](https://github.com/Borda/AI-Rig), the open-source agent setup I use. If it saved you time, a ⭐ helps others find it.";
+const FOOTER_MARKDOWN =
+  "*🐰 Built with AI help from **[AI Rig](https://github.com/Borda/AI-Rig)**, the open-source agent setup I use. If it saved you time, a ⭐ helps others find it.*";
+// An emoji variation selector (U+FE0F) after the rabbit or the star renders the same note, so comparing ignores it.
+const comparable = (line) => line.replace(/️/g, "");
+const FOOTER_LINES = new Set([FOOTER_MARKDOWN, FOOTER_PLAIN].map(comparable));
+// Writes whose body the note ends; `new` is gh's alias of `create`.
+const FOOTER_WRITE = /^gh pr (?:create|new|edit)$/;
+// Flags of `gh pr create` and `gh pr edit` by how they take a value (gh 2.x command reference). pflag hands the next
+// word to a value flag whatever it looks like, so a title shaped like `-Fok.md`, or a bare `--`, is no body flag.
+const PR_VALUE_LONG = new Set([
+  "add-assignee",
+  "add-label",
+  "add-project",
+  "add-reviewer",
+  "assignee",
+  "base",
+  "body",
+  "body-file",
+  "head",
+  "label",
+  "milestone",
+  "project",
+  "recover",
+  "remove-assignee",
+  "remove-label",
+  "remove-project",
+  "remove-reviewer",
+  "repo",
+  "reviewer",
+  "template",
+  "title",
+]);
+const PR_BOOL_LONG = new Set([
+  "draft",
+  "dry-run",
+  "editor",
+  "fill",
+  "fill-first",
+  "fill-verbose",
+  "help",
+  "no-maintainer-edit",
+  "web",
+]);
+const PR_VALUE_SHORT = new Set(["a", "B", "b", "F", "H", "l", "m", "p", "r", "R", "T", "t"]);
+const PR_BOOL_SHORT = new Set(["d", "e", "f", "h", "w"]);
+// The footer is the last non-blank line, so only the end of a body file is read; a larger file whose end is blank
+// counts as lacking the footer.
+const FOOTER_BODY_BYTES = 262144;
+
+/**
+ * The bodies a `gh pr create|edit` argv passes under one reading of its flags, as `{file, text}` (each the last
+ * value of its flag). `unknownTakesValue` picks how a flag outside the tables reads. A value flag takes the next word
+ * whatever it looks like; a boolean short cluster may precede a value flag (`-dF f`); any other short flag takes the
+ * rest of its word.
+ */
+function prBodyFlags(args, unknownTakesValue) {
+  const found = {};
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--") break;
+    if (arg.startsWith("--")) {
+      const eq = arg.indexOf("=");
+      const name = arg.slice(2, eq < 0 ? undefined : eq);
+      const takesValue = PR_VALUE_LONG.has(name) || (!PR_BOOL_LONG.has(name) && unknownTakesValue);
+      const value = eq >= 0 ? arg.slice(eq + 1) : takesValue ? (args[++i] ?? "") : "";
+      if (name === "body-file") found.file = value;
+      else if (name === "body") found.text = value;
+    } else if (arg.length > 1 && arg.startsWith("-")) {
+      for (let k = 1; k < arg.length; k += 1) {
+        const flag = arg[k];
+        if (PR_BOOL_SHORT.has(flag) || !(PR_VALUE_SHORT.has(flag) || unknownTakesValue)) {
+          // pflag gives `-d=t` to the boolean as its value, so the rest of the word is no further flag
+          if (arg[k + 1] === "=") break;
+          continue;
+        }
+        const value = k + 1 < arg.length ? arg.slice(k + 1).replace(/^=(?=[\s\S])/, "") : (args[++i] ?? "");
+        if (flag === "F") found.file = value;
+        else if (flag === "b") found.text = value;
+        break;
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * Every distinct body a `gh pr create|edit` argv may pass, as `{flag: "file"|"text", value}`: both readings of an
+ * unknown flag, and both body kinds when a command names both (gh's precedence between them is not relied on).
+ */
+function prBodySources(tokens) {
+  const args = tokens.slice(1);
+  const sources = new Map();
+  for (const unknownTakesValue of [false, true]) {
+    for (const [flag, value] of Object.entries(prBodyFlags(args, unknownTakesValue))) {
+      sources.set(`${flag}\0${value}`, { flag, value });
+    }
+  }
+  return [...sources.values()];
+}
+
+/**
+ * The end of a regular body file as `{text, truncated}`; `{special: true}` for an existing path that is no regular
+ * file (a named pipe, a device, a directory), whose content the hook cannot read but gh may; null when the file
+ * cannot be opened or its path is not literal (absent, `-`, `$VAR`): gh then fails on it or reads what the hook
+ * cannot see, and the check is skipped. O_NONBLOCK keeps a named pipe, even one swapped in after a check, from
+ * blocking the open until the hook times out (a timeout does not block the call); the opened descriptor, not an
+ * earlier stat, proves the file is regular.
+ */
+function readBodyEnd(file, cwd) {
+  if (file === "-" || RUN_TIME_TEXT.test(file)) return null;
+  const full = path.isAbsolute(file) ? file : `${cwd}${path.sep}${file}`;
+  let fd = null;
+  try {
+    fd = fs.openSync(full, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) return { special: true };
+    const length = Math.min(stat.size, FOOTER_BODY_BYTES);
+    const buffer = Buffer.alloc(length);
+    fs.readSync(fd, buffer, 0, length, stat.size - length);
+    return { text: buffer.toString("utf8"), truncated: stat.size > length };
+  } catch {
+    return null;
+  } finally {
+    try {
+      if (fd !== null) fs.closeSync(fd);
+    } catch {
+      // nothing left to release; a throw here would crash the hook and let the call through
+    }
+  }
+}
+
+/** The last non-blank line of `text`, trimmed, or null when the text is blank. */
+function lastLine(text) {
+  const lines = text.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (lines[i].trim() !== "") return lines[i].trim();
+  }
+  return null;
+}
+
+/**
+ * `{reason, inline}` for a `gh pr create|edit` body that lacks the footer note (`inline`: it came from `--body`), or
+ * null when every body ends with it or none is checked (item 8). A blank inline `--body` is a deliberate clear and
+ * passes; a blank body file is a draft that was never written, so it blocks, as does a blank end of a larger file.
+ * A body file that is no regular file blocks too: its content cannot be checked.
+ */
+function footerProblem(found, cwd) {
+  if (!found.tokens || !FOOTER_WRITE.test(found.reason)) return null;
+  if ((process.env.AI_RIG_FOOTER || "").toLowerCase() === "off") return null;
+  for (const { flag, value } of prBodySources(found.tokens)) {
+    const body = flag === "text" ? { text: value, truncated: false } : readBodyEnd(value, cwd);
+    if (body === null) continue;
+    const named = flag === "file" ? value : "--body";
+    if (body.special) {
+      return {
+        reason: `the pull request body file (${named}) is not a regular file, so its end cannot be checked for the AI Rig footer note`,
+        inline: false,
+      };
+    }
+    const last = lastLine(body.text);
+    if (last === null ? flag === "text" && !body.truncated : FOOTER_LINES.has(comparable(last))) continue;
+    return {
+      reason: `the pull request body (${named}) does not end with the AI Rig footer note`,
+      inline: flag === "text",
+    };
+  }
+  return null;
+}
+
 // --- invocation ---
 
 /** Why one gh invocation (words from the program word on, redirections already dropped) writes, or null. */
@@ -610,7 +807,7 @@ function findWrite(command, info) {
   }
   for (const tokens of [...invocations, ...(info.unreadable || parsed === null ? coarse : [])]) {
     const reason = writeReason(tokens, literalArguments.get(tokens));
-    if (reason) return { reason, exact: true, unreadable: info.unreadable || parsed === null };
+    if (reason) return { reason, exact: true, unreadable: info.unreadable || parsed === null, tokens };
   }
   if (parsed === null || info.unreadable)
     return namesGh(command) || info.unreadableExecutable
@@ -661,7 +858,7 @@ function block(reason, approvalProblem) {
     `gh write blocked — ${reason}.\n` +
       `No gh-write approval covers this call: ${approvalProblem}.\n` +
       "Every gh write needs the user's explicit approval of that exact command. Draft it, then invoke one " +
-      "AskUserQuestion with header `gh-write` and options exactly `Approve` / `Hold`, whose question names the " +
+      "AskUserQuestion with header `gh-write` and options exactly `Approve` / `Decline`, whose question names the " +
       "exact command once as an inline code span (`gh …`; wrap it in double backticks when it holds a backtick; no " +
       "fenced block, one line, one plain gh command: no `;`, `&&`, `|`, redirection, `$`, backtick or glob outside " +
       "quotes — pass long text with --body-file and show that text in the question). The user's `Approve` records a " +
@@ -699,6 +896,25 @@ function blockForce(reason) {
   process.exit(2);
 }
 
+/** Block a PR body without the footer note; no approval is asked for or spent until the body carries it. */
+function blockFooter({ reason, inline }) {
+  const how = inline
+    ? "An approved command is one line and cannot hold the note's line break: write the body to a file that ends " +
+      "with the note and pass it with --body-file"
+    : "Append the note as the last line of the body";
+  process.stderr.write(
+    `gh write blocked — ${reason}.\n` +
+      `Pull request bodies end with the AI Rig footer note (rules/public-github.md §PR body footer). ${how}, then ask ` +
+      "for the gh-write approval again: an edited body file voids an earlier approval. A Markdown body ends with one " +
+      `blank line, a \`---\` line, one blank line and this line:\n${FOOTER_MARKDOWN}\n` +
+      "(a body that already ends with another footer set off by a rule takes the note under it after one blank line, " +
+      `with no second \`---\`). A body that is not Markdown ends with one blank line and this line instead:\n${FOOTER_PLAIN}\n` +
+      "The user opts out with AI_RIG_FOOTER=off in the env block of Claude Code settings; never set it yourself, and " +
+      "never replace the note with the host's default attribution line.\n",
+  );
+  process.exit(2);
+}
+
 let raw = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => (raw += chunk));
@@ -729,6 +945,14 @@ process.stdin.on("end", () => {
   if (!found) process.exit(0);
   if (found.force) blockForce(found.reason);
   if (found.syntax) blockSyntax(found.reason);
+  let noFooter = null;
+  try {
+    if (found.exact && !found.unreadable) noFooter = footerProblem(found, data.cwd || process.cwd());
+  } catch {
+    // An unexpected failure of this convenience check must not crash the hook (exit 1 lets the call through);
+    // the approval below still applies.
+  }
+  if (noFooter) blockFooter(noFooter);
   const problem = found.exact ? spendApproval(command, data) : INEXACT;
   if (problem === null) {
     if (found.unreadable) blockSyntax(UNREADABLE);

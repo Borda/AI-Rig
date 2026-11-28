@@ -9251,6 +9251,6 @@
       "src": "skills/resolve/modes/preflight.md:14"
     }
   },
-  "plugin": "cc_oss@0.70.0",
+  "plugin": "cc_oss@0.70.1",
   "schema": 2
 }

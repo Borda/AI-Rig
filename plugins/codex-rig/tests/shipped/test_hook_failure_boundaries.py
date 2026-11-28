@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from _modules import load_module
@@ -90,12 +92,40 @@ def test_regular_transcript_remains_readable_without_nonblock_constant(
         assert stream.read() == b"{}\n"
 
 
+def test_startup_ignores_nonregular_opened_instructions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Check the opened descriptor before admitting an instruction file that appeared regular by path."""
+    # The hook sets its own bytecode-cache prefix when loaded as a script.
+    monkeypatch.setattr(sys, "pycache_prefix", str(tmp_path))
+    hook = load_module("session_start_descriptor", PLUGIN_ROOT / "hooks" / "session_start.py")
+    installer = load_module("session_start_installer", PLUGIN_ROOT / "scripts" / "install_global_agents.py")
+    agents = tmp_path / "AGENTS.md"
+    agents.write_bytes(installer.managed_block(b"# Authenticated instructions\n"))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    assert "stale PLUGIN_ROOT" in hook._global_root_notice(PLUGIN_ROOT)
+    native_fstat = os.fstat
+    opened = Mock(spec=os.open, wraps=os.open)
+    descriptor_stat = Mock(spec=os.fstat, return_value=os.stat_result((stat.S_IFCHR, 0, 0, 0, 0, 0, 0, 0, 0, 0)))
+    monkeypatch.setattr(hook.os, "open", opened)
+    monkeypatch.setattr(hook.os, "fstat", descriptor_stat)
+
+    assert hook._global_root_notice(PLUGIN_ROOT) is None
+
+    nonblocking = getattr(os, "O_NONBLOCK", 0)
+    assert opened.call_args.args[1] & nonblocking == nonblocking
+    descriptor_stat.assert_called_once()
+    # Windows reports the same closed-descriptor failure as WinError 6 (invalid handle) instead of Errno 9.
+    with pytest.raises(OSError, match=r"\[Errno 9\]|\[WinError 6\]"):
+        native_fstat(descriptor_stat.call_args.args[0])
+
+
 @pytest.fixture
 def startup_package(tmp_path: Path) -> Path:
     """Prepare an isolated startup hook with a real imported parser and diagnostic subprocess."""
     root = tmp_path / "plugin"
     (root / "hooks").mkdir(parents=True)
     (root / "scripts").mkdir()
+    (root / "shared").mkdir()
+    shutil.copy2(PLUGIN_ROOT / "shared" / "github_read.py", root / "shared" / "github_read.py")
     shutil.copy2(PLUGIN_ROOT / "hooks" / "session_start.py", root / "hooks" / "session_start.py")
     (root / "scripts" / "manage_role_agents.py").write_text(
         'print(\'{"classification":"healthy"}\')\n', encoding="utf-8"
@@ -137,7 +167,11 @@ def test_installer_parser_errors_preserve_healthy_startup(startup_package: Path,
 
     assert completed.returncode == 0
     assert completed.stderr == ""
-    assert json.loads(completed.stdout) == {"continue": True, "suppressOutput": False}
+    response = json.loads(completed.stdout)
+    context = response.pop("hookSpecificOutput")
+    assert context["hookEventName"] == "SessionStart"
+    assert context["additionalContext"]
+    assert response == {"continue": True, "suppressOutput": False}
 
 
 def test_malformed_doctor_classification_returns_nonblocking_json(startup_package: Path) -> None:
@@ -155,6 +189,7 @@ def test_malformed_doctor_classification_returns_nonblocking_json(startup_packag
     assert completed.stderr == ""
     response = json.loads(completed.stdout)
     assert response["continue"] is True
+    assert response["hookSpecificOutput"]["additionalContext"]
     assert "health check unavailable" in response["systemMessage"]
     assert "Run $codex-rig:agent-shims doctor" in response["systemMessage"]
 
@@ -176,7 +211,36 @@ def test_startup_errors_do_not_disclose_private_paths(tmp_path: Path, missing_ro
     assert completed.stderr == ""
     response = json.loads(completed.stdout)
     assert response["continue"] is True
-    assert "health check unavailable" in response["systemMessage"]
-    assert "Run $codex-rig:agent-shims doctor" in response["systemMessage"]
+    assert "active plugin root" in response["systemMessage"]
+    assert "/hooks" in response["systemMessage"]
+    assert "doctor" not in response["systemMessage"]
+    assert "hookSpecificOutput" not in response
     assert "session-root" not in response["systemMessage"]
     assert str(tmp_path) not in response["systemMessage"]
+
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_startup_stops_doctor_while_output_is_still_arriving(startup_package: Path, stream: str) -> None:
+    """Stop an oversized doctor before it can finish sending its output on either pipe."""
+    manager = startup_package / "scripts" / "manage_role_agents.py"
+    manager.write_text(
+        "import sys\nfrom pathlib import Path\n"
+        f"stream = sys.{stream}.buffer\n"
+        "for _ in range(128):\n    stream.write(b'x' * 65536)\n"
+        "stream.flush()\nPath(__file__).with_suffix('.finished').touch()\n",
+        encoding="utf-8",
+    )
+
+    completed = _startup(startup_package, startup_package.parent / "home")
+
+    assert completed.returncode == 0
+    assert completed.stderr == ""
+    assert not manager.with_suffix(".finished").exists()
+    result = json.loads(completed.stdout)
+    assert result["continue"] is True
+    assert result["hookSpecificOutput"]["additionalContext"]
+    assert "output limit" in result["systemMessage"]
+    assert "1,048,576 bytes each" in result["systemMessage"]
+    assert "stdout and stderr" in result["systemMessage"]
+    assert "exits 0" in result["systemMessage"]
+    assert "healthy, degraded or blocked" in result["systemMessage"]

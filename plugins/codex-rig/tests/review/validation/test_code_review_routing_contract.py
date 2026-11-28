@@ -662,6 +662,20 @@ class TestRoutingValidation:
         with pytest.raises(SystemExit, match="review-routing-trigger-reason-values-invalid"):
             _VALIDATOR._validate_routing(tmp_path, "LOCAL")
 
+    def test_authentication_path_routes_high_risk_review_without_advisory_selection(self, tmp_path: Path) -> None:
+        """A fresh review of authentication code can dispatch the regular high-risk roster."""
+        _write_inventory(tmp_path, files=b"src/auth.py\n", numstat=b"1\t0\tsrc/auth.py\n")
+        roles = ["challenger", "qa-specialist", "sw-engineer"]
+        record = _routing_record(
+            _signals(),
+            evidence=_size_evidence(1, 1, "high_risk_paths=src/auth.py"),
+            roles=roles,
+            risk_tier="HIGH_RISK",
+            mechanical_tier="HIGH_RISK",
+        )
+        _write_routing(tmp_path, record)
+        assert _VALIDATOR._validate_routing(tmp_path, "HIGH_RISK") == set(roles)
+
     @pytest.mark.parametrize(
         ("role", "signal"),
         [

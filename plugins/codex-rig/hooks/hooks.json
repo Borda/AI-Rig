@@ -1,5 +1,5 @@
 {
-  "description": "Read-only shim health and one-shot review/remediation continuation diagnostics.",
+  "description": "Read-only session guidance, shim health, and one-shot review/remediation continuation diagnostics.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,12 +7,12 @@
           {
             "command": "\"$PLUGIN_ROOT/bin/python\" \"$PLUGIN_ROOT/hooks/session_start.py\"",
             "commandWindows": "& \"$env:PLUGIN_ROOT\\bin\\python.cmd\" \"$env:PLUGIN_ROOT\\hooks\\session_start.py\"; exit $LASTEXITCODE",
-            "statusMessage": "Checking Codex Rig shim health",
+            "statusMessage": "Loading Codex Rig session guidance",
             "timeout": 30,
             "type": "command"
           }
         ],
-        "matcher": "startup|resume"
+        "matcher": "startup|resume|clear|compact|fork"
       }
     ],
     "Stop": [

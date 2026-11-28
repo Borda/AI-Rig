@@ -118,6 +118,90 @@ def _run_selection_cli(inventory: Path, output: Path, *extra: str) -> subprocess
     return subprocess.run([*command, *extra], capture_output=True, text=True, check=False)
 
 
+def _replace_input_on_output_access(
+    monkeypatch: pytest.MonkeyPatch, source: Path, output: Path, replacement: bytes
+) -> None:
+    """Change the source after it was parsed, when the renderer writes or checks its output."""
+    original_open = Path.open
+
+    def open_file(path: Path, *args, **kwargs):
+        if path == output:
+            with original_open(source, "wb") as handle:
+                handle.write(replacement)
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_file)
+
+
+@pytest.mark.parametrize("flags", [pytest.param([], id="render"), pytest.param(["--check"], id="check")])
+def test_scope_digest_binds_displayed_finding_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], flags: list[str]
+) -> None:
+    """A concurrent inventory replacement cannot bind the first displayed index to a different finding."""
+    inventory = tmp_path / "selection.json"
+    scope = tmp_path / "resolution-scope.md"
+    payload = _selection()
+    _write_selection_files(tmp_path, payload)
+    original = inventory.read_bytes()
+    payload["items"].reverse()
+    replacement = json.dumps(payload).encode("utf-8")
+    _replace_input_on_output_access(monkeypatch, inventory, scope, replacement)
+    monkeypatch.setattr(
+        sys, "argv", [str(FINALIZER), "selection", "--input", str(inventory), "--out-scope", str(scope), *flags]
+    )
+
+    assert _load_finalizer().main() == 0
+    assert json.loads(capsys.readouterr().out)["input_sha256"] == hashlib.sha256(original).hexdigest()
+    assert "| 1 | high | F7 —" in scope.read_text(encoding="utf-8")
+    assert inventory.read_bytes() == replacement
+
+
+@pytest.mark.parametrize("action", ["render_files", "check_files"])
+def test_handoff_digest_binds_rendered_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str) -> None:
+    """The proof identifies the handoff that supplied the displayed summary even if its source is replaced."""
+    write_schema_v2_assess(tmp_path)
+    source = tmp_path / "final-handoff.json"
+    final = tmp_path / "final.md"
+    validation = tmp_path / "final-handoff.validation.json"
+    original = source.read_bytes()
+    changed = json.loads(original)
+    changed["outcome"]["summary"] = "Updated after rendering."
+    replacement = json.dumps(changed).encode("utf-8")
+    _replace_input_on_output_access(monkeypatch, source, final, replacement)
+    operation = getattr(_load_finalizer(), action)
+
+    assert operation(source, final, validation)["handoff_sha256"] == hashlib.sha256(original).hexdigest()
+    assert "The requested contract is defined." in final.read_text(encoding="utf-8")
+    assert source.read_bytes() == replacement
+
+
+@pytest.mark.parametrize(
+    ("selection", "needs_route"),
+    [
+        pytest.param(None, True, id="scope-pending"),
+        pytest.param([1, 2], True, id="commit-preference-may-be-needed"),
+        pytest.param([1], False, id="single-item-default"),
+        pytest.param([], False, id="nothing-selected"),
+    ],
+)
+def test_selection_cli_routes_outstanding_questions(
+    tmp_path: Path, selection: list[int] | None, needs_route: bool
+) -> None:
+    """Expose the packaged form lookup where a scope or commit question can arise."""
+    payload = _selection()
+    payload["selected_indexes"] = selection
+    inventory = tmp_path / "selection.json"
+    inventory.write_text(json.dumps(payload), encoding="utf-8")
+    scope = tmp_path / "resolution-scope.md"
+    rendered = _run_selection_cli(inventory, scope)
+    assert rendered.returncode == 0, rendered.stderr
+    route = json.loads(rendered.stdout).get("question_routing", "")
+    discovery = route.find("look up mcp__codex_rig_input__ask_user")
+    assert (0 <= discovery < route.find("invoke the discovered native form") < route.find("fallback")) == needs_route
+    assert bool(route) == needs_route
+    assert "question_routing" not in json.loads(_run_selection_cli(inventory, scope, "--check").stdout)
+
+
 @pytest.mark.parametrize(
     ("title", "expected"),
     [

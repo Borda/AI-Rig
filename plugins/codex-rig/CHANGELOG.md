@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.53.1
+
+- Code Review reports and routes work more clearly:
+  - Per-finding fixes stay in the Resolution proposal column, and the review closes with ordered, owned workflow actions such as handing off the review, grouping related findings into one work item, or rerunning a required check. Saved reviews retain their original rendering.
+  - Authentication and other security-sensitive paths stay at high risk and the regular reviewers continue. The optional security auditor runs only when explicitly selected, preventing an unnecessary resume prompt on a fresh review.
+  - Unavailable PR reviews assign a missing GitHub CLI or private access repair to the user and the subsequent collection retry to Codex.
+- Code Remediate starts more reliably:
+  - The findings-selection command output now names the native question tool, so workflows can discover the form before falling back to an async text menu for scope or commit choices. Required and Suggestions show their exact finding indexes, keeping a previously answered question bound to its original membership.
+  - A native same-repository checkout on the original PR branch without an upstream is accepted when the verified fetch and matching remote-tracking ref establish its source. Local remediation can proceed without changing Git configuration. Verification preserves Git’s exact tracking values and rejects ambiguous merge refs and fetch URLs identifying another path.
+- Codex explanations, refusals and status replies lead with the outcome and use short lists or comparison tables when several details matter. For stalled work, replies give a feasible next action and how to verify it, or explain why the goal remains unmet. Completed work with nothing pending is marked accordingly. Longer narrative is available on request. A direct plugin install supplies this guidance when the SessionStart hook is enabled and trusted, including conversations that use no skill.
+- The local Git approval question's skip option is now `Decline` instead of `Hold`, so it reads as a final refusal. It still skips the commit, leaves the changes unstaged and records no grant or denial lock.
+- The startup hook identifies invalid session events separately from shim-health failures, stops oversized diagnostic output as it is read, and gives a verifiable repair for stale global instructions.
+
 ## 0.53.0
 
 - Code Review runs are easier to continue and to trust:

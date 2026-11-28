@@ -679,6 +679,68 @@ def test_collect_pr_marks_missing_nodes_unavailable(
     assert json.loads((output / "review-threads.json").read_text()) == []
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/Owner/Project.git/",
+        "git://github.com/Owner/Project",
+        "ssh://git@github.com/Owner/Project",
+        "ssh://github.com/Owner/Project",
+        "git@github.com:Owner/Project.git/",
+        "github.com:Owner/Project",
+    ],
+)
+def test_remote_identity_preserves_supported_git_transports(url: str) -> None:
+    """SSH and SCP remotes keep their original identities alongside HTTPS and Git transport."""
+    assert _load_collector()._github_remote_identity(url) == ("Owner", "Project")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com:/owner/project",
+        "https://github.com:443/owner/project",
+        "https://@github.com/owner/project",
+        "ssh://git:@github.com/owner/project",
+        "ssh://git@other@github.com/owner/project",
+        "wrong:host@github.com:owner/project",
+        "https://github.com/owner/project#",
+        "https://github.com/owner/project/;suffix",
+        "https://github.com/owner/project%2Fnested/",
+    ],
+)
+def test_remote_identity_refuses_malformed_or_unverified_transport(url: str) -> None:
+    """Extra authority fields, URL delimiters and encoded paths cannot identify the approved repository."""
+    assert _load_collector()._github_remote_identity(url) is None
+
+
+def test_public_fallback_uses_only_separately_configured_remotes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A newline inside one URL cannot supply a second repository identity during collection."""
+    monkeypatch.chdir(tmp_path)
+    subprocess.run(["git", "init", "-q"], check=True)
+    real = "https://github.com/example/trusted.git"
+    unrelated = "https://github.com/example/unverified.git"
+    subprocess.run(["git", "config", "remote.origin.url", real + "\n" + unrelated], check=True)
+    subprocess.run(["git", "remote", "add", "verified", real], check=True)
+    subprocess.run(["git", "remote", "set-url", "--add", "verified", "git@github.com:example/trusted"], check=True)
+    assert _load_collector()._configured_github_repositories(subprocess.run, 30) == {
+        "example/trusted": ("example", "trusted")
+    }
+
+
+def test_base_fetch_rejects_padded_rewritten_transport(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Identity verification reads the exact locally rewritten base fetch URL, including any invalid padding."""
+    monkeypatch.chdir(tmp_path)
+    subprocess.run(["git", "init", "-q"], check=True)
+    transport = "https://github.com/example/project.git"
+    subprocess.run(["git", "config", f"url.{transport} .insteadOf", transport], check=True)
+    module = _load_collector()
+    with pytest.raises(module.CollectionError, match="target-branch-transport-invalid"):
+        module._verified_base_transport(subprocess.run, 30, transport, "https://github.com/example/project/pull/17")
+
+
 def test_collect_pr_does_not_require_fallback_identity_when_primary_gh_succeeds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1200,10 +1262,12 @@ def test_collect_pr_remediation_routes_when_gh_checkout_fails(
             assert kwargs["env"]["GIT_NO_LAZY_FETCH"] == "1"
             assert kwargs["env"]["GIT_ALLOW_PROTOCOL"] == ""
             return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"private detail")
-        if argv == ["git", "config", "--get", "branch.portable-pr.merge"]:
-            return subprocess.CompletedProcess(argv, 0, stdout=b"refs/heads/portable-pr", stderr=b"")
-        if argv == ["git", "config", "--get", "branch.portable-pr.remote"]:
-            return subprocess.CompletedProcess(argv, 0, stdout=b"https://github.com/contributor/AI-Rig.git", stderr=b"")
+        if argv == ["git", "config", "--get-all", "--null", "branch.portable-pr.merge"]:
+            return subprocess.CompletedProcess(argv, 0, stdout=b"refs/heads/portable-pr\0", stderr=b"")
+        if argv == ["git", "config", "--get", "--null", "branch.portable-pr.remote"]:
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=b"https://github.com/contributor/AI-Rig.git\0", stderr=b""
+            )
         if local_oid and argv == ["git", "rev-parse", "--verify", "--quiet", "refs/heads/portable-pr^{commit}"]:
             return subprocess.CompletedProcess(argv, 0, stdout=local_oid.encode(), stderr=b"")
         if counts and argv == ["git", "rev-list", "--left-right", "--count", f"{HEAD_OID}...{local_oid}"]:

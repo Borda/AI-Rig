@@ -17,13 +17,14 @@ of the instruction file.
 
 ## Usage
 
-Run the documented CLI only for an approved global-instruction lifecycle operation. Select the action through the
-workflow for agent shims so diagnosis and approval occur before this script changes the target.
+For an authorized install or update, run this script from the installed Codex Rig directory with
+--source assets/AGENTS.md and --codex-home pointing to the target Codex home. Add --check to inspect the managed
+instructions and recognized legacy skills without changing files.
 
 ## Used by
 
-The agent-shims workflow, session setup procedures, and global-instruction installer tests call this installer. These
-callers depend on its marker and hash format to distinguish managed content from user content during update and removal.
+Codex Rig sync invokes this installer. The startup hook also uses its parser to inspect the managed block.
+Both rely on its markers and hash to distinguish managed instructions from user content.
 
 ## Outputs
 

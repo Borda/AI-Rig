@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -1395,7 +1396,7 @@ class TestOneTimeApproval:
             pytest.param({"expires_at": "2026-01-01T00:00:00.000Z"}, "has expired", id="expired"),
             pytest.param({"version": 2}, "unknown record version", id="unknown-version"),
             pytest.param({"scope": "push-once"}, "unknown scope", id="other-scope"),
-            pytest.param({"answer": "Hold"}, "does not hold answer Approve", id="other-answer"),
+            pytest.param({"answer": "Decline"}, "does not hold answer Approve", id="other-answer"),
             pytest.param({"command": None}, "lacks command", id="no-command"),
             pytest.param({"command": ""}, "no command text", id="empty-command"),
         ],
@@ -1487,7 +1488,7 @@ class TestOneTimeApproval:
         Scenario: a write with no approval on disk is blocked, and the message carries the whole recipe the model needs
         to get one: the tool, header, option labels, command span rule and the no-git fallback.
         """
-        needles = ("AskUserQuestion", "`gh-write`", "`Approve` / `Hold`", "inline code span", "Outside a git")
+        needles = ("AskUserQuestion", "`gh-write`", "`Approve` / `Decline`", "inline code span", "Outside a git")
         result = guard(_call(APPROVED, checkout))
         assert result.returncode == 2
         assert [needle for needle in needles if needle not in result.stderr] == []
@@ -1641,7 +1642,7 @@ class TestTranscriptProof:
     @pytest.mark.parametrize(
         ("shape", "reason"),
         [
-            pytest.param({"answer": "Hold"}, "no Approve answer", id="answered-deny"),
+            pytest.param({"answer": "Decline"}, "no Approve answer", id="answered-deny"),
             pytest.param({"prefilled": True}, "pre-filled", id="prefilled-answer"),
             pytest.param({"is_error": True}, "no Approve answer", id="error-result"),
             pytest.param({"age_minutes": 20}, "older than", id="stale-answer"),
@@ -1791,6 +1792,342 @@ class TestFilesUnchanged:
         result = guard(_call("gh issue comment 3 --body-file c.md", checkout))
         assert (result.returncode, "changed after the user approved" in result.stderr) == (2, True), result.stderr
         assert token.exists()
+
+
+RULE_FILES = [
+    PLUGINS_DIR / "cc_foundry" / "rules" / "public-github.md",
+    PLUGINS_DIR / "cc_foundry" / "rules" / "_full" / "public-github.md",
+]
+
+
+def _rule_footers(rule: Path = RULE_FILES[0]) -> list[str]:
+    """Return the two footer notes a ``public-github.md`` rule file's §PR body footer has Claude end a PR body with.
+
+    The section's paragraph is read line by line; the notes are the code spans holding the rabbit marker, in the order
+    the rule gives them: the Markdown (italic) form, then the plain form.
+    """
+    lines = rule.read_text(encoding="utf-8").splitlines()
+    if "### PR body footer" not in lines:
+        return []
+    paragraph = next((line for line in lines[lines.index("### PR body footer") :] if "Built with AI help" in line), "")
+    return re.findall(r"`([^`]*🐰[^`]*)`", paragraph)
+
+
+# Padded so a reworded rule fails ``test_rule_names_both_footer_forms`` alone instead of every test in this module.
+MARKDOWN_FOOTER, PLAIN_FOOTER = [*_rule_footers(), "", ""][:2]
+HOST_ATTRIBUTION = "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+
+
+@_skip_node_or_git_unavailable
+class TestPrBodyFooter:
+    """A pull request body must end with the AI Rig footer note before ``gh pr create|edit`` is allowed to run."""
+
+    @pytest.fixture(name="footer_guard")
+    def _footer_guard(self, run_hook, checkout: Path, approval_transcript):
+        """Return a callable running the guard in ``checkout`` with ``AI_RIG_FOOTER`` set to the case's value."""
+
+        def _run(command: str, footer_env: str = "") -> subprocess.CompletedProcess:
+            """Run gh-write-guard on ``command``; an empty ``footer_env`` leaves the opt-out unset."""
+            env = {
+                "CLAUDE_PROJECT_DIR": str(checkout),
+                "GH_TOKEN": "dummy",
+                "GH_HOST": "x.invalid",
+                "AI_RIG_FOOTER": footer_env,
+            }
+            payload = {"transcript_path": str(approval_transcript(checkout)), **_call(command, checkout)}
+            return run_hook("gh-write-guard.js", payload, cwd=checkout, env_extra=env)
+
+        return _run
+
+    def test_rule_names_both_footer_forms(self) -> None:
+        """Both rule twins yield the same two notes the guard accepts, so a reworded rule cannot drift from it."""
+        stub, full = (_rule_footers(rule) for rule in RULE_FILES)
+        assert (len(stub), stub == full, MARKDOWN_FOOTER.startswith("*"), PLAIN_FOOTER.startswith("*")) == (
+            2,
+            True,
+            True,
+            False,
+        )
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param(f"text\n\n---\n\n{MARKDOWN_FOOTER}\n", id="markdown-form"),
+            pytest.param(f"text\n\n{PLAIN_FOOTER}\n", id="plain-form"),
+            pytest.param(f"text\r\n\r\n{MARKDOWN_FOOTER}\r\n\r\n\r\n", id="crlf-and-trailing-blank-lines"),
+            pytest.param(f"text\n\n{MARKDOWN_FOOTER}", id="no-final-newline"),
+            pytest.param(f"{'x' * 20000}\n\n{PLAIN_FOOTER}\n", id="long-body"),
+            pytest.param(f"text\n\n{PLAIN_FOOTER.replace('⭐', '⭐' + chr(0xFE0F))}\n", id="variation-selector"),
+            pytest.param(f"text\n\n{PLAIN_FOOTER}\n" + "\n" * 9000, id="blank-lines-after-footer"),
+        ],
+    )
+    def test_body_ending_with_the_footer_spends_the_token(
+        self, footer_guard, gh_write_token, checkout: Path, body: str
+    ) -> None:
+        """A body whose last non-blank line is the footer is approved as before: the token is spent once.
+
+        Scenario: the user approved ``gh pr create --body-file body.md`` and the file ends with either footer form,
+        however its line endings or trailing blank lines read; the guard prints the one-time allow.
+        """
+        (checkout / "body.md").write_bytes(body.encode("utf-8"))
+        token = gh_write_token(checkout, APPROVED)
+        result = footer_guard(APPROVED)
+        assert (result.returncode, json.loads(result.stdout)) == (0, SPENT_ALLOW), result.stderr
+        assert not token.exists()
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param("text\n", id="no-footer"),
+            pytest.param(f"text\n\n{HOST_ATTRIBUTION}\n", id="host-attribution-instead"),
+            pytest.param(f"{MARKDOWN_FOOTER}\n\nmore text\n", id="footer-not-last"),
+            pytest.param(f"text\n\n{MARKDOWN_FOOTER}\n\n{HOST_ATTRIBUTION}\n", id="host-attribution-after-footer"),
+            pytest.param(f"text\n\n{PLAIN_FOOTER.replace('Built with', 'Drafted with')}\n", id="old-wording"),
+            pytest.param("text\n" + " " * 9000, id="blank-tail-without-footer"),
+            pytest.param("text\n" + " " * 300000, id="blank-tail-past-the-read-window"),
+        ],
+    )
+    def test_body_without_the_footer_is_blocked_before_the_token(
+        self, footer_guard, gh_write_token, checkout: Path, body: str
+    ) -> None:
+        """Another last line blocks with the footer to append, and the user's approval stays unspent.
+
+        Scenario: the model drafted the body after its rule text was lost to a compaction and ended it with the host's
+        attribution line (or nothing); the guard stops it before it spends the user's one-time approval.
+        """
+        (checkout / "body.md").write_text(body, encoding="utf-8")
+        token = gh_write_token(checkout, APPROVED)
+        result = footer_guard(APPROVED)
+        assert result.returncode == 2
+        assert (MARKDOWN_FOOTER in result.stderr, PLAIN_FOOTER in result.stderr) == (True, True)
+        assert "body.md" in result.stderr
+        assert token.exists()
+
+    def test_missing_footer_is_named_before_the_approval_is(self, footer_guard, checkout: Path) -> None:
+        """With no token at all the footer is still the reported problem, so the model fixes it before asking."""
+        (checkout / "body.md").write_text("text\n", encoding="utf-8")
+        result = footer_guard(APPROVED)
+        assert (result.returncode, "AI Rig footer" in result.stderr, "No gh-write approval" in result.stderr) == (
+            2,
+            True,
+            False,
+        )
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("gh pr create --title fix --body-file=body.md", id="create-attached"),
+            pytest.param("gh pr create --title fix -F body.md", id="create-short"),
+            pytest.param("gh pr create --title fix -Fbody.md", id="create-short-attached"),
+            pytest.param("gh pr create --title fix -F=body.md", id="create-short-equals"),
+            pytest.param("gh pr create --draft -dF body.md", id="create-cluster"),
+            pytest.param("gh pr create --title fix --body 'text'", id="create-inline-body"),
+            pytest.param("gh pr create --title fix -b 'text'", id="create-inline-short"),
+            pytest.param("gh pr create --title fix --body-file body.md --body-file other.md", id="last-flag-wins"),
+            pytest.param("gh pr new --title fix --body-file body.md", id="new-alias"),
+            pytest.param("gh pr edit 3 --body-file body.md", id="edit"),
+            pytest.param("gh pr edit 3 --title fix --body 'text'", id="edit-inline-body"),
+            pytest.param("gh -R o/r pr edit 3 --body-file body.md", id="repo-flag-before-subcommand"),
+        ],
+    )
+    def test_every_way_of_passing_the_body_is_checked(self, footer_guard, checkout: Path, command: str) -> None:
+        """Each spelling of the body flags is read; a body without the footer is blocked.
+
+        Scenario: ``body.md`` and ``other.md`` both lack the footer, so a command that passes either (or inline text)
+        must be stopped whichever way the flag is written.
+        """
+        for name in ("body.md", "other.md"):
+            (checkout / name).write_text("text\n", encoding="utf-8")
+        result = footer_guard(command)
+        assert (result.returncode, "AI Rig footer" in result.stderr) == (2, True), result.stderr
+
+    def test_last_body_flag_decides(self, footer_guard, gh_write_token, checkout: Path) -> None:
+        """Only the body gh uses counts: a footer-less file overridden by a footered one is allowed."""
+        command = "gh pr create --title fix --body-file body.md --body-file ok.md"
+        (checkout / "body.md").write_text("text\n", encoding="utf-8")
+        (checkout / "ok.md").write_text(f"text\n\n{PLAIN_FOOTER}\n", encoding="utf-8")
+        gh_write_token(checkout, command)
+        result = footer_guard(command)
+        assert (result.returncode, json.loads(result.stdout)) == (0, SPENT_ALLOW), result.stderr
+
+    @pytest.mark.parametrize(
+        ("command", "body"),
+        [
+            pytest.param("gh pr comment 3 --body-file body.md", "reply\n", id="pr-comment"),
+            pytest.param("gh issue create --title t --body-file body.md", "report\n", id="issue-body"),
+            pytest.param("gh issue comment 3 --body-file body.md", "reply\n", id="issue-comment"),
+            pytest.param("gh pr review 3 --approve --body-file body.md", "ok\n", id="pr-review"),
+            pytest.param("gh pr edit 3 --title fix", "", id="title-only-edit"),
+            pytest.param("gh pr create --title fix --body ' '", "", id="blank-inline-body"),
+            pytest.param("gh pr create --title fix --body-file gone.md", "", id="absent-body-file"),
+        ],
+    )
+    def test_writes_without_a_pr_body_to_check_run_as_before(
+        self, footer_guard, gh_write_token, checkout: Path, command: str, body: str
+    ) -> None:
+        """Comments, reviews, issue bodies and PR writes with no readable body carry no footer and pass unchanged.
+
+        Scenario: the approved command is no pull request body (or has none to read), so the footer check does not
+        apply and the approval is spent as before.
+        """
+        (checkout / "body.md").write_text(body, encoding="utf-8")
+        gh_write_token(checkout, command)
+        result = footer_guard(command)
+        assert (result.returncode, json.loads(result.stdout)) == (0, SPENT_ALLOW), result.stderr
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("gh pr create --title fix --body-file=ok.md", id="create-attached"),
+            pytest.param("gh pr create --title fix -F ok.md", id="create-short"),
+            pytest.param("gh pr create --title fix -Fok.md", id="create-short-attached"),
+            pytest.param("gh pr create --title fix -F=ok.md", id="create-short-equals"),
+            pytest.param("gh pr create --draft -dF ok.md", id="create-cluster"),
+            pytest.param(f"gh pr create --title fix --body '{PLAIN_FOOTER}'", id="create-inline-body"),
+            pytest.param(f"gh pr create --title fix -b '{PLAIN_FOOTER}'", id="create-inline-short"),
+            pytest.param("gh pr new --title fix --body-file ok.md", id="new-alias"),
+            pytest.param("gh pr edit 3 --body-file ok.md", id="edit"),
+            pytest.param(f"gh pr edit 3 --title fix --body '{PLAIN_FOOTER}'", id="edit-inline-body"),
+            pytest.param("gh -R o/r pr edit 3 --body-file ok.md", id="repo-flag-before-subcommand"),
+            pytest.param("gh pr create --body-file ok.md --title -bx", id="flag-shaped-title"),
+            pytest.param("gh pr create --body-file ok.md --title -- --draft", id="bare-dashes-title"),
+            pytest.param("gh pr edit 3 --body-file ok.md --add-label -Fbad.md", id="flag-shaped-label"),
+            pytest.param("gh pr create -t -Fbad.md -F ok.md", id="flag-shaped-short-title"),
+            pytest.param(
+                "gh pr create --title fix --body-file bad.md -d=t -F ok.md", id="boolean-short-flag-with-value"
+            ),
+            pytest.param("gh pr create --future-flag v --body-file ok.md", id="unknown-flag"),
+            pytest.param(f"gh pr create --body-file ok.md --body '{PLAIN_FOOTER}'", id="both-body-kinds"),
+        ],
+    )
+    def test_every_way_of_passing_a_footered_body_is_allowed(
+        self, footer_guard, gh_write_token, checkout: Path, command: str
+    ) -> None:
+        """Each spelling that is blocked without the footer spends the approval once the body carries it.
+
+        Scenario: ``ok.md`` ends with the footer and ``bad.md`` does not. The body flags are read as gh reads them, so
+        a title or label shaped like a body flag is its value, never a second body; a guard that blocked these would
+        stop correct bodies.
+        """
+        (checkout / "ok.md").write_text(f"text\n\n{PLAIN_FOOTER}\n", encoding="utf-8")
+        (checkout / "bad.md").write_text("text\n", encoding="utf-8")
+        gh_write_token(checkout, command)
+        result = footer_guard(command)
+        assert (result.returncode, json.loads(result.stdout)) == (0, SPENT_ALLOW), result.stderr
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("gh pr create --body-file bad.md --title -Fok.md", id="flag-shaped-title"),
+            pytest.param("gh pr create -F bad.md -t -Fok.md", id="flag-shaped-short-title"),
+            pytest.param("gh pr edit 3 --body-file bad.md --add-label -Fok.md", id="flag-shaped-label"),
+            pytest.param("gh pr edit 123 --title -- --body bad", id="bare-dashes-title"),
+            pytest.param("gh pr create --body-file bad.md --future-flag -Fok.md", id="unknown-flag-read-both-ways"),
+            pytest.param("gh pr create --body-file ok.md --body 'plain text'", id="both-body-kinds"),
+            pytest.param("gh pr edit 3 --body 'plain text' --body-file ok.md", id="both-body-kinds-reversed"),
+            pytest.param("gh pr create --title fix -b=", id="short-body-flag-with-bare-equals"),
+            pytest.param("gh pr create --future-flag --body-file bad.md", id="unknown-flag-hides-no-body-flag"),
+            pytest.param(
+                f"gh pr create --body-file bad.md --body '{PLAIN_FOOTER}'", id="footered-inline-unfootered-file"
+            ),
+            pytest.param(f"gh pr create --body '{PLAIN_FOOTER}' --body-file bad.md", id="unfootered-file-after-inline"),
+        ],
+    )
+    def test_body_hidden_behind_a_flag_value_is_still_checked(self, footer_guard, checkout: Path, command: str) -> None:
+        """The body gh sends is checked even when a flag value is shaped like another flag.
+
+        Scenario: ``bad.md`` lacks the footer, ``ok.md`` has it. gh gives the word after ``--title`` (or any value flag)
+        to that flag whatever it looks like, so ``--title -Fok.md`` leaves ``bad.md`` as the body. An unknown flag
+        reads both ways and a command naming both body kinds is held to both.
+        """
+        (checkout / "ok.md").write_text(f"text\n\n{PLAIN_FOOTER}\n", encoding="utf-8")
+        (checkout / "bad.md").write_text("text\n", encoding="utf-8")
+        result = footer_guard(command)
+        assert (result.returncode, "AI Rig footer" in result.stderr) == (2, True), result.stderr
+
+    @pytest.mark.parametrize(
+        ("command", "advice"),
+        [
+            pytest.param("gh pr edit 3 --body 'short fix'", "--body-file", id="inline-body-moves-to-a-file"),
+            pytest.param("gh pr edit 3 --body-file body.md", "last line of the body", id="file-body-appends"),
+        ],
+    )
+    def test_block_message_names_a_change_that_can_pass(
+        self, footer_guard, checkout: Path, command: str, advice: str
+    ) -> None:
+        """An inline body cannot hold the footer's line break in one approved line, so the message points at a file.
+
+        Scenario: ``--body 'short fix'`` can never end with the footer on its own line; the message says to write a
+        body file and pass it with ``--body-file``, and for any body it names the already-has-a-footer case.
+        """
+        (checkout / "body.md").write_text("text\n", encoding="utf-8")
+        result = footer_guard(command)
+        assert (result.returncode, advice in result.stderr, "no second `---`" in result.stderr) == (2, True, True)
+
+    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires named pipes")
+    def test_named_pipe_body_is_blocked_without_hanging_the_hook(self, footer_guard, checkout: Path) -> None:
+        """A named pipe named as the body cannot be checked, so it blocks without the hook waiting for a writer.
+
+        Scenario: ``body.md`` is a FIFO nobody writes to. A blocking open would hang the hook until its timeout, which
+        does not block the call; the non-blocking open sees a file that is not regular, and gh could read a writer's
+        bytes the hook cannot, so the message asks for a regular file.
+        """
+        os.mkfifo(checkout / "body.md")
+        result = footer_guard(APPROVED)
+        assert (result.returncode, "not a regular file" in result.stderr) == (2, True), result.stderr
+
+    def test_blank_body_file_is_blocked(self, footer_guard, checkout: Path) -> None:
+        """An empty body file is a draft that was never written, so it lacks the footer like any other body.
+
+        Scenario: ``body.md`` is zero bytes (a failed write). A blank inline ``--body`` stays a deliberate clear.
+        """
+        (checkout / "body.md").write_text("", encoding="utf-8")
+        result = footer_guard(APPROVED)
+        assert (result.returncode, "AI Rig footer" in result.stderr) == (2, True), result.stderr
+
+    def test_directory_body_is_never_read_as_a_body(self, footer_guard, checkout: Path) -> None:
+        """A directory named as the body is stopped whether or not the OS lets the hook open it.
+
+        Scenario: ``--body-file .`` names the work tree. Where the open succeeds the message asks for a regular file;
+        where it throws (native Windows behaviour is not verified here) the check is skipped and the approval
+        requirement answers. Either way the call is blocked and no footer verdict passes.
+        """
+        result = footer_guard("gh pr create --title fix --body-file .")
+        answers = ("not a regular file" in result.stderr, "No gh-write approval" in result.stderr)
+        assert (result.returncode, any(answers)) == (2, True), result.stderr
+
+    def test_footer_after_a_large_body_is_found(self, footer_guard, gh_write_token, checkout: Path) -> None:
+        """The end of a body file counts, not its start: a footer after more text than the read window is accepted.
+
+        Scenario: ``body.md`` holds 300000 bytes of text and then the footer. A check that read the first window of
+        the file instead of the last would see no footer and block.
+        """
+        (checkout / "body.md").write_text(f"{'x' * 300000}\n\n{PLAIN_FOOTER}\n", encoding="utf-8")
+        gh_write_token(checkout, APPROVED)
+        result = footer_guard(APPROVED)
+        assert (result.returncode, json.loads(result.stdout)) == (0, SPENT_ALLOW), result.stderr
+
+    @pytest.mark.parametrize(
+        ("footer_env", "blocked"),
+        [
+            pytest.param("off", False, id="off"),
+            pytest.param("OFF", False, id="off-upper-case"),
+            pytest.param(" off ", True, id="padded-is-not-off"),
+            pytest.param("on", True, id="other-value-keeps-footer"),
+            pytest.param("", True, id="unset-keeps-footer"),
+        ],
+    )
+    def test_opt_out_matches_the_rule(
+        self, footer_guard, gh_write_token, checkout: Path, footer_env: str, blocked: bool
+    ) -> None:
+        """``AI_RIG_FOOTER=off`` (any case) switches the check off, and any other value keeps it, as the rule says."""
+        (checkout / "body.md").write_text("text\n", encoding="utf-8")
+        gh_write_token(checkout, APPROVED)
+        result = footer_guard(APPROVED, footer_env)
+        if blocked:
+            assert (result.returncode, "AI Rig footer" in result.stderr) == (2, True), result.stderr
+        else:
+            assert (result.returncode, json.loads(result.stdout)) == (0, SPENT_ALLOW), result.stderr
 
 
 @_skip_node_or_git_unavailable

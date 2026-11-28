@@ -1171,7 +1171,7 @@ def _validate_action_table(notes_path: Path, result: dict[str, Any], metadata: d
 
 
 def _validate_unavailable_result(
-    out_dir: Path, result: dict[str, Any], metadata: dict[str, Any], scope: str, *, require_deductions: bool = False
+    out_dir: Path, result: dict[str, Any], metadata: dict[str, Any], scope: str, *, candidate: bool = False
 ) -> None:
     """Validate terminal collection failure and bounded report-confidence judgments.
 
@@ -1312,7 +1312,7 @@ def _validate_unavailable_result(
         if recovery != expected:
             raise SystemExit("unavailable-review-judged-confidence-invalid")
         _validate_unavailable_gates(out_dir, result)
-        _validate_unavailable_final_handoff(out_dir, metadata)
+        _validate_unavailable_final_handoff(out_dir, metadata, candidate=candidate)
         return
     binding = metadata.get("final_handoff")
     handoff_path = (
@@ -1346,7 +1346,7 @@ def _validate_unavailable_result(
         has_deductions = True
     else:
         raise SystemExit("unavailable-review-confidence-closures-must-be-canonical")
-    if require_deductions and not has_deductions:
+    if candidate and not has_deductions:
         raise SystemExit("unavailable-review-candidate-confidence-deductions-required")
     expected_recovery = {
         "initial_confidence": 0.9,
@@ -1373,7 +1373,7 @@ def _validate_unavailable_result(
     if metadata.get("confidence_recovery") != expected_recovery:
         raise SystemExit("unavailable-review-confidence-recovery-must-be-canonical")
     _validate_unavailable_gates(out_dir, result)
-    _validate_unavailable_final_handoff(out_dir, metadata)
+    _validate_unavailable_final_handoff(out_dir, metadata, candidate=candidate)
 
 
 def _validate_unavailable_gates(out_dir: Path, result: dict[str, Any]) -> None:
@@ -1417,7 +1417,7 @@ def _unavailable_artifact_matches(out_dir: Path, raw_path: str, filename: str) -
     return any(path.resolve() == expected for path in candidates)
 
 
-def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any]) -> None:
+def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any], *, candidate: bool = False) -> None:
     """Bind versioned unavailable-review explanations to classified, non-secret local diagnostics."""
     binding = metadata.get("final_handoff")
     if not isinstance(binding, dict) or not isinstance(binding.get("handoff_path"), str):
@@ -1477,11 +1477,29 @@ def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any])
     row_id = recovery.get("row_id")
     next_action = recovery.get("next_action")
     resume_condition = "Resume only after a fresh collector run produces and validates the PR source bundle."
-    if handoff.get("presentation_version") in {12, 13, 14, 15}:
+    # The collector's retained procedure identifies the prerequisite. Its current handoff assigns the retry separately.
+    procedure = _unavailable_recovery_action(code, False, command_reason)
+    prerequisite = {
+        UNAVAILABLE_RECOVERY_ACTIONS["install"]: "Install or repair the GitHub CLI locally.",
+        UNAVAILABLE_RECOVERY_ACTIONS["auth"]: "Restore your GitHub CLI access privately and verify repository access.",
+        PR_HEAD_FETCH_RECOVERY_ACTIONS["permission"]: "Restore permitted repository access privately.",
+    }.get(procedure)
+    expected_owner = "code-review"
+    expected_action = (
+        f"Inspect the classified `{label}` collector failure. {procedure}"
+        f"{CHECKOUT_STATE_RECOVERY_SUFFIX if checkout_diagnostic is not None else ''} {resume_condition}"
+    )
+    # Before this rule a promoted report could assign even a private prerequisite to code-review.
+    if prerequisite and (candidate or (handoff["presentation_version"] == 15 and recovery.get("owner") == "User")):
+        expected_owner = "User"
+        checkout_step = "inspect the local checkout state, " if checkout_diagnostic is not None else ""
         expected_action = (
-            f"Inspect the classified `{label}` collector failure. "
-            f"{_unavailable_recovery_action(code, checkout_diagnostic is not None, command_reason)} {resume_condition}"
+            f"{prerequisite} Once you confirm, Codex will {checkout_step}retry collection for `{label}` "
+            "and validate the PR source bundle."
         )
+        if handoff["presentation_version"] != 15 or recovery.get("owner") != expected_owner:
+            raise SystemExit("unavailable-review-final-handoff-recovery-mismatch")
+    if handoff.get("presentation_version") in {12, 13, 14, 15}:
         allowed_artifacts = {
             "Collection failure": "pr-error.txt",
             "Command failure": "command-failure.json",
@@ -1537,11 +1555,11 @@ def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any])
             raise SystemExit("unavailable-review-final-handoff-bounded-text-invalid")
     if (
         not isinstance(row_id, str)
-        or recovery.get("owner") != "code-review"
+        or recovery.get("owner") != expected_owner
         or recovery.get("item") != f"PR collection stopped at `{code}`."
         or not isinstance(next_action, str)
         or f"`{label}`" not in next_action
-        or resume_condition not in next_action
+        or (expected_owner == "code-review" and resume_condition not in next_action)
         or handoff.get("next_steps") != [row_id]
     ):
         raise SystemExit("unavailable-review-final-handoff-recovery-mismatch")
@@ -4240,7 +4258,7 @@ def _terminal_review_steps(out_dir: Path, result_path: Path, context: dict[str, 
                 result,
                 metadata,
                 scope,
-                require_deductions=fresh,
+                candidate=fresh,
             )
         else:
             _validate_closed_result(out_dir, result, metadata, scope, candidate=fresh)

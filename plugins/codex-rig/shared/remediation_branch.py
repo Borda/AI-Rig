@@ -10,7 +10,7 @@
 
     The optional worktree action creates a separate linked checkout for the collector.
     All other actions use local Git queries only. Preparation records the existing branch and verifies
-    its PR source from tracking or, for a same-repository native checkout tracking the target,
+    its PR source from tracking or, for a same-repository native checkout with base tracking or no upstream,
     from the selected remote's PR branch ref. It never creates or switches branches, sets tracking,
     or repairs a changed revision. Only the explicitly requested receipt is written.
 ## Usage
@@ -24,7 +24,8 @@
     --receipt <branch.json>`` immediately after collection. Run ``check`` with that
     receipt and ``--expected-head <recorded-revision>`` before integration or each
     optional commit, and after a commit using its independently observed revision. If the native branch
-    tracks the target, check reads the collector's sibling ``pr/`` directory or an explicit ``--pr-dir``.
+    uses base tracking or has no upstream, check reads the collector's sibling ``pr/`` directory
+    or an explicit ``--pr-dir``.
     For a legacy run already on its original PR branch, use ``recover --legacy-receipt
     <old.json> --pr-dir <retained-pr-directory> --receipt <new.json> --expected-head
     <last-authorized-revision>`` before continuing with ordinary checks.
@@ -67,8 +68,11 @@ sys.pycache_prefix = str(Path(__file__).resolve())
 
 from collect_pr import (  # noqa: E402
     CollectionError,
+    _branch_tracking_value,
     _github_remote_identity,
     _head_repository,
+    _tracking_git_output,
+    _tracking_remote_urls,
     pr_worktree_index_unmasked,
     pr_worktree_is_clean,
     verify_pr_tracking,
@@ -78,12 +82,16 @@ from review_workspace import _checkout_directories, workspace_namespace  # noqa:
 
 def _git(*arguments: str, optional: bool = False, cwd: Path | None = None) -> str:
     """Run a local Git command and distinguish ordinary negative lookups from errors."""
-    result = subprocess.run(["git", *arguments], cwd=cwd, capture_output=True, text=True, check=False, timeout=30)  # noqa: S603, S607 - argv list, no shell; tool resolved via PATH on purpose
-    if optional and result.returncode == 1 and (arguments[:2] == ("config", "--get") or arguments[0] == "check-ignore"):
+    result = subprocess.run(["git", *arguments], cwd=cwd, capture_output=True, check=False, timeout=30)  # noqa: S603, S607 - argv list, no shell; tool resolved via PATH on purpose
+    if (
+        optional
+        and result.returncode == 1
+        and (arguments[:2] in {("config", "--get"), ("config", "--get-all")} or arguments[0] == "check-ignore")
+    ):
         return ""
     if result.returncode:
         raise ValueError(f"git-command-failed:{arguments[0]}:exit-{result.returncode}")
-    return result.stdout.strip()
+    return _tracking_git_output(arguments, result.stdout)
 
 
 def locate_owner(pr_dir: Path, receipt: Path | None) -> dict[str, Any]:
@@ -347,7 +355,7 @@ def _destination(
         ):
             raise
 
-    # Native checkout can leave an existing branch tracking the target. Rebuild the source proof
+    # Native checkout can leave an existing branch tracking the target or without an upstream. Rebuild the source proof
     # from the collector on every check, including after local commits advance the attached branch.
     pr = _read(pr_dir / "pr.json")
     checkout = _read(pr_dir / "local-checkout.json")
@@ -377,10 +385,22 @@ def _destination(
         or not isinstance(selected_url, str)
         or "/".join(_github_remote_identity(selected_url) or ()).casefold() != head_repository.casefold()
         or remote not in _git("remote").splitlines()
-        or remote != _git("config", "--get", f"branch.{branch}.remote")
     ):
         raise ValueError("pr-remote-mismatch:stop-without-changing-tracking")
-    verify_pr_tracking(_git, branch, base_ref, head_repository, pr_url, pr_number)
+    branch_remote = _branch_tracking_value(_git, branch, "remote")
+    branch_merge = _branch_tracking_value(_git, branch, "merge")
+    # A single configured key leaves Git without an upstream. Still reject any conflicting destination.
+    if branch_remote and branch_remote != remote:
+        raise ValueError("pr-remote-mismatch:stop-without-changing-tracking")
+    if branch_merge:
+        if branch_merge not in {f"refs/heads/{base_ref}", f"refs/heads/{head_ref}"}:
+            raise ValueError("pr-upstream-mismatch:stop-without-changing-tracking")
+        _git("check-ref-format", branch_merge)
+    urls = _tracking_remote_urls(_git, remote)
+    if not urls or any(
+        "/".join(_github_remote_identity(url) or ()).casefold() != head_repository.casefold() for url in urls
+    ):
+        raise ValueError("pr-remote-mismatch:stop-without-changing-tracking")
     fetched = _read(pr_dir / "pr-head-fetch.json")
     if (
         fetched.get("status") != "fetched"

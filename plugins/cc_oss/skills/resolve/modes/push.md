@@ -78,13 +78,13 @@ Leave one blank line after the context and end Q1 with `Push {branch} to {config
 Options: exactly these two labels.
 
 - **Approve** — this push, once. Use the option description `one push of this branch at this HEAD to this remote; token valid 15 minutes; up to eight pending approvals per scope`.
-- **Hold** — skip this push and cancel only a pending approval for this same question in this session.
+- **Decline** — skip this push and cancel only a pending approval for this same question in this session.
 
 `PUSH_AUTH=skip` with `BASE_FRESH=no` → still print the drift line beside the skip message, so the manual push is not made blind.
 
 Q2 — `unset` intent only — after the final report: (a) **Open PR in browser** (`gh pr view <PR_NUMBER> --web`) · (b) **Skip**. Run the matching Step 3d post-PR block (`open` or `skip`) — never edit a block's value.
 
-Only proceed to the `git push` below on Q1 `Approve`. On `Hold`: print `` → Push skipped — run `git push` manually when ready. ``, record `skipped-by-user`, and jump to Step 11 (the post-PR answer still applies there). Unanswered Q1 is never authorization: treat it as `Hold`. Never create, copy or edit the push token yourself.
+Only proceed to the `git push` below on Q1 `Approve`. On `Decline`: print `` → Push skipped — run `git push` manually when ready. ``, record `skipped-by-user`, and jump to Step 11 (the post-PR answer still applies there). Unanswered Q1 is never authorization: treat it as `Decline`. Never create, copy or edit the push token yourself.
 
 <!-- policy-sibling: plugins/CLAUDE.md §Blueprint Blocks (canonical), plugins/cc_foundry/agents/challenger.md, plugins/cc_oss/skills/resolve/modes/item-selection.md (Step 3d), plugins/cc_oss/skills/resolve/modes/push.md (Step 10), plugins/cc_oss/skills/review/modes/acceptance-gate.md (reject gate) -->
 

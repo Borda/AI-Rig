@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from test_code_review_unavailable_artifact_contract import _judged_profile, _load_module, _write_unavailable_artifact
+from test_code_review_unavailable_artifact_contract import (
+    ACCESS_RECOVERY,
+    _judged_profile,
+    _load_module,
+    _write_unavailable_artifact,
+)
 from test_unavailable_multi_confidence import (
     CHECKOUT_STARTED,
     assert_promoted_unavailable_blocks_intake,
@@ -104,8 +109,95 @@ def _complete_run(run_dir: Path) -> subprocess.CompletedProcess[str]:
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
+
+
+@pytest.mark.parametrize(
+    ("code", "legacy_action", "prerequisite"),
+    [
+        pytest.param(
+            "missing-command:gh",
+            "Install or repair gh locally, then retry.",
+            "Install or repair the GitHub CLI locally.",
+            id="missing-cli",
+        ),
+        pytest.param(
+            "github-auth:gh-pr-view",
+            "Repair local gh access privately, verify repository access, then retry.",
+            "Restore your GitHub CLI access privately and verify repository access.",
+            id="private-sign-in",
+        ),
+        pytest.param(
+            "github-permission:gh-pr-view",
+            "Repair local gh access privately, verify repository access, then retry.",
+            "Restore your GitHub CLI access privately and verify repository access.",
+            id="repository-permission",
+        ),
+    ],
+)
+def test_unavailable_prerequisite_owner_before_and_after_promotion(
+    tmp_path: Path, code: str, legacy_action: str, prerequisite: str
+) -> None:
+    """Keep historical bytes while assigning the user’s prerequisite and Codex’s retry on new reports."""
+    assert _promote_run(tmp_path, None, command_failure=False).returncode == 0
+    result_path = tmp_path / "result.json"
+    result = json.loads(result_path.read_bytes())
+    metadata = result["metadata"]
+    metadata["collection_failure"]["code"] = code
+    (tmp_path / "pr-error.txt").write_text(code + "\n", encoding="utf-8")
+    notes = tmp_path / "review-notes.md"
+    notes.write_text(
+        notes.read_text(encoding="utf-8")
+        .replace("github-network:gh-pr-view", code)
+        .replace(ACCESS_RECOVERY, legacy_action),
+        encoding="utf-8",
+    )
+    source = tmp_path / "final-handoff.json"
+    final = tmp_path / "final.md"
+    proof = tmp_path / "final-handoff.validation.json"
+    handoff = json.loads(source.read_bytes())
+    label = code.rsplit(":", 1)[-1]
+    summary = (
+        "I could not retrieve the PR metadata, so the review has not started."
+        if label == "gh-pr-view"
+        else "Source collection stopped before I could verify which PR revision to review."
+    )
+    handoff["outcome"]["summary"] = f"{summary} Reason: `{code}`. The collector did not retain a more specific cause."
+    row = handoff["remaining"][0]
+    row["item"] = f"PR collection stopped at `{code}`."
+    row["next_action"] = (
+        f"Inspect the classified `{label}` collector failure. {legacy_action} Resume only after a fresh collector run produces and validates the PR source bundle."
+    )
+    finalizer = _load_module(PLUGIN_ROOT / "shared/final_handoff.py", "unavailable_bound_owner_finalizer")
+    review = _load_module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py", "unavailable_bound_owner_review")
+
+    def bind() -> None:
+        """Bind the test handoff and result to the renderer’s actual content digests."""
+        source.write_text(json.dumps(handoff), encoding="utf-8")
+        validation = finalizer.render_files(source, final, proof)
+        metadata["final_handoff"].update(
+            handoff_sha256=validation["handoff_sha256"], rendered_sha256=validation["rendered_sha256"]
+        )
+        result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    bind()
+    legacy_bytes = final.read_bytes()
+    assert _complete_run(tmp_path).stdout.encode("utf-8") == legacy_bytes
+    candidate = tmp_path / "result.candidate.json"
+    candidate.write_bytes(result_path.read_bytes())
+    with pytest.raises(SystemExit, match="unavailable-review-final-handoff-recovery-mismatch"):
+        review._validate_result(tmp_path, candidate, tmp_path, PARENT_THREAD, tmp_path)
+
+    row["owner"] = "User"
+    row["next_action"] = (
+        f"{prerequisite} Once you confirm, Codex will retry collection for `{label}` and validate the PR source bundle."
+    )
+    bind()
+    candidate.write_bytes(result_path.read_bytes())
+    review._validate_result(tmp_path, candidate, tmp_path, PARENT_THREAD, tmp_path)
+    assert _complete_run(tmp_path).stdout.encode("utf-8") == final.read_bytes()
 
 
 @RUN_SHAPES

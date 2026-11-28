@@ -2848,6 +2848,9 @@ class TestDataProgramsWithLetterOptions:
             pytest.param('jq -e ".a" "$(git rev-parse --show-toplevel)/f.json"', id="jq-e"),
             pytest.param('head -c 10 "$(git rev-parse --show-toplevel)/f"', id="head-c"),
             pytest.param('diff -r a "$(git rev-parse --show-toplevel)/b"', id="diff-r"),
+            pytest.param('chmod +x "$(git rev-parse --show-toplevel)/x.sh"', id="chmod-plus-x"),
+            pytest.param('chmod -R u+x "$(git rev-parse --show-toplevel)/bin"', id="chmod-recursive"),
+            pytest.param('chown -R me "$(git rev-parse --show-toplevel)/bin"', id="chown-recursive"),
         ],
     )
     def test_a_letter_option_of_a_data_program_does_not_stop_the_guard(self, command: str) -> None:

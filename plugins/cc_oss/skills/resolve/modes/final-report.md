@@ -41,7 +41,7 @@ cat "$_OSS_RESOLVE/templates/resolve-report.md"  # timeout: 5000
 
 Report template (loaded above) — use for section structure. Its `### Push` section shows the printed `PUSH_STATUS` through the template's status table, never a prose recollection of Step 10. Its `### Review Intake` section appears only when the block printed `INTAKE=degraded`, built from the gap JSON printed beside it, never from recollection of the triage. More than 50 items selected → the report's summary carries Step 3d's large-selection line.
 
-`skipped-by-user` records the user's own answer (Step 3d "don't push" or Step 10 "Hold"): report it as that decision, never as a failure, a defect or a Confidence gap.
+`skipped-by-user` records the user's own answer (Step 3d "don't push" or Step 10 "Decline"): report it as that decision, never as a failure, a defect or a Confidence gap.
 
 **Report file — required.** Step 9 left an incomplete stub at `<run dir>/resolve-report.md` the moment the run dir existed, and Step 10 updated it. This block names the run dir (minting one when Step 9 never ran), marks the stub as having reached Step 11 and prints `RESOLVE_REPORT=<path>` — the path the full report is written to below:
 

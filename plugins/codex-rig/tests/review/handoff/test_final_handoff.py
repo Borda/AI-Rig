@@ -169,6 +169,56 @@ def _review_payload(heading: str, presentation: int, layout: str, suffix: str) -
     )
 
 
+def test_assessed_review_prints_workflow_actions_as_ordered_bullets(finalizer: Any, tmp_path: Path) -> None:
+    """A local review retains the finding proposal and gives each workflow action its own bullet."""
+    payload = _review_payload("Review Snapshot", 18, "concise", "")
+    payload["tables"][0].update(source_rating_version=2, verification_readiness="blocked")
+    payload["outcome"]["summary"] = "Recommendation: MAJOR_REVISION."
+    payload["remaining"] = [
+        {
+            "row_id": "ci",
+            "owner": "Maintainer",
+            "item": "The required CI check failed.\rThe fix is ready.",
+            "next_action": "Rerun CI.\r\nConfirm the required job passes.",
+        },
+        {
+            "row_id": "fix",
+            "owner": "User",
+            "item": "Apply the accepted findings.",
+            "next_action": "Run Code Remediate.",
+        },
+    ]
+    payload["next_steps"] = ["fix", "ci"]
+    payload["action_policy"] = "owned"
+    _write_review_notes(tmp_path, finalizer, payload)
+
+    rendered = finalizer.render_handoff(payload, report_root=tmp_path)
+
+    findings, actions = rendered.split("**Recommendations / next steps**\n\n")
+    assert "| ID | Author | Finding | Resolution proposal | Status |" in findings
+    assert findings.count("Handle empty input") == 1
+    assert "Handle empty input" not in actions
+    assert actions.index("- **User** — Run Code Remediate.") < actions.index("- **Maintainer** — Rerun CI.")
+    assert "\n  Confirm the required job passes.\n  The required CI check failed.\n  The fix is ready.\n" in actions
+    assert "\r" not in rendered
+
+
+@pytest.mark.parametrize("row_id", ["CR-1", "fix-parser"])
+def test_assessed_review_rejects_a_repeated_finding_proposal(finalizer: Any, row_id: str) -> None:
+    """Reused finding actions cannot fill the closing workflow recommendation."""
+    payload = _review_payload("Review Snapshot", 18, "concise", "")
+    payload["tables"][0].update(source_rating_version=2, verification_readiness="blocked")
+    payload["outcome"]["summary"] = "Recommendation: MAJOR_REVISION."
+    payload["remaining"] = [
+        {"row_id": row_id, "item": "Parser", "owner": "Author", "next_action": "Handle empty input"}
+    ]
+    payload["next_steps"] = [row_id]
+    payload["action_policy"] = "owned"
+
+    with pytest.raises(finalizer.HandoffError, match=f"review-next-step-repeats-resolution:{row_id}"):
+        finalizer.render_handoff(payload)
+
+
 def _write_review_notes(root: Path, finalizer: Any, payload: dict[str, object]) -> None:
     """Write the review notes; an overview-only findings table needs the full details appended to them."""
     overview = payload["tables"][1].get("overview_only", False)

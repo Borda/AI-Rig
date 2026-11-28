@@ -15,7 +15,7 @@ Always:
 - Then run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/skills/code-review/review_routing.py --out <run-directory>` so shipped deterministic producer replaces `mechanical_risk_tier` and `mechanical_risk_evidence` from `files.txt`, `untracked.txt`, and `numstat.txt`; never calculate or copy those fields manually.
 - That producer rejects missing or invalid `risk_tier`, an absent/incomplete/extra-key `signals` object, and non-boolean signal values before rewriting routing or specialist work. `signal_evidence` explains decisions; it does not replace the separate boolean `signals` object. Never infer omitted signals as `false` or move them to top level. Correct malformed inputs against retained source evidence, then rerun the producer; never defer a schema error until final manifest preflight.
 - Keep declared tier at or above mechanical file/line, binary-size, config/dependency, CI, migration, or security-path evidence.
-- Set matching signals true for mechanically detected test, docs, data/tensor, CI, and security paths.
+- Set matching signals true for mechanically detected test, docs, data/tensor and CI paths. Security-sensitive paths raise the tier to `HIGH_RISK`. Give the regular reviewers the affected paths and security concerns. Set `axis_security_auditor` only for an explicitly user-selected advisory pass. Without that selection, keep the signal false and continue the current review.
 - Write `<run-directory>/specialist-manifest.json`, with empty `passes` when no role triggers. Never add untriggered manifest roles.
 - For any changed production `.py` or `.pyi` file (including paths in `untracked.txt`), trigger `sw-engineer` as the primary source-code reviewer and give it a non-empty `trigger_reasons` entry. Test modules (`test_*.py`, `conftest.py`, or files under `tests/`) alone do not trigger it. This applies at every risk tier; the source-path validator enforces it.
 
@@ -65,7 +65,7 @@ The following neutral example shows the complete nested shape, not default revie
     "material_no_finding": ["Inspected scope has no material behavior or API change needing challenge."],
     "explicit_adversarial": ["User requested no adversarial pass."],
     "axis_solution_architect": ["Inspected scope has no architecture axis."],
-    "axis_security_auditor": ["Inspected scope has no security axis."],
+    "axis_security_auditor": ["No security advisory pass was requested."],
     "axis_data_steward": ["Inspected scope has no data-pipeline axis."],
     "axis_cicd_steward": ["Inspected scope has no CI/CD axis."],
     "axis_linting_expert": ["Inspected scope has no static-analysis axis."],

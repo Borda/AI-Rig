@@ -11,7 +11,7 @@
 //      `gh-write` answered `Approve` the single-use gh write token `claude-gh-write-approval.json`
 //      for the one plain gh command the question names in an inline code span, binding the files it
 //      names. Each token names the answered call (`question_id`); its spend re-reads that call and
-//      answer from the session transcript. `Hold` to `git-push` or `gh-write` removes that pending
+//      answer from the session transcript. `Decline` to `git-push` or `gh-write` removes that pending
 //      token. Every other answer and question writes nothing; a refusal (pre-filled answer, spawned
 //      agent, undisclosed revoke path, rejected location, detached HEAD, no single gh command span, an
 //      invisible or control character, a command that is not one plain gh invocation, stdin) is

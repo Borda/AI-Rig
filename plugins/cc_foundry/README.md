@@ -182,7 +182,7 @@ A plain commit needs authorization and asks one question (every other local Git 
 
 - **Approve** — this operation only
 - **Approve always** — this operation, plus a standing grant for this project
-- **Hold** — skip this commit; leave changes as they are
+- **Decline** — skip this commit; leave changes as they are
 
 How the standing grant works:
 
@@ -198,9 +198,9 @@ A grant never covers push (asked every time), force operations, history rewritin
 
 ### Push
 
-Every push asks its own question, `git-push`: **Approve** (this push, once) or **Hold**. The question shows the branch, the target and the command the agent will run.
+Every push asks its own question, `git-push`: **Approve** (this push, once) or **Decline**. The question shows the branch, the target and the command the agent will run.
 
-- Approve makes the hook record a single-use token in the git common directory, named `claude-push-approval.json` or a slot beside it. It binds the branch, HEAD and configured remote in your question and expires after 15 minutes. Approve replaces and Hold cancels only the same question's token in the same session. Each scope can hold eight pending tokens. A full scope refuses another approval.
+- Approve makes the hook record a single-use token in the git common directory, named `claude-push-approval.json` or a slot beside it. It binds the branch, HEAD and configured remote in your question and expires after 15 minutes. Approve replaces and Decline cancels only the same question's token in the same session. Each scope can hold eight pending tokens. A full scope refuses another approval.
 - `commit-guard.js` checks your transcript answer and spends one matching token. A push with no remote operand must resolve to the configured remote in the question. If one call gets delivered twice, replay uses the same claim across the one-off and run scopes. Only one of two parallel calls can spend a given token, and spawned agents cannot spend it. Each shell-text inspection phase has a one-second budget that excludes Git discovery time, so slow Git subprocesses do not invalidate an otherwise readable push.
 - The push must run from the checkout itself (or as the worktree push below), be the only push in its command, and have no commit, reset or checkout beside it. A second push, a new commit or another branch needs a new Approve.
 - A worktree of the project that the session is not in is pushed without `cd`, as `git -C <absolute worktree path> push <remote> <branch>`:
@@ -208,20 +208,20 @@ Every push asks its own question, `git-push`: **Approve** (this push, once) or *
   - The question shows that command, and the token then holds that worktree's branch and HEAD; a current-branch substitution is not read there, so the branch is written out.
   - A worktree push needs your explicit selection: it runs only on an approval whose question showed that worktree (`git-push`, or the `git-push-run` push span), never on one that named no worktree or another.
 - No Approve covers deleting a remote branch, `--prune`, `--all`, `--tags`, another branch or ref, a URL, path or variable destination, `cd`, `env -C`, `sudo -D`, `chroot`, `--git-dir`, `--work-tree`, any other `-C` use, `send-pack`, `http-push` or `subtree push`: the agent gives you the command to run yourself.
-- One exception to a question per push: `/oss:resolve` asks once at its start, `git-push-run` (**Approve** / **Hold**), naming one `git push <remote> <branch>` and the PR head commit id. Approve records `claude-push-run-approval.json`, valid 12 hours; one push of that branch to that remote then runs while HEAD descends from that head, so the run does not ask again. Every other rule above still holds. A run approval may name a worktree in its push span, as `git -C <absolute worktree path> push <remote> <branch>`; `/oss:resolve` itself pushes from the lead's own checkout and names none.
+- One exception to a question per push: `/oss:resolve` asks once at its start, `git-push-run` (**Approve** / **Decline**), naming one `git push <remote> <branch>` and the PR head commit id. Approve records `claude-push-run-approval.json`, valid 12 hours; one push of that branch to that remote then runs while HEAD descends from that head, so the run does not ask again. Every other rule above still holds. A run approval may name a worktree in its push span, as `git -C <absolute worktree path> push <remote> <branch>`; `/oss:resolve` itself pushes from the lead's own checkout and names none.
 - A dry run (`--dry-run`) needs no approval. Force pushes stay forbidden even with a token.
 - SessionStart and `/clear` remove only the pending tokens and spent claims owned by the hook's session. If the scope's reservation is busy, cleanup leaves those records in place.
 
 ### GitHub writes through `gh`
 
-GitHub reads through `gh` run without a question. Inline GraphQL queries can include comments, fragments and strings. Unreadable query text and ref-update bodies, and non-false force arguments on writes, are blocked. Each GitHub write command asks a `gh-write` question with **Approve** (this exact command, once) or **Hold**. Related replies and resolutions can share one aliased GraphQL mutation. When separate commands are needed, the agent asks up to four questions per call and spends or revokes the tokens before the next batch.
+GitHub reads through `gh` run without a question. Inline GraphQL queries can include comments, fragments and strings. Unreadable query text and ref-update bodies, and non-false force arguments on writes, are blocked. Each GitHub write command asks a `gh-write` question with **Approve** (this exact command, once) or **Decline**. Related replies and resolutions can share one aliased GraphQL mutation. When separate commands are needed, the agent asks up to four questions per call and spends or revokes the tokens before the next batch.
 
 - The question names the command once in an inline code span. Approve makes the hook record a single-use token, `claude-gh-write-approval.json`, holding that command for 15 minutes.
 - `gh-write-guard.js` allows the approved text once as the whole Bash command, after checking that its files still match the approval. This includes option-shaped file operands. Ambiguous Windows paths and `gh repo create --source` require a separate publication route because the token cannot bind that input.
-- The same replacement, scoped Hold, eight-slot limit and session cleanup rules apply to `gh-write` tokens.
+- The same replacement, scoped Decline, eight-slot limit and session cleanup rules apply to `gh-write` tokens.
 - Outside a git repository nothing is recorded, so you run the command yourself.
 - Claude Code still applies a settings deny rule after a hook allows a call, so the plugins no longer ship gh write deny entries. Re-run `/foundry:setup` once to remove the ones an earlier setup merged.
-- Pull request bodies Claude drafts end with an italic note, `*🐰 Built with AI help from **[AI Rig](https://github.com/Borda/AI-Rig)**, the open-source agent setup I use. If it saved you time, a ⭐ helps others find it.*`, set off by a `---` line unless the body already ends with another footer, replacing the host's default Claude Code footer; the footer sits in the body you approve. Set `AI_RIG_FOOTER=off` in the `env` block of Claude Code settings to omit it.
+- Pull request bodies Claude drafts end with an italic note, `*🐰 Built with AI help from **[AI Rig](https://github.com/Borda/AI-Rig)**, the open-source agent setup I use. If it saved you time, a ⭐ helps others find it.*`, set off by a `---` line unless the body already ends with another footer, replacing the host's default Claude Code footer; the footer sits in the body you approve. Set `AI_RIG_FOOTER=off` in the `env` block of Claude Code settings to omit it. `gh-write-guard.js` enforces the note: a `gh pr create`, `gh pr new` or `gh pr edit` whose `--body-file` or `--body` body does not end with it is blocked before your approval is spent, so a body drafted after the rule was lost, for example following a `/compact`, cannot go out with the host's footer. `--fill`, `--template`, stdin, a body file the hook cannot open by its literal path (absent, `~`, `$VAR`, a Windows Git Bash `/c/...` path) and `gh api` pull request writes are not checked; an empty body file or a body path that is no regular file is blocked.
 
 > Single-use approvals take an exclusive reservation in the git common directory while a token is validated, spent, replaced or revoked. Concurrent calls wait at most one second, then deny if it remains busy. If a hook crashes, stop active hooks before manually deleting the scope's `<token-file>.spent-lock` from the git common directory. The hook protects named token slots, claims, reservations, writer temp files and transcripts, including as output redirection targets.
 

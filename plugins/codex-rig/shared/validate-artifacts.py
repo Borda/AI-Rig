@@ -70,6 +70,7 @@ from adversarial_loop import load_ledger  # noqa: E402,F401 (loaders and tests r
 from audit_consolidation import settle_consolidation  # noqa: E402,F401 (loaders and tests read it from this module)
 from collect_diff import canonical_diff_arguments  # noqa: E402
 from collect_pr import _github_remote_identity, _head_repository, dirty_path_record_is_consistent  # noqa: E402
+from final_handoff import ASSESSED_REVIEW_PRESENTATION  # noqa: E402
 from gate_test_approval import validate_pass, validate_tests  # noqa: E402
 from parallel_worktrees import (  # noqa: E402
     PilotError,
@@ -762,7 +763,7 @@ def _validate_final_handoff(
     if validation.get("rendered_sha256") != binding.get("rendered_sha256"):
         raise SystemExit("final-handoff-rendered-digest-mismatch")
     if (
-        handoff.get("presentation_version") in {12, 13, 14, 15, 16}
+        handoff.get("presentation_version") in {12, 13, 14, 15, 16, ASSESSED_REVIEW_PRESENTATION}
         and result["status"] in {"fail", "timeout"}
         and handoff.get("branch") not in {"closed", "caller-contract"}
         and not handoff.get("next_steps")
@@ -870,7 +871,7 @@ def _validate_final_handoff(
         _validate_code_review_final_handoff(
             result, handoff, candidate=current_contract, out_dir=out_dir, fresh_candidate=candidate
         )
-    if candidate and handoff.get("presentation_version") not in {8, 9, 10, 11, 12, 13, 14, 15, 16, 17}:
+    if candidate and handoff.get("presentation_version") not in {*range(8, 18), ASSESSED_REVIEW_PRESENTATION}:
         raise SystemExit("current-handoff-presentation-v8-required")
 
 

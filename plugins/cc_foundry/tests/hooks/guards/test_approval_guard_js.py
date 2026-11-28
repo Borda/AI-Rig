@@ -6,14 +6,15 @@ token. Three parts are covered:
 
 * **Writer** (``PostToolUse`` on ``AskUserQuestion``) — only the user's ``Approve always`` answer to the exact
   ``git-approve`` question, whose ``Approve always`` description names the record file, writes
-  ``<git common dir>/claude-git-approval.json``: one grant per project, seen from every worktree. ``Approve``, ``Hold``,
-  other questions, shape drift, spawned-agent questions and rejected locations write nothing. ``git-push`` answered
-  ``Approve`` writes the push token for one push of the current branch at the current HEAD; ``gh-write`` answered
-  ``Approve`` writes the gh write token holding the one gh command the question names in an inline code span; ``Hold``
-  to either removes a pending token. Whether the model pre-filled the answer is read from its own call in the session
-  transcript, never from PostToolUse ``tool_input``. Writes are atomic and idempotent, so Foundry copies leave one
-  record, and a copy finding its answer already recorded stays silent. Real cases drive the push token against a
-  local bare remote and the gh write token through ``gh-write-guard.js``, with a fake ``gh`` first on ``PATH``.
+  ``<git common dir>/claude-git-approval.json``: one grant per project, seen from every worktree. ``Approve``,
+  ``Decline``, other questions, shape drift, spawned-agent questions and rejected locations write nothing. ``git-push``
+  answered ``Approve`` writes the push token for one push of the current branch at the current HEAD; ``gh-write``
+  answered ``Approve`` writes the gh write token holding the one gh command the question names in an inline code span;
+  ``Decline`` to either removes a pending token. Whether the model pre-filled the answer is read from its own call in
+  the session transcript, never from PostToolUse ``tool_input``. Writes are atomic and idempotent, so Foundry copies
+  leave one record, and a copy finding its answer already recorded stays silent. Real cases drive the push token
+  against a local bare remote and the gh write token through ``gh-write-guard.js``, with a fake ``gh`` first on
+  ``PATH``.
 * **Grant check** (``node commit-guard.js --check-grant``) — prints ``grant .git/claude-git-approval.json@<created_at>``
   only for a valid record in the session's own common dir: git discovery variables removed, bare repositories refused,
   common dir named ``.git`` and linked back from its work tree, bound to ``CLAUDE_PROJECT_DIR`` when set. Unknown record
@@ -54,7 +55,7 @@ GRANT_NAME = "claude-git-approval.json"
 GRANT_RECORD = f"grant .git/{GRANT_NAME}@"
 REVOKE = f'rm "$(git rev-parse --git-common-dir)/{GRANT_NAME}"'
 QUESTION = "Commit 3 files on main as 'feat(hooks): add grant'?"
-OPTIONS = ["Approve", "Approve always", "Hold"]
+OPTIONS = ["Approve", "Approve always", "Decline"]
 #: What the rule requires the ``Approve always`` option to tell the user: persistence, scope and the revoke path.
 ALWAYS_DESCRIPTION = (
     "This commit, plus a standing grant for this project: later sessions in every worktree skip this question for "
@@ -364,7 +365,7 @@ class TestScopeTable:
             [
                 "local-git-non-destructive",
                 "git-approve",
-                ["Approve", "Approve always", "Hold"],
+                ["Approve", "Approve always", "Decline"],
                 "Approve always",
                 "claude-git-approval.json",
                 [],
@@ -374,7 +375,7 @@ class TestScopeTable:
             [
                 "push-once",
                 "git-push",
-                ["Approve", "Hold"],
+                ["Approve", "Decline"],
                 "Approve",
                 "claude-push-approval.json",
                 ["question_id", "branch", "head", "expires_at"],
@@ -384,7 +385,7 @@ class TestScopeTable:
             [
                 "push-run",
                 "git-push-run",
-                ["Approve", "Hold"],
+                ["Approve", "Decline"],
                 "Approve",
                 "claude-push-run-approval.json",
                 ["question_id", "remote", "branch", "base_head", "expires_at"],
@@ -394,7 +395,7 @@ class TestScopeTable:
             [
                 "gh-write-once",
                 "gh-write",
-                ["Approve", "Hold"],
+                ["Approve", "Decline"],
                 "Approve",
                 "claude-gh-write-approval.json",
                 ["question_id", "command", "files_sha256", "expires_at"],
@@ -429,16 +430,16 @@ class TestScopeTable:
         ]
 
     def test_only_a_token_deny_revokes(self) -> None:
-        """Only the token questions' ``Hold`` removes a pending record; a skipped Git operation keeps its grant.
+        """Only the token questions' ``Decline`` removes a pending record; a skipped Git operation keeps its grant.
 
         A token stands for one answer, so the latest push or gh write answer decides; a standing grant outlives a
-        ``Hold`` to one operation it never needed to cover.
+        ``Decline`` to one operation it never needed to cover.
         """
         assert _node_lib("g.SCOPES.map(r => [r.id, r.revokeAnswer])") == [
             ["local-git-non-destructive", None],
-            ["push-once", "Hold"],
-            ["push-run", "Hold"],
-            ["gh-write-once", "Hold"],
+            ["push-once", "Decline"],
+            ["push-run", "Decline"],
+            ["gh-write-once", "Decline"],
         ]
 
     def test_every_covered_and_never_covered_list_is_non_empty(self) -> None:
@@ -543,7 +544,7 @@ class TestGrantRecording:
         ("answer", "question"),
         [
             pytest.param("Approve", None, id="approve-once"),
-            pytest.param("Hold", None, id="hold"),
+            pytest.param("Decline", None, id="decline"),
             pytest.param("Approve always", _question(header="Release"), id="other-header"),
         ],
     )
@@ -552,8 +553,8 @@ class TestGrantRecording:
     ) -> None:
         """Only the exact question shape answered ``Approve always`` grants; everything else stays silent.
 
-        ``Approve`` covers one operation, ``Hold`` skips it, and an unrelated header must not turn an ``Approve always``
-        label into standing Git authority.
+        ``Approve`` covers one operation, ``Decline`` skips it, and an unrelated header must not turn an ``Approve
+        always`` label into standing Git authority.
         """
         proc = run_hook(answered(checkout, answer, question))
         assert proc.returncode == 0
@@ -573,7 +574,7 @@ class TestGrantRecording:
     @pytest.mark.parametrize(
         ("answer", "question"),
         [
-            pytest.param("Approve always", _question(options=["Approve always", "Hold"]), id="missing-option"),
+            pytest.param("Approve always", _question(options=["Approve always", "Decline"]), id="missing-option"),
             pytest.param("Approve always", _question(options=[*OPTIONS, "Approve and push"]), id="extra-option"),
             pytest.param("Approve always", _question(options=["Approve", "Approve always", "Deny"]), id="old-label"),
             pytest.param("Approve always", _question(multi=True), id="multi-select"),
@@ -1826,6 +1827,12 @@ class TestMissingModule:
 PUSH_RECORD = "claude-push-approval.json"
 GH_WRITE_RECORD = "claude-gh-write-approval.json"
 GH_COMMAND = "gh pr create --title fix --body-file body.md"
+#: The plain footer note a pull request body ends with (``rules/public-github.md`` §PR body footer); the guard blocks
+#: ``GH_COMMAND`` whose body file lacks it before it looks at the approval.
+PR_BODY_FOOTER = (
+    "🐰 Built with AI help from [AI Rig](https://github.com/Borda/AI-Rig), the open-source agent setup I use. "
+    "If it saved you time, a ⭐ helps others find it."
+)
 #: Fields of a gh write token, in the order the writer serializes them.
 GH_WRITE_FIELDS = [
     "version",
@@ -1842,7 +1849,7 @@ GH_WRITE_FIELDS = [
 #: Bytes of file content one gh write command may bind (FILE_DIGEST_MAX_BYTES in the module).
 FILE_DIGEST_MAX_BYTES = 1024 * 1024 * 1024
 PUSH_COMMAND = "git push origin main"
-PUSH_OPTIONS = ["Approve", "Hold"]
+PUSH_OPTIONS = ["Approve", "Decline"]
 #: Fields of a push token, in the order the writer serializes them.
 PUSH_FIELDS = [
     "version",
@@ -1952,13 +1959,13 @@ class TestTokenAnswers:
     def test_deny_removes_a_pending_token(
         self, run_hook: Callable, answered: Callable, checkout: Path, question: Callable, token_path: Callable
     ) -> None:
-        """A later ``Hold`` cancels an earlier approval not yet spent: the latest answer decides.
+        """A later ``Decline`` cancels an earlier approval not yet spent: the latest answer decides.
 
         Without this, a token approved earlier for the same command would still allow the operation the user just
         refused.
         """
         run_hook(answered(checkout, "Approve", question()))
-        proc = run_hook(answered(checkout, "Hold", question()))
+        proc = run_hook(answered(checkout, "Decline", question()))
         assert not token_path(checkout).exists()
         assert "removed" in _context(proc)
 
@@ -1971,7 +1978,7 @@ class TestTokenAnswers:
         proc = run_hook(answered(checkout, "no, wait", question()))
         assert not token_path(checkout).exists()
         assert "typed text" in _context(proc)
-        assert "answered Hold" not in _context(proc)
+        assert "answered Decline" not in _context(proc)
 
     @pytest.mark.parametrize("answer", ["Deny", "Approve"])
     def test_an_answer_to_a_drifted_question_removes_a_pending_token_and_says_so(
@@ -1986,8 +1993,8 @@ class TestTokenAnswers:
         """Any answer to a question this hook cannot read lowers authority and is reported.
 
         A session whose loaded rule text still offers ``Approve`` / ``Deny`` keeps asking that question after the hook
-        moved to ``Hold``; the user's refusal must still cancel an earlier approval not yet spent, and an approval there
-        records nothing.
+        moved to ``Decline``; the user's refusal must still cancel an earlier approval not yet spent, and an approval
+        there records nothing.
         """
         run_hook(answered(checkout, "Approve", question()))
         assert token_path(checkout).exists()
@@ -1999,7 +2006,7 @@ class TestTokenAnswers:
         assert not token_path(checkout).exists()
         assert "nothing was recorded" in _context(proc)
         assert "/foundry:setup" in _context(proc)
-        assert "answered Hold" not in _context(proc)
+        assert "answered Decline" not in _context(proc)
 
     def test_spawned_agent_question_records_nothing(
         self, run_hook: Callable, answered: Callable, checkout: Path, question: Callable, token_path: Callable
@@ -2083,11 +2090,11 @@ class TestPushTokenRecording:
         assert "does not name branch main" in _context(proc)
 
     def test_deny_writes_nothing(self, run_hook: Callable, answered: Callable, checkout: Path) -> None:
-        """``Hold`` skips the push: no token, and with none pending nothing to report.
+        """``Decline`` skips the push: no token, and with none pending nothing to report.
 
-        Starting state: a ``Hold`` with no token pending; the writer stays silent and exits 0.
+        Starting state: a ``Decline`` with no token pending; the writer stays silent and exits 0.
         """
-        proc = run_hook(answered(checkout, "Hold", _push_question()))
+        proc = run_hook(answered(checkout, "Decline", _push_question()))
         assert not _push_token(checkout).exists()
         assert (proc.returncode, proc.stdout) == (0, "")
 
@@ -2097,7 +2104,7 @@ class TestPushTokenRecording:
         """A repeated approval of the same question replaces its token; another question's token stays beside it.
 
         Starting state: a pending token for ``git push origin main``. Approving the same question again at a moved HEAD
-        replaces it in place. A later ``Hold`` for the other spelling removes only its token.
+        replaces it in place. A later ``Decline`` for the other spelling removes only its token.
         """
         first = _push_question("git push origin main")
         run_hook(answered(checkout, "Approve", first))
@@ -2107,7 +2114,7 @@ class TestPushTokenRecording:
         later = _push_question("git push -u origin main")
         run_hook(answered(checkout, "Approve", later))
         tokens = _names_with(checkout / ".git", PUSH_RECORD)
-        run_hook(answered(checkout, "Hold", later))
+        run_hook(answered(checkout, "Decline", later))
         assert (replaced["question"], replaced["head"]) == (first["question"], _rev(checkout))
         assert len(tokens) == 2
         assert _names_with(checkout / ".git", PUSH_RECORD) == [PUSH_RECORD]
@@ -2711,12 +2718,14 @@ class TestPushTokenRealCase:
         allowed = _guard_push(checkout, "git push origin main")
         assert allowed.returncode == 0, allowed.stderr
 
-    @pytest.mark.parametrize("hold_first", [pytest.param(False, id="hold-last"), pytest.param(True, id="hold-first")])
-    def test_stacked_hold_applies_before_any_approve(
-        self, run_hook: Callable, checkout: Path, tmp_path: Path, hold_first: bool
+    @pytest.mark.parametrize(
+        "decline_first", [pytest.param(False, id="decline-last"), pytest.param(True, id="decline-first")]
+    )
+    def test_stacked_decline_applies_before_any_approve(
+        self, run_hook: Callable, checkout: Path, tmp_path: Path, decline_first: bool
     ) -> None:
-        """One call answering ``Approve`` to one push and ``Hold`` to another leaves only the approved token, in either
-        order.
+        """One call answering ``Approve`` to one push and ``Decline`` to another leaves only the approved token, in
+        either order.
 
         The outcome never depends on which question comes first: every revoking answer applies before any approval is
         recorded.
@@ -2725,8 +2734,8 @@ class TestPushTokenRealCase:
         _git("worktree", "add", "-b", "feature", str(worktree), cwd=checkout)
         _git("commit", "--allow-empty", "-m", "feature work", cwd=worktree)
         feature = f"git -C {worktree.as_posix()} push origin feature"
-        pair = [(_push_question(PUSH_COMMAND), "Approve"), (_push_question(feature), "Hold")]
-        if hold_first:
+        pair = [(_push_question(PUSH_COMMAND), "Approve"), (_push_question(feature), "Decline")]
+        if decline_first:
             pair.reverse()
         _approve_together(run_hook, checkout, [q for q, _ in pair], [a for _, a in pair])
         names = _names_with(checkout / ".git", PUSH_RECORD)
@@ -2988,13 +2997,14 @@ class TestPushRunTokenRecording:
     def test_deny_leaves_the_exact_head_token_alone(
         self, run_hook: Callable, answered: Callable, checkout: Path
     ) -> None:
-        """Answering Hold to the run question removes only the run token: the two push scopes are independent records.
+        """Answering Decline to the run question removes only the run token: the two push scopes are independent
+        records.
 
-        Starting state: a pending exact-HEAD token and a pending run token; a ``Hold`` to the run question.
+        Starting state: a pending exact-HEAD token and a pending run token; a ``Decline`` to the run question.
         """
         run_hook(answered(checkout, "Approve", _push_question()))
         run_hook(answered(checkout, "Approve", _push_run_question()))
-        run_hook(answered(checkout, "Hold", _push_run_question()))
+        run_hook(answered(checkout, "Decline", _push_run_question()))
         assert _push_token(checkout).exists()
         assert not _push_run_token(checkout).exists()
 
@@ -3502,9 +3512,9 @@ class TestGhWriteTokenRealCase:
         The user approved ``--body-file body.md`` holding one text; posting another under the hook ``allow`` would
         publish content the user never saw.
         """
-        (checkout / "body.md").write_text("approved body\n", encoding="utf-8")
+        (checkout / "body.md").write_text(f"approved body\n\n{PR_BODY_FOOTER}\n", encoding="utf-8")
         approve_gh(GH_COMMAND)
-        (checkout / "body.md").write_text("other text\n", encoding="utf-8")
+        (checkout / "body.md").write_text(f"other text\n\n{PR_BODY_FOOTER}\n", encoding="utf-8")
         blocked = _guard_gh(checkout, GH_COMMAND, "toolu_body", fake_gh)
         assert (blocked.returncode, "changed after the user approved" in blocked.stderr) == (2, True), blocked.stderr
         assert _gh_write_token(checkout).exists()
@@ -3634,15 +3644,19 @@ class TestSpendToken:
         status = _node_lib(f"g.recordStatus('gh-write-once', {opts})")
         assert status["record"]["question"] == questions[1]["question"]
 
-    @pytest.mark.parametrize("hold_first", [False, True])
-    def test_stacked_holds_preserve_other_questions(self, run_hook: Callable, checkout: Path, hold_first: bool) -> None:
-        """A Hold preserves unrelated approvals even when they came from an earlier call."""
+    @pytest.mark.parametrize("decline_first", [False, True])
+    def test_stacked_declines_preserve_other_questions(
+        self, run_hook: Callable, checkout: Path, decline_first: bool
+    ) -> None:
+        """A Decline preserves unrelated approvals even when they came from an earlier call."""
         questions = [_gh_write_question(f"Draft: `gh issue close {number}`?") for number in range(1, 7)]
         prior, approve, hold = questions[:4], questions[4], questions[5]
         _approve_together(run_hook, checkout, prior)
-        choices = [(hold, "Hold"), (approve, "Approve")] if hold_first else [(approve, "Approve"), (hold, "Hold")]
+        choices = (
+            [(hold, "Decline"), (approve, "Approve")] if decline_first else [(approve, "Approve"), (hold, "Decline")]
+        )
         reply = _approve_together(run_hook, checkout, [q for q, _ in choices], [a for _, a in choices])
-        assert "removed: the user answered Hold" not in _context(reply)
+        assert "removed: the user answered Decline" not in _context(reply)
         assert {_load(file)["question"] for file in _gh_write_token(checkout).parent.glob(f"{GH_WRITE_RECORD}*")} == {
             q["question"] for q in [*prior, approve]
         }
@@ -3668,9 +3682,9 @@ class TestSpendToken:
     def test_busy_deny_reports_failed_removal_and_can_be_retried(
         self, run_hook: Callable, answered: Callable, checkout: Path, question: Callable, token_name: str
     ) -> None:
-        """A busy Hold reports that authority remains and permits explicit retry after the owner releases it.
+        """A busy Decline reports that authority remains and permits explicit retry after the owner releases it.
 
-        Starting state: a pending token and a ``.spent-lock`` reservation held elsewhere; Hold keeps both, then
+        Starting state: a pending token and a ``.spent-lock`` reservation held elsewhere; Decline keeps both, then
         succeeds once released.
         """
         run_hook(answered(checkout, "Approve", question()))
@@ -3678,15 +3692,15 @@ class TestSpendToken:
         reservation = token.with_name(f"{token.name}.spent-lock")
         reservation.write_bytes(b"")
 
-        denied = run_hook(answered(checkout, "Hold", question()))
+        denied = run_hook(answered(checkout, "Decline", question()))
 
         assert "EBUSY" in denied.stdout, denied.stderr
         assert "not removed" in _context(denied)
-        assert "retry Hold" in _context(denied)
+        assert "retry Decline" in _context(denied)
         assert token.exists()
         assert reservation.exists()
         reservation.unlink()
-        retried = run_hook(answered(checkout, "Hold", question()))
+        retried = run_hook(answered(checkout, "Decline", question()))
         assert "removed" in _context(retried)
         assert not token.exists()
 

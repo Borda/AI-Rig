@@ -47,9 +47,20 @@ import argparse
 import json
 import re
 import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from urllib.parse import urlparse
+
+# Load the packaged reader when the selector is invoked directly or imported by path.
+sys.pycache_prefix = str(Path(__file__).resolve())
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from collect_pr import _github_remote_identity, _tracking_remote_urls  # noqa: E402
+
+#: Local selection supports literal GitHub names with leading punctuation, including organization .github repositories.
+LITERAL_NAME = re.compile(r"[A-Za-z0-9._-]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,18 +71,26 @@ class RepositoryIdentity:
     repository: str
 
 
-def parse_repository_url(raw_url: str) -> RepositoryIdentity:
-    """Parse Git, SSH, or pull-request URLs into a repository identity."""
-    value = raw_url.strip()
-    scp_match = re.fullmatch(r"(?:[^@]+@)?([^:]+):(.+)", value)
-    if scp_match and "://" not in value:
+def parse_repository_url(raw_url: str, *, configured_remote: bool = False) -> RepositoryIdentity:
+    """Parse a target URL or identify a configured fetch URL by its complete repository path."""
+    if not raw_url.isprintable() or any(char.isspace() for char in raw_url):
+        raise ValueError("unrecognized-repository-url")
+    scp_match = re.fullmatch(r"(?:[^@]+@)?([^:]+):(.+)", raw_url)
+    if scp_match and "://" not in raw_url:
         host, path = scp_match.groups()
     else:
-        parsed = urlparse(value)
+        parsed = urlparse(raw_url)
         host = parsed.hostname or ""
         if parsed.port is not None:
             host = f"{host}:{parsed.port}"
         path = parsed.path
+    if configured_remote and host.lower() == "github.com":
+        # Explicit review targets may use credentialed HTTPS remotes. Their transport is sanitized after selection.
+        candidate = re.sub(r"^(https://)[^/@?#]+@", r"\1", raw_url, count=1, flags=re.IGNORECASE | re.ASCII)
+        identity = _github_remote_identity(candidate, component_pattern=LITERAL_NAME)
+        if identity is None:
+            raise ValueError("unrecognized-repository-url")
+        return RepositoryIdentity(host="github.com", repository="/".join(identity).lower())
     parts = [part for part in path.strip("/").split("/") if part]
     if "pull" in parts:
         parts = parts[: parts.index("pull")]
@@ -85,24 +104,17 @@ def parse_repository_url(raw_url: str) -> RepositoryIdentity:
 
 def read_remotes(cwd: Path) -> dict[str, list[str]]:
     """Read every configured fetch URL without contacting a remote service."""
-    names = subprocess.run(
-        ["git", "remote"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
-        cwd=cwd,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
-    remotes: dict[str, list[str]] = {}
-    for name in names:
-        urls = subprocess.run(  # noqa: S603 - argv list, no shell
-            ["git", "remote", "get-url", "--all", "--", name],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
-            cwd=cwd,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.splitlines()
-        remotes[name] = [url for url in urls if url]
-    return remotes
+
+    def git(*args: str, optional: bool = False) -> str:
+        """Preserve Git's record delimiters and distinguish missing configuration from command failure."""
+        result = subprocess.run(["git", *args], cwd=cwd, capture_output=True, check=False, timeout=30)  # noqa: S603, S607 - local Git queries, argv only
+        if optional and result.returncode == 1:
+            return ""
+        result.check_returncode()
+        return result.stdout.decode("utf-8")
+
+    names = git("remote").removesuffix("\n").split("\n")
+    return {name: _tracking_remote_urls(git, name) for name in names if name}
 
 
 def select_remote(expected_url: str, remotes: dict[str, list[str]]) -> dict[str, object]:
@@ -113,7 +125,7 @@ def select_remote(expected_url: str, remotes: dict[str, list[str]]) -> dict[str,
     for name, urls in remotes.items():
         for url in urls:
             try:
-                identity = parse_repository_url(url)
+                identity = parse_repository_url(url, configured_remote=True)
             except ValueError:
                 rejected.setdefault(name, []).append(url)
                 continue
@@ -140,40 +152,13 @@ def canonical_pr_url(number: str, remotes: dict[str, list[str]]) -> str:
     origin_repositories: set[str] = set()
     for name, urls in remotes.items():
         for url in urls:
-            try:
-                identity = parse_repository_url(url)
-            except ValueError:
+            identity = _github_remote_identity(url, component_pattern=LITERAL_NAME)
+            if identity is None:
                 continue
-            if identity.host != "github.com":
-                continue
-            scp_match = re.fullmatch(r"(?:[^@/\s]+@)?github\.com:([^\s]+)", url, flags=re.IGNORECASE)
-            if scp_match:
-                path = scp_match.group(1)
-            else:
-                try:
-                    parsed = urlparse(url)
-                    port = parsed.port
-                except ValueError:
-                    continue
-                if (
-                    parsed.scheme not in {"git", "https", "ssh"}
-                    or parsed.hostname != "github.com"
-                    or port is not None
-                    or parsed.query
-                    or parsed.fragment
-                    or parsed.password
-                    or (parsed.username and parsed.scheme != "ssh")
-                ):
-                    continue
-                path = parsed.path.lstrip("/")
-            parts = path.removesuffix(".git").split("/")
-            if len(parts) != 2 or any(
-                not re.fullmatch(r"[A-Za-z0-9_.-]+", part) or part in {".", ".."} for part in parts
-            ):
-                continue
-            repositories.add(identity.repository)
+            repository = "/".join(identity).lower()
+            repositories.add(repository)
             if name == "origin":
-                origin_repositories.add(identity.repository)
+                origin_repositories.add(repository)
     if "origin" in remotes:
         if not origin_repositories:
             raise ValueError("no-github-origin")

@@ -1432,7 +1432,7 @@ class TestTokenValidity:
         [
             pytest.param({"version": 2}, "unknown record version", id="unknown-version"),
             pytest.param({"scope": "gh-read"}, "unknown scope", id="other-scope"),
-            pytest.param({"answer": "Hold"}, "does not hold answer", id="other-answer"),
+            pytest.param({"answer": "Decline"}, "does not hold answer", id="other-answer"),
             pytest.param({"head": None}, "lacks head", id="missing-head"),
             pytest.param({"branch": None}, "lacks branch", id="missing-branch"),
             pytest.param({"expires_at": "soon"}, "no ISO expires_at", id="malformed-expiry"),

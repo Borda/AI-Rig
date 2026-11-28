@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.86.1
+
+- A pull request body without the AI Rig footer note is now blocked before it is published. `gh pr create|new|edit` whose `--body-file` or `--body` body does not end with the note is stopped with the note to append, before your `gh-write` approval is spent, so a body drafted after `/compact` dropped the rule no longer goes out with the host's `Generated with Claude Code` line. The body is read the way gh reads its flags, so a title shaped like a flag cannot hide it. An empty body file or a body path that is no regular file is blocked too. `--fill`, `--template`, stdin, a body file the hook cannot open by its literal path and `gh api` pull request writes are not checked; `AI_RIG_FOOTER=off` still opts out; comments, issue bodies, reviews and title-only edits are unaffected.
+- Pull request bodies Claude drafts are now structured for scanning: a one-sentence summary, then short bullet sections with sub-lists for detail instead of paragraphs over three lines, code spans or fenced blocks for commands and paths, and tables for per-row facts.
+- The skip option on the `git-approve`, `git-push`, `git-push-run` and `gh-write` approval questions is now `Decline` instead of `Hold`, so it reads as a final refusal rather than a pause. It still skips the operation and cancels only a pending approval for the same question in the same session; a stale `Hold` answer is no longer recognized and writes nothing.
+- `commit-guard` and `gh-write-guard` no longer ask about `chmod +x path/to/gh` (or `git`), `chown` and `chgrp`: they join the data programs whose options never carry code, so making a stubbed `gh` or `git` script executable runs without an "unmodeled executable" prompt, while a `git`/`gh` call inside their arguments is still read.
+
 ## 0.86.0
 
 - Git and GitHub approvals keep each decision tied to its own operation.

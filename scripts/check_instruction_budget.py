@@ -159,7 +159,9 @@ BUDGETS = (
     # commit asks once, with no request). Both bind before a Codex session's first git or gh command, so no lazily
     # loaded file can carry them.
     # A blocked command can occur outside any skill. Budget its always-on pointer to the shared recovery rule.
-    Budget("plugins/codex-rig/assets/AGENTS.md", 44564),
+    # Raised by 2 bytes: the local Git approval question's skip option is renamed from Hold to Decline (3 bytes
+    # longer, 1 byte taken from the headroom). The option text must sit in this file itself, so no lazy home fits.
+    Budget("plugins/codex-rig/assets/AGENTS.md", 44566),
 )
 
 

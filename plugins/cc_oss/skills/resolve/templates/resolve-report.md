@@ -93,7 +93,7 @@
 > | `blocked-needs-manual-push` | `⚠ Push needs your shell — no upstream tracking, and no approval covers the explicit-refspec push; run the line under Unblock push` |
 > | `rejected-non-ff` | `✗ Push rejected (non-fast-forward)` |
 > | `rejected-remote` | `✗ Push approved but failed — the remote refused it: [git's error line, verbatim from push-error.txt]` |
-> | `skipped-by-user` | `⊘ Push skipped by you (Step 3d "don't push" or Step 10 "Hold") — run git push when ready` |
+> | `skipped-by-user` | `⊘ Push skipped by you (Step 3d "don't push" or Step 10 "Decline") — run git push when ready` |
 > | `not-attempted` | `✗ Push not attempted — push scope could not be computed` |
 > | `none` | `⊘ No push this run (no PR number, or all items skipped)` |
 > | `unknown` | Push status unavailable. |

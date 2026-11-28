@@ -144,6 +144,12 @@ def test_parent_fallback_promotes_and_preserves_failed_gate_obligations_at_intak
     assert all(item["mode"] == "substituted" and not item.get("attempts") for item in passes)
     assert completed.returncode == 0, completed.stderr.decode()
     assert completed.stdout == before[Path("final.md")]
+    blocker_proposal = b"Run the configured mypy check in the project environment."
+    assert completed.stdout.count(blocker_proposal) == 1
+    actions = completed.stdout.split(b"**Recommendations / next steps**", 1)[1]
+    assert blocker_proposal not in actions
+    assert b"- **reviewer**" in actions
+    assert b"Prepare the declared project environment before resuming type verification." in actions
     assert [(item.returncode, item.stdout, item.stderr) for item in admissions] == [(0, f"{result_path}\n", "")] * 2
 
     consumer = tmp_path / "remediation"

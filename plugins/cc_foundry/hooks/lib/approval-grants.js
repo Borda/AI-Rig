@@ -25,7 +25,7 @@
 //   `question`, is the only record of the command and must name the branch (else nothing records).
 //   A detached HEAD records nothing. One token per approved question (the row's file, then slots
 //   `<file>.slot-<hash>`, at most 8): a later `Approve` of the same question replaces its token, another question's
-//   token stands beside it. `Hold` cancels only a pending approval for the same question in the same session.
+//   token stands beside it. `Decline` cancels only a pending approval for the same question in the same session.
 //   commit-guard.js spends the token bound to the push's branch and HEAD (`spendToken`, claim +
 //   transcript proof): after its force ban and a dry-run pass, one push of this branch at this HEAD
 //   to a configured remote name — `git push [-u] [<remote>] [HEAD|<branch>][:<branch>]`, a
@@ -42,7 +42,7 @@
 //   any token lookup.
 //
 // PUSH RUN TOKEN — scope `push-run`: one non-force push of a named branch at any HEAD on a named PR head's line
-//   An `oss:resolve` run asks once at its start (header `git-push-run`, `Approve` / `Hold`), hours before it pushes, so
+//   An `oss:resolve` run asks once at its start (header `git-push-run`, `Approve` / `Decline`), hours before it pushes, so
 //   the exact-HEAD token cannot serve: the PR branch is not checked out yet, HEAD moves with every commit the run
 //   adds, and 15 minutes pass. The question shows one inline span `git push <remote> <branch>` (plain names, no
 //   option) and one span holding the PR head commit id; `Approve` writes the approving call's id, `remote`,
@@ -68,7 +68,7 @@
 //   word-leading `=` outside quotes, an unterminated quote, or a file operand reading stdin (`-`,
 //   `@-`). What passes has one reading in bash and zsh (`plainCommandWords`). One token per approved
 //   command (as for the push token): a later `Approve` of the same question replaces its token, another command's
-//   stands beside it. `Hold` cancels only a pending approval for the same question in the same session.
+//   stands beside it. `Decline` cancels only a pending approval for the same question in the same session.
 //   gh-write-guard.js spends the matching one
 //   (`spendToken`) only for a gh write whose whole Bash command, trimmed, equals `command` and whose
 //   files still digest to `files_sha256`.
@@ -279,7 +279,7 @@ const SCOPES = Object.freeze([
   frozenRow({
     id: "local-git-non-destructive",
     header: "git-approve",
-    options: ["Approve", "Approve always", "Hold"],
+    options: ["Approve", "Approve always", "Decline"],
     recordAnswer: "Approve always",
     file: "claude-git-approval.json",
     // Every other local Git operation runs without a grant or question; only a plain commit needs authority.
@@ -294,7 +294,7 @@ const SCOPES = Object.freeze([
   frozenRow({
     id: "push-once",
     header: "git-push",
-    options: ["Approve", "Hold"],
+    options: ["Approve", "Decline"],
     recordAnswer: "Approve",
     file: "claude-push-approval.json",
     covers: ["one non-force push of the approved branch at the approved HEAD to the configured remote shown"],
@@ -307,7 +307,7 @@ const SCOPES = Object.freeze([
       "a push from another checkout than the approved branch's, or after cd/pushd",
       "a spawned agent's call",
     ],
-    revokeAnswer: "Hold",
+    revokeAnswer: "Decline",
     fields: ["question_id", "branch", "head", "expires_at"],
     singleUse: true,
     ttlMs: PUSH_TOKEN_TTL_MS,
@@ -316,7 +316,7 @@ const SCOPES = Object.freeze([
   frozenRow({
     id: "push-run",
     header: "git-push-run",
-    options: ["Approve", "Hold"],
+    options: ["Approve", "Decline"],
     recordAnswer: "Approve",
     file: "claude-push-run-approval.json",
     covers: [
@@ -333,7 +333,7 @@ const SCOPES = Object.freeze([
       "a push from another checkout or after cd/pushd",
       "a spawned agent's call",
     ],
-    revokeAnswer: "Hold",
+    revokeAnswer: "Decline",
     fields: ["question_id", "remote", "branch", "base_head", "expires_at"],
     singleUse: true,
     ttlMs: PUSH_RUN_TOKEN_TTL_MS,
@@ -342,7 +342,7 @@ const SCOPES = Object.freeze([
   frozenRow({
     id: "gh-write-once",
     header: "gh-write",
-    options: ["Approve", "Hold"],
+    options: ["Approve", "Decline"],
     recordAnswer: "Approve",
     file: "claude-gh-write-approval.json",
     covers: [
@@ -356,7 +356,7 @@ const SCOPES = Object.freeze([
       "a spawned agent's call",
       "another project",
     ],
-    revokeAnswer: "Hold",
+    revokeAnswer: "Decline",
     fields: ["question_id", "command", "files_sha256", "expires_at"],
     singleUse: true,
     ttlMs: GH_WRITE_TOKEN_TTL_MS,
@@ -1777,7 +1777,7 @@ function answerProblem(data, question, row, lookup) {
 /**
  * Decide what a PostToolUse payload means for the records: one verdict per recording answer.
  *
- * A revoking answer (`revokeAnswer`, the push question's `Hold`) needs none of the recording checks: removing a
+ * A revoking answer (`revokeAnswer`, the push question's `Decline`) needs none of the recording checks: removing a
  * pending record only lowers authority.
  *
  * @param {object} data Parsed hook payload.
@@ -1830,7 +1830,7 @@ function evaluateAnswer(data, lookup = findToolUse) {
     );
   }
   // One answered call has one outcome whatever its question order: every revoking answer applies before any
-  // approval is recorded, so `Approve` A with `Hold` B leaves A's token standing either way round.
+  // approval is recorded, so `Approve` A with `Decline` B leaves A's token standing either way round.
   return [...verdicts.filter((v) => v.action === "revoke"), ...verdicts.filter((v) => v.action !== "revoke")];
 }
 
@@ -1912,7 +1912,7 @@ function revokeRecord(row, data, env, verdict, now) {
   } catch (err) {
     return (
       `pending approval record ${path.join(where.dir, row.file)} not removed (${err.code || err.message}); ` +
-      "retry Hold after active hooks finish, or remove the pending token manually."
+      "retry Decline after active hooks finish, or remove the pending token manually."
     );
   }
   if (removed.length === 0) return null;
@@ -1921,7 +1921,7 @@ function revokeRecord(row, data, env, verdict, now) {
   return `pending approval record ${removed[0]}${more} removed: ${cause} (scope ${row.id}).`;
 }
 
-/** Select the pending tokens this answer cancels. Hold only matches this question in the answering session. */
+/** Select the pending tokens this answer cancels. Decline only matches this question in the answering session. */
 function revocableNames(dir, row, data, question, now) {
   if (question === undefined) return slotNames(dir, row);
   return slotStatuses(dir, row, now)
